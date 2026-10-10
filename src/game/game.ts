@@ -5,8 +5,10 @@ import { Renderer, type BrushCursor, type VisualEffect } from '../render/rendere
 import { deserializeInto, serialize } from '../save/serialize';
 import { loadFromSlot, saveToSlot, type SlotId } from '../save/storage';
 import { CAUSE, CAUSE_NAMES, SPECIES, type CreatureInfo } from '../sim/creatures';
+import { EFFECT_DURATIONS } from '../sim/effects';
 import type { WorkerLike } from '../sim/navjobs';
 import { Simulation, type Speed } from '../sim/simulation';
+import { TimeControl } from './timecontrol';
 import { generateWorld, WORLD_SIZES } from '../world/generator';
 import { generateWorldAsync, type GenWorkerLike } from '../world/genjobs';
 import { SEA_LEVEL, TERRAIN } from '../world/terrain';
@@ -38,8 +40,12 @@ export class Game {
   readonly input: InputController;
   tool: Tool = toolById('raise');
   brushIndex = 2;
-  /** Power level 1..3 for god powers. */
+  /** Power level 1..3 for god powers and effects. */
   intensity = 2;
+  /** Index into EFFECT_DURATIONS for buffs/debuffs. */
+  durationIndex = 1;
+  /** Shows a short message (set by the UI). */
+  onNotify: (text: string) => void = () => {};
   readonly undo = new UndoHistory();
   /** Short visual effects (meteor flash, quake ripple). */
   private effects: VisualEffect[] = [];
@@ -79,6 +85,10 @@ export class Game {
       get intensity() {
         return game.intensity;
       },
+      get durationTicks() {
+        return EFFECT_DURATIONS[game.durationIndex].ticks;
+      },
+      notify: (text) => this.onNotify(text),
       effect: (kind, x, y, radius) => {
         this.effects.push({ kind, x, y, radius, start: performance.now() });
         if (this.effects.length > 8) this.effects.shift();
@@ -283,6 +293,14 @@ export class Game {
     }
   }
 
+  /** Removes one buff/debuff from the selected creature. */
+  removeSelectedEffect(effect: number): boolean {
+    const i = this.sim.creatures.indexOf(this.selectedId);
+    if (i < 0) return false;
+    this.sim.creatures.removeEffect(i, effect);
+    return true;
+  }
+
   removeSelected(): boolean {
     const ok = this.sim.creatures.removeById(this.selectedId);
     if (ok) {
@@ -294,10 +312,37 @@ export class Game {
 
   // ---- time --------------------------------------------------------------
 
+  /** Pause and speed level (‹ ⏸ › controls). */
+  readonly time = new TimeControl();
+
+  /** Sets an exact speed; 0 pauses. Other values snap to the nearest level. */
   setSpeed(speed: Speed): void {
-    this.sim.speed = speed;
+    this.time.set(speed);
+    this.applySpeed();
+  }
+
+  togglePause(): void {
+    this.time.togglePause();
+    this.applySpeed();
+  }
+
+  faster(): boolean {
+    const ok = this.time.faster();
+    this.applySpeed();
+    return ok;
+  }
+
+  slower(): boolean {
+    const ok = this.time.slower();
+    this.applySpeed();
+    return ok;
+  }
+
+  private applySpeed(): void {
+    this.sim.speed = this.time.speed;
     this.onSpeedChanged();
   }
+
 
   // ---- world lifecycle ---------------------------------------------------
 

@@ -5,17 +5,17 @@ import { SLOTS, listSlots, deleteSlot, type SlotId } from '../save/storage';
 import { dateFromTick } from '../sim/clock';
 import { CAUSE_NAMES, SPECIES } from '../sim/creatures';
 import { TICKS_PER_DAY, TICKS_PER_YEAR } from '../sim/clock';
-import { SPEEDS, type Speed } from '../sim/simulation';
 import { WORLD_SIZES } from '../world/generator';
 import { TERRAIN, isWater } from '../world/terrain';
 import { SEVERITY } from '../sim/weather';
+import { EFFECTS, EFFECT_DURATIONS } from '../sim/effects';
 import { Minimap } from './minimap';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 /** DOM user interface. Every control here calls a real Game action. */
 export class Hud {
-  private category: ToolCategory = 'terrain';
+  private category: Exclude<ToolCategory, 'view'> = 'powers';
   private toastTimer = 0;
   private readonly menu = $<HTMLDialogElement>('menu');
   private readonly minimap: Minimap;
@@ -38,6 +38,7 @@ export class Hud {
 
     game.onInspect = (r) => this.showInfo(r);
     game.onSelect = () => this.renderCreature();
+    game.onNotify = (text) => this.toast(text);
     game.onSpeedChanged = () => this.syncSpeed();
     game.onWorldChanged = () => {
       $('info').hidden = true;
@@ -56,7 +57,7 @@ export class Hud {
       if ((e.target as HTMLElement)?.closest?.('input, select, textarea')) return;
       if (e.key === ' ') {
         e.preventDefault();
-        this.game.setSpeed(this.game.sim.speed === 0 ? 1 : 0);
+        this.game.togglePause();
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -79,14 +80,30 @@ export class Hud {
     const nav = $('cats');
     for (const c of CATEGORIES) {
       const b = document.createElement('button');
-      b.className = 'chip';
-      b.textContent = c.label;
+      b.className = 'tab';
+      b.setAttribute('role', 'tab');
+      const full = document.createElement('span');
+      full.className = 'full';
+      full.textContent = c.label;
+      const short = document.createElement('span');
+      short.className = 'short';
+      short.textContent = c.short;
+      b.append(full, short);
       b.dataset.cat = c.id;
       b.addEventListener('click', () => {
         this.category = c.id;
         this.renderTools();
       });
       nav.appendChild(b);
+    }
+    for (const [id, tool] of [['tool-move', 'move'], ['tool-inspect', 'inspect']] as const) {
+      $(id).addEventListener('click', () => {
+        this.game.setTool(tool);
+        this.renderTools();
+        this.syncBrush();
+        const t = TOOLS.find((x) => x.id === tool)!;
+        this.toast(`${t.label}: ${t.hint}`);
+      });
     }
   }
 
@@ -107,8 +124,12 @@ export class Hud {
 
   private renderTools(): void {
     for (const b of $('cats').querySelectorAll<HTMLButtonElement>('button')) {
-      b.classList.toggle('active', b.dataset.cat === this.category);
+      const on = b.dataset.cat === this.category;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', String(on));
     }
+    $('tool-move').classList.toggle('active', this.game.tool.id === 'move');
+    $('tool-inspect').classList.toggle('active', this.game.tool.id === 'inspect');
     const row = $('tools');
     row.replaceChildren();
     for (const tool of TOOLS.filter((t) => t.category === this.category)) {
@@ -121,7 +142,7 @@ export class Hud {
         this.game.setTool(tool.id);
         this.renderTools();
         this.syncBrush();
-        this.toast(tool.id === 'move' ? 'Drag to move the map' : tool.label);
+        this.toast(tool.hint ? `${tool.label}: ${tool.hint}` : tool.label);
       });
       row.appendChild(b);
     }
@@ -148,6 +169,10 @@ export class Hud {
       this.game.setIntensity((this.game.intensity % 3) + 1);
       this.syncBrush();
     });
+    $('duration').addEventListener('click', () => {
+      this.game.durationIndex = (this.game.durationIndex + 1) % EFFECT_DURATIONS.length;
+      this.syncBrush();
+    });
     $('brush-minus').addEventListener('click', () => {
       this.game.setBrushIndex(this.game.brushIndex - 1);
       this.syncBrush();
@@ -172,6 +197,11 @@ export class Hud {
     lbl.textContent = 'Power ';
     pw.append(lbl, `${'●'.repeat(this.game.intensity)}${'○'.repeat(3 - this.game.intensity)}`);
     pw.setAttribute('aria-label', `Power level ${this.game.intensity} of 3`);
+    const du = $<HTMLButtonElement>('duration');
+    du.hidden = !this.game.tool.usesDuration;
+    const d = EFFECT_DURATIONS[this.game.durationIndex];
+    du.textContent = `⏳ ${d.label}`;
+    du.setAttribute('aria-label', `Effect duration: ${d.label} (${Math.round(d.ticks / TICKS_PER_DAY)} days)`);
   }
 
   private bindZoom(): void {
@@ -195,19 +225,21 @@ export class Hud {
   // ---- top bar -----------------------------------------------------------
 
   private bindTopbar(): void {
-    for (const b of $('speed').querySelectorAll<HTMLButtonElement>('button')) {
-      b.addEventListener('click', () => {
-        const s = Number(b.dataset.speed) as Speed;
-        if ((SPEEDS as readonly number[]).includes(s)) this.game.setSpeed(s);
-      });
-    }
+    $('slower').addEventListener('click', () => this.game.slower());
+    $('faster').addEventListener('click', () => this.game.faster());
+    $('pause').addEventListener('click', () => this.game.togglePause());
     $('btn-menu').addEventListener('click', () => this.openMenu());
   }
 
   private syncSpeed(): void {
-    for (const b of $('speed').querySelectorAll<HTMLButtonElement>('button')) {
-      b.classList.toggle('active', Number(b.dataset.speed) === this.game.sim.speed);
-    }
+    const t = this.game.time;
+    $<HTMLButtonElement>('slower').disabled = !t.canSlower;
+    $<HTMLButtonElement>('faster').disabled = !t.canFaster;
+    const p = $('pause');
+    p.textContent = t.paused ? '▶' : '⏸';
+    p.setAttribute('aria-label', t.paused ? 'Resume' : 'Pause');
+    p.classList.toggle('active', t.paused);
+    $('speed-label').textContent = `${t.multiplier}×`;
   }
 
   private refreshStatus(): void {
@@ -314,6 +346,43 @@ export class Hud {
     const health = meter('Health');
     const hunger = meter('Hunger');
     const thirst = info.species.thirstRate > 0 ? meter('Thirst') : null;
+    // Active buffs/debuffs, each removable. Rebuilt only when the set changes.
+    const effBox = document.createElement('div');
+    effBox.className = 'effects';
+    body.appendChild(effBox);
+    let effMask = -1;
+    const renderEffects = (now: NonNullable<ReturnType<Game['selectedInfo']>>) => {
+      if (now.effectMask === effMask) {
+        for (const e of now.effects) {
+          const left = effBox.querySelector<HTMLElement>(`[data-eff="${e.id}"] .left`);
+          if (left) left.textContent = `${Math.ceil(e.ticks / TICKS_PER_DAY)} d`;
+        }
+        return;
+      }
+      effMask = now.effectMask;
+      effBox.replaceChildren();
+      for (const e of now.effects) {
+        const def = EFFECTS[e.id];
+        const chip = document.createElement('span');
+        chip.className = `eff ${def.kind}`;
+        chip.dataset.eff = String(e.id);
+        chip.title = def.description;
+        const label = document.createElement('span');
+        label.textContent = `${def.icon} ${def.name} ${'●'.repeat(e.power)} `;
+        const left = document.createElement('span');
+        left.className = 'left';
+        left.textContent = `${Math.ceil(e.ticks / TICKS_PER_DAY)} d`;
+        const x = document.createElement('button');
+        x.textContent = '✕';
+        x.setAttribute('aria-label', `Remove ${def.name}`);
+        x.addEventListener('click', () => {
+          game.removeSelectedEffect(e.id);
+          this.renderCreature();
+        });
+        chip.append(label, left, x);
+        effBox.appendChild(chip);
+      }
+    };
 
     const actions = document.createElement('div');
     actions.className = 'actions';
@@ -344,6 +413,7 @@ export class Hud {
       health(now.health, now.maxHealth, 'high');
       hunger(now.hunger, 100, 'low');
       thirst?.(now.thirst, 100, 'low');
+      renderEffects(now);
       follow.textContent = game.follow ? 'Following' : 'Follow';
       follow.classList.toggle('primary', game.follow);
     };

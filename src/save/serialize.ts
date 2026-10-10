@@ -1,4 +1,5 @@
 import { CAUSE, Creatures, MAX_CREATURES, PATH_MAX, SPECIES, STATE } from '../sim/creatures';
+import { EFFECT_COUNT } from '../sim/effects';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
 import type { WeatherConfig, WeatherSystem } from '../sim/weather';
 import { T } from '../world/terrain';
@@ -7,9 +8,10 @@ import { WATER_FLAG, World } from '../world/world';
 /**
  * Save versions: 1 = Milestone 1 (energy only), 2 = creature ids/needs/states,
  * 3 = adds routes and remaining behaviour fields so a loaded world continues exactly,
- * 4 = weather, fire, long-term climate and water memory (dried lakes/rivers, floods).
+ * 4 = weather, fire, long-term climate and water memory (dried lakes/rivers, floods),
+ * 5 = buffs/debuffs on creatures (effTicks/effPower/effMask; absent = none).
  */
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 /** Version 4 world/simulation additions (absent in older saves; migrated on load). */
 export interface SaveV4 {
@@ -57,6 +59,10 @@ export interface CreatureSave {
   ignoreId?: Uint32Array;
   /** count × PATH_MAX waypoint tile indices. */
   path?: Int32Array;
+  /** Version 5: buffs/debuffs (count × EFFECT_COUNT ticks/strength, and a bit mask per creature). */
+  effTicks?: Uint16Array;
+  effPower?: Uint8Array;
+  effMask?: Uint8Array;
   births: number;
   deaths: number;
   deathStats: Uint32Array;
@@ -116,6 +122,9 @@ export function serialize(sim: Simulation): SaveData {
   } as CreatureSave;
   for (const k of [...COPIED, ...COPIED_V3]) (creatures as unknown as Record<string, unknown>)[k] = c[k].slice(0, n);
   creatures.path = c.path.slice(0, n * PATH_MAX);
+  creatures.effTicks = c.effTicks.slice(0, n * EFFECT_COUNT);
+  creatures.effPower = c.effPower.slice(0, n * EFFECT_COUNT);
+  creatures.effMask = c.effMask.slice(0, n);
   return {
     version: SAVE_VERSION,
     savedAt: new Date().toISOString(),
@@ -166,6 +175,16 @@ function loadCreatures(c: Creatures, src: CreatureSave): void {
   }
   if (src.path && src.path.length >= count * PATH_MAX) c.path.set(src.path.subarray(0, count * PATH_MAX));
   else c.pathLen.fill(0, 0, count);
+  const ne = count * EFFECT_COUNT;
+  if (src.effTicks?.length === ne && src.effPower?.length === ne && src.effMask?.length === count) {
+    c.effTicks.set(src.effTicks);
+    c.effPower.set(src.effPower);
+    c.effMask.set(src.effMask);
+  } else {
+    c.effTicks.fill(0, 0, ne);
+    c.effPower.fill(0, 0, ne);
+    c.effMask.fill(0, 0, count);
+  }
   c.count = count;
   c.nextId = src.nextId;
   c.births = src.births;
@@ -209,7 +228,10 @@ function loadCreaturesV1(c: Creatures, src: CreatureSaveV1): void {
     c.pathGoal[i] = -1;
     c.huntTicks[i] = 0;
     c.ignoreId[i] = 0;
+    c.effMask[i] = 0;
   }
+  c.effTicks.fill(0, 0, count * EFFECT_COUNT);
+  c.effPower.fill(0, 0, count * EFFECT_COUNT);
   c.count = count;
   c.nextId = count + 1;
   c.births = src.births;
@@ -218,7 +240,7 @@ function loadCreaturesV1(c: Creatures, src: CreatureSaveV1): void {
 
 /** Validates a snapshot and loads it into the simulation, replacing the current world. */
 export function deserializeInto(sim: Simulation, data: SaveData): World {
-  if (!data || ![1, 2, 3, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
+  if (!data || ![1, 2, 3, 4, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
   const n = data.width * data.height;
   for (const arr of [data.heights, data.terrain, data.temperature, data.moisture]) {
     if (!(arr instanceof Uint8Array) || arr.length !== n) throw new Error('Corrupt save: map size mismatch');

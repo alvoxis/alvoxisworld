@@ -24,11 +24,11 @@
           <div id="pop"></div>
           <div id="weather-status"></div>
         </div>
-        <div id="speed" role="group" aria-label="Time speed">
-          <button class="chip" data-speed="0" aria-label="Pause">⏸</button>
-          <button class="chip" data-speed="1">1×</button>
-          <button class="chip" data-speed="3">3×</button>
-          <button class="chip" data-speed="10">10×</button>
+        <div id="speed" role="group" aria-label="Time controls">
+          <button class="chip arrow" id="slower" aria-label="Slower">‹</button>
+          <button class="chip" id="pause" aria-label="Pause">⏸</button>
+          <button class="chip arrow" id="faster" aria-label="Faster">›</button>
+          <span id="speed-label" aria-live="polite">1×</span>
         </div>
       </header>
 
@@ -50,10 +50,15 @@
       <div id="toast" role="status" aria-live="polite"></div>
 
       <footer id="toolbar">
+        <nav id="cats" role="tablist" aria-label="Tool tabs"></nav>
         <div id="tools" role="toolbar" aria-label="Tools"></div>
         <div id="toolbar-bottom">
-          <nav id="cats" aria-label="Tool categories"></nav>
+          <div id="quick" role="group" aria-label="View tools">
+            <button class="chip" id="tool-move" aria-label="Move the map">✋</button>
+            <button class="chip" id="tool-inspect" aria-label="Inspect">🔍</button>
+          </div>
           <button class="chip" id="intensity" aria-label="Power level" hidden>Power ●●○</button>
+          <button class="chip" id="duration" aria-label="Effect duration" hidden>⏳ Medium</button>
           <div id="brush" aria-label="Brush size">
             <button class="chip" id="brush-minus" aria-label="Smaller brush">－</button>
             <span id="brush-size">4</span>

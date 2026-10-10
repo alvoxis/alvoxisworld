@@ -1,5 +1,6 @@
 import { Rng } from '../core/rng';
 import { T, isWater } from '../world/terrain';
+import { EFFECT, EFFECT_COUNT } from './effects';
 import { FOOD_CELL, FoodMap } from './foodmap';
 import { MOVE, NO_BUDGET, NOT_FOUND, Pathfinder, UNREACHABLE, WaterField, isDrinkSpot, passable, type MoveClass } from './pathfinding';
 import { NavScheduler, computeNav } from './navjobs';
@@ -131,10 +132,11 @@ export const CAUSE = {
   FIRE: 8,
   METEOR: 9,
   EARTHQUAKE: 10,
+  POISON: 11,
 } as const;
 export const CAUSE_NAMES = [
   'unknown', 'starvation', 'thirst', 'predators', 'old age', 'drowning', 'stranding', 'divine removal', 'fire',
-  'meteor', 'earthquake',
+  'meteor', 'earthquake', 'poison',
 ];
 export const CAUSE_COUNT = CAUSE_NAMES.length;
 /** Damage per tick to an animal standing in fire, as a share of its max health. */
@@ -187,6 +189,9 @@ export interface CreatureInfo {
   ageTicks: number;
   stage: LifeStage;
   state: string;
+  /** Active buffs/debuffs: effect id, remaining ticks, strength 1..3. */
+  effects: Array<{ id: number; ticks: number; power: number }>;
+  effectMask: number;
 }
 
 export interface DeathRecord {
@@ -249,12 +254,16 @@ export class Creatures {
   readonly huntTicks = new Uint16Array(MAX_CREATURES);
   /** A prey id this predator found unreachable or too fast; skipped when choosing targets. */
   readonly ignoreId = new Uint32Array(MAX_CREATURES);
+  /** Buffs/debuffs: remaining ticks and strength per (creature, effect); mask = bit per active effect. */
+  readonly effTicks = new Uint16Array(MAX_CREATURES * EFFECT_COUNT);
+  readonly effPower = new Uint8Array(MAX_CREATURES * EFFECT_COUNT);
+  readonly effMask = new Uint8Array(MAX_CREATURES);
   private readonly dead = new Uint8Array(MAX_CREATURES);
 
   private readonly fields = [
     this.id, this.species, this.x, this.y, this.px, this.py, this.dx, this.dy, this.health, this.hunger,
     this.thirst, this.age, this.state, this.tx, this.ty, this.targetId, this.timer, this.breedTimer, this.harm,
-    this.searchCd, this.pathLen, this.pathPos, this.pathGoal, this.huntTicks, this.ignoreId, this.dead,
+    this.searchCd, this.pathLen, this.pathPos, this.pathGoal, this.huntTicks, this.ignoreId, this.effMask, this.dead,
   ];
 
   births = 0;
@@ -362,6 +371,9 @@ export class Creatures {
       ageTicks: this.age[i],
       stage: this.stage(i),
       state: STATE_NAMES[this.state[i]],
+      effects: Array.from({ length: EFFECT_COUNT }, (_, e) => ({ id: e, ticks: this.effectTicks(i, e), power: this.effectPower(i, e) }))
+        .filter((x) => x.ticks > 0),
+      effectMask: this.effMask[i],
     };
   }
 
@@ -416,6 +428,9 @@ export class Creatures {
     this.pathGoal[i] = -1;
     this.huntTicks[i] = 0;
     this.ignoreId[i] = 0;
+    this.effMask[i] = 0;
+    this.effTicks.fill(0, i * EFFECT_COUNT, i * EFFECT_COUNT + EFFECT_COUNT);
+    this.effPower.fill(0, i * EFFECT_COUNT, i * EFFECT_COUNT + EFFECT_COUNT);
     this.dead[i] = 0;
     this.byId.set(id, i);
     return id;
@@ -435,6 +450,68 @@ export class Creatures {
     }
     this.compact();
     return removed;
+  }
+
+  // ---- buffs & debuffs ---------------------------------------------------
+
+  /** Strength (0 = inactive) of an effect on creature i. */
+  effectPower(i: number, e: number): number {
+    return this.effMask[i] & (1 << e) ? this.effPower[i * EFFECT_COUNT + e] : 0;
+  }
+
+  effectTicks(i: number, e: number): number {
+    return this.effMask[i] & (1 << e) ? this.effTicks[i * EFFECT_COUNT + e] : 0;
+  }
+
+  /**
+   * Applies an effect (rules in effects.ts): refreshes the duration (longest
+   * wins), sets the strength 1..3, and removes the opposite effect.
+   */
+  applyEffect(i: number, e: number, ticks: number, power: number, opposite: number): void {
+    if (opposite >= 0) this.removeEffect(i, opposite);
+    const k = i * EFFECT_COUNT + e;
+    const active = this.effMask[i] & (1 << e);
+    this.effTicks[k] = Math.min(65535, Math.max(active ? this.effTicks[k] : 0, ticks));
+    this.effPower[k] = Math.max(1, Math.min(3, power));
+    this.effMask[i] |= 1 << e;
+  }
+
+  removeEffect(i: number, e: number): void {
+    this.effMask[i] &= ~(1 << e);
+    this.effTicks[i * EFFECT_COUNT + e] = 0;
+    this.effPower[i * EFFECT_COUNT + e] = 0;
+  }
+
+  clearEffects(i: number): void {
+    for (let e = 0; e < EFFECT_COUNT; e++) this.removeEffect(i, e);
+  }
+
+  /** Living creatures within radius r of a point. */
+  inCircle(cx: number, cy: number, r: number): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < this.count; i++) {
+      if (this.dead[i]) continue;
+      if (Math.hypot(this.x[i] - cx, this.y[i] - cy) <= r) out.push(i);
+    }
+    return out;
+  }
+
+  /** Counts down creature i's effects and applies regeneration, poison and fertility. */
+  private tickEffects(i: number, maxHealth: number): void {
+    const m = this.effMask[i];
+    const base = i * EFFECT_COUNT;
+    for (let e = 0; e < EFFECT_COUNT; e++) {
+      if (!(m & (1 << e))) continue;
+      const p = this.effPower[base + e];
+      if (e === EFFECT.REGEN) this.health[i] = Math.min(maxHealth, this.health[i] + maxHealth * 0.004 * p);
+      else if (e === EFFECT.POISON) {
+        this.health[i] -= maxHealth * 0.002 * p;
+        this.harm[i] = CAUSE.POISON;
+      } else if (e === EFFECT.FERTILE && this.breedTimer[i] > 0) {
+        this.breedTimer[i] = Math.max(0, this.breedTimer[i] - p);
+      }
+      if (--this.effTicks[base + e] === 0) this.removeEffect(i, e);
+    }
   }
 
   /**
@@ -551,9 +628,15 @@ export class Creatures {
       if (this.breedTimer[i] > 0) this.breedTimer[i]--;
       if (this.searchCd[i] > 0) this.searchCd[i]--;
       const exertion = this.state[i] === STATE.FLEE || this.state[i] === STATE.HUNT ? 1.5 : 1;
-      this.hunger[i] = Math.min(100, this.hunger[i] + sp.hungerRate * exertion);
+      let needs = 1;
+      if (this.effMask[i]) {
+        if (this.effMask[i] & (1 << EFFECT.FED)) needs = 0;
+        else if (this.effMask[i] & (1 << EFFECT.FAMINE)) needs = 1 + 0.5 * this.effectPower(i, EFFECT.FAMINE);
+        this.tickEffects(i, sp.maxHealth);
+      }
+      this.hunger[i] = Math.min(100, this.hunger[i] + sp.hungerRate * exertion * needs);
       const env = this.envThirst && sp.thirstRate > 0 ? this.envThirst(this.x[i], this.y[i]) : 1;
-      this.thirst[i] = Math.min(100, this.thirst[i] + sp.thirstRate * exertion * env);
+      this.thirst[i] = Math.min(100, this.thirst[i] + sp.thirstRate * exertion * env * needs);
 
       // Habitat check (the player may have flooded or drained the tile).
       const cx = Math.floor(this.x[i]);
@@ -853,7 +936,12 @@ export class Creatures {
   private speedOf(i: number): number {
     const sp = SPECIES[this.species[i]];
     const stageMul = this.age[i] < sp.adultAge ? 0.85 : this.age[i] > sp.maxAge * 0.8 ? 0.85 : 1;
-    return sp.speed * stageMul;
+    let fx = 1;
+    if (this.effMask[i]) {
+      fx += 0.25 * this.effectPower(i, EFFECT.HASTE);
+      fx = Math.max(0.3, fx - 0.2 * this.effectPower(i, EFFECT.SLOW));
+    }
+    return sp.speed * stageMul * fx;
   }
 
   /** Whether predator i, sprinting, is faster than prey j fleeing. */
@@ -871,7 +959,7 @@ export class Creatures {
   private tryBreed(world: World, rng: Rng, i: number): void {
     const sp = SPECIES[this.species[i]];
     if (!this.readyToBreed(i)) return;
-    if (!rng.chance(sp.breedChance)) return;
+    if (!rng.chance(sp.breedChance * (1 + this.effectPower(i, EFFECT.FERTILE)))) return;
     if (!this.roomToBreed(i) || !this.hasMate(i)) return;
     if (sp.diet === 'carnivore' && !this.preyCanSupport(i)) return;
     const cell = this.cellOf(this.x[i], this.y[i]);
@@ -895,6 +983,7 @@ export class Creatures {
   private readyToBreed(i: number): boolean {
     const sp = SPECIES[this.species[i]];
     if (this.dead[i] || this.breedTimer[i] > 0 || this.age[i] < sp.adultAge || this.age[i] > sp.maxAge * 0.8) return false;
+    if (this.effMask[i] & (1 << EFFECT.STERILE)) return false;
     return this.health[i] >= sp.maxHealth * 0.6 && this.hunger[i] <= 50 && this.thirst[i] <= 50;
   }
 
@@ -1447,6 +1536,8 @@ export class Creatures {
       if (i !== last) {
         for (const f of this.fields) f[i] = f[last];
         this.path.copyWithin(i * PATH_MAX, last * PATH_MAX, last * PATH_MAX + PATH_MAX);
+        this.effTicks.copyWithin(i * EFFECT_COUNT, last * EFFECT_COUNT, last * EFFECT_COUNT + EFFECT_COUNT);
+        this.effPower.copyWithin(i * EFFECT_COUNT, last * EFFECT_COUNT, last * EFFECT_COUNT + EFFECT_COUNT);
         this.byId.set(this.id[i], i);
       }
       this.dead[last] = 0;

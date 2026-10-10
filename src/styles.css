@@ -535,3 +535,125 @@ label.check input {
     margin-left: auto;
   }
 }
+
+#speed {
+  align-items: center;
+}
+
+#speed .arrow {
+  font-size: 22px;
+  line-height: 1;
+  min-width: 36px;
+  padding: 0;
+}
+
+#speed .chip:disabled {
+  opacity: 0.35;
+}
+
+#speed-label {
+  min-width: 34px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tool tabs */
+#cats {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+#cats .tab {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--chip);
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+#cats .tab.active {
+  background: var(--chip-active);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#cats .tab .short {
+  display: none;
+}
+
+#quick {
+  display: flex;
+  gap: 4px;
+}
+
+#quick .chip {
+  min-width: 40px;
+  padding: 0;
+  font-size: 18px;
+}
+
+#toolbar-bottom {
+  justify-content: flex-start;
+}
+
+#toolbar-bottom #brush {
+  margin-left: auto;
+}
+
+#duration {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+#info .effects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+#info .eff {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 2px 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+}
+
+#info .eff.buff {
+  background: rgba(95, 211, 95, 0.15);
+}
+
+#info .eff.debuff {
+  background: rgba(224, 83, 58, 0.18);
+}
+
+#info .eff .left {
+  color: var(--muted);
+}
+
+#info .eff button {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+@media (max-width: 560px) {
+  #cats .tab .full {
+    display: none;
+  }
+  #cats .tab .short {
+    display: inline;
+  }
+}

@@ -3,12 +3,16 @@ import { World } from '../world/world';
 import { dateFromTick, SEASON_GROWTH, TICKS_PER_SECOND, type WorldDate } from './clock';
 import { Creatures, SPECIES } from './creatures';
 import { meteorStrike, earthquake, type DisasterResult } from './disasters';
+import { EFFECTS } from './effects';
 import { Fire } from './fire';
+import { T, isWater } from '../world/terrain';
+import { WATER_FLAG } from '../world/world';
 import { Weather, WEATHER_KIND, type WeatherKind } from './weather';
 import { vegetationTick } from './vegetation';
 
-export const SPEEDS = [0, 1, 3, 10] as const;
-export type Speed = (typeof SPEEDS)[number];
+/** Selectable simulation speeds (multiples of real time). 0 means paused. */
+export const SPEED_LEVELS = [1, 2, 3, 5, 10, 20] as const;
+export type Speed = number;
 const MAX_TICKS_PER_FRAME = 40;
 
 export interface HistoryEntry {
@@ -131,6 +135,103 @@ export class Simulation {
     }
     this.creatures.anyFire = this.fire.burning > 0;
     return n;
+  }
+
+  /** Visits the tiles of a disc. */
+  private forDisc(x: number, y: number, radius: number, fn: (tx: number, ty: number, i: number) => void): void {
+    const r = Math.max(0.5, radius);
+    const w = this.world;
+    for (let ty = Math.max(0, Math.floor(y - r)); ty <= Math.min(w.height - 1, Math.ceil(y + r)); ty++) {
+      for (let tx = Math.max(0, Math.floor(x - r)); tx <= Math.min(w.width - 1, Math.ceil(x + r)); tx++) {
+        if (Math.hypot(tx + 0.5 - x, ty + 0.5 - y) <= r) fn(tx, ty, w.idx(tx, ty));
+      }
+    }
+  }
+
+  /**
+   * Flood: covers land with temporary flood water (it drains back to the original
+   * terrain through the normal weather rules). Mountains and snow stay dry.
+   * Returns the number of tiles flooded.
+   */
+  flood(x: number, y: number, radius: number): number {
+    const w = this.world;
+    let n = 0;
+    this.forDisc(x, y, radius, (tx, ty, i) => {
+      const id = w.terrain[i];
+      if (isWater(id) || id === T.MOUNTAIN || id === T.SNOW) return;
+      w.touch(i);
+      w.under[i] = id;
+      w.fire[i] = 0;
+      w.setWaterFlags(i, w.waterFlags[i] | WATER_FLAG.FLOOD);
+      w.setTerrain(tx, ty, T.LAKE);
+      n++;
+    });
+    return n;
+  }
+
+  /**
+   * Drain: dries fresh water. Flood water returns to the land beneath; lakes become
+   * dry lake beds and rivers dry river beds (both refill with rain). The sea is not
+   * drained (use Raise). Returns the number of tiles drained.
+   */
+  drain(x: number, y: number, radius: number): number {
+    const w = this.world;
+    let n = 0;
+    this.forDisc(x, y, radius, (tx, ty, i) => {
+      const id = w.terrain[i];
+      const flags = w.waterFlags[i];
+      if (flags & WATER_FLAG.FLOOD) {
+        w.setWaterFlags(i, flags & ~WATER_FLAG.FLOOD);
+        w.setTerrain(tx, ty, w.under[i]);
+      } else if (id === T.LAKE) {
+        w.setWaterFlags(i, flags | WATER_FLAG.LAKE_BED);
+        w.setTerrain(tx, ty, T.SOIL);
+      } else if (id === T.RIVER) {
+        w.setWaterFlags(i, flags | WATER_FLAG.RIVER_BED);
+        w.setTerrain(tx, ty, T.SAND);
+      } else return;
+      n++;
+    });
+    return n;
+  }
+
+  /** Puts out every fire in a radius. Returns how many tiles stopped burning. */
+  extinguish(x: number, y: number, radius: number): number {
+    let n = 0;
+    this.forDisc(x, y, radius, (tx, ty, i) => {
+      if (!this.world.fire[i]) return;
+      this.world.fire[i] = 0;
+      this.world.markDirty(tx, ty);
+      n++;
+    });
+    return n;
+  }
+
+  /**
+   * Applies a buff/debuff to the creatures within radius (at least the one nearest
+   * the point, within 2 tiles). Returns how many were affected.
+   */
+  applyEffect(effect: number, x: number, y: number, radius: number, ticks: number, power: number): number {
+    const c = this.creatures;
+    let targets = c.inCircle(x, y, Math.max(0.5, radius));
+    if (!targets.length) {
+      const i = c.nearestAt(x, y, 2);
+      if (i >= 0) targets = [i];
+    }
+    for (const i of targets) c.applyEffect(i, effect, ticks, power, EFFECTS[effect].opposite);
+    return targets.length;
+  }
+
+  /** Removes all buffs and debuffs from creatures within radius (or the nearest one). */
+  cleanse(x: number, y: number, radius: number): number {
+    const c = this.creatures;
+    let targets = c.inCircle(x, y, Math.max(0.5, radius));
+    if (!targets.length) {
+      const i = c.nearestAt(x, y, 2);
+      if (i >= 0) targets = [i];
+    }
+    for (const i of targets) c.clearEffects(i);
+    return targets.length;
   }
 
   meteor(x: number, y: number, radius: number, intensity: number): DisasterResult {
