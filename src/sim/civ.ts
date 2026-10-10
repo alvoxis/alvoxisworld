@@ -14,6 +14,7 @@
  * yield (or of the construction work). Foraging and knowledge stay settlement-wide: they come from all
  * people and their land and are not tied to a building.
  */
+import { hash2 } from '../core/rng';
 import { T, isWater } from '../world/terrain';
 import type { World } from '../world/world';
 import type { Creatures } from './creatures';
@@ -297,32 +298,67 @@ function countNear(world: World, x: number, y: number, r: number, terrains: read
   return n;
 }
 
-/** Best free tile in the territory for a building of this type (deterministic), or -1. */
+/**
+ * Best free tile in the territory for a building of this type (deterministic), or -1.
+ *
+ * Layout (0.18): the tile at the centre and its neighbours stay open (the settlement marker, a gathering place);
+ * houses form a loose ring around it that widens as there are more of them; a storehouse stands near the centre;
+ * fields lie further out on moist farmland and may touch each other; lumber camps and quarries stand by their
+ * forest or rock. Buildings avoid touching other buildings (sides more than corners), and a small fixed variation
+ * per tile (from the settlement id, no random generator) keeps settlements from all looking the same.
+ * Hard rules are unchanged: own territory, dry gentle passable ground, no fire, a free tile.
+ */
 export function findSite(world: World, s: Settlement, owner: Uint16Array, type: BuildingType): number {
   const c = s.civ!;
-  const taken = new Set(c.buildings.map((b) => b.y * world.width + b.x));
+  const W = world.width;
+  const at = new Map(c.buildings.map((b) => [b.y * W + b.x, b.type] as const));
   const cls = SPECIES[s.species].move;
+  const houses = c.buildings.filter((b) => b.type === 'house').length;
+  const farms = c.buildings.filter((b) => b.type === 'farm').length;
   let best = -1;
   let bestScore = -Infinity;
   for (const i of s.tiles) {
-    if (owner[i] !== s.id || taken.has(i)) continue;
-    const x = i % world.width;
-    const y = (i - x) / world.width;
+    if (owner[i] !== s.id || at.has(i)) continue;
+    const x = i % W;
+    const y = (i - x) / W;
     const t = world.terrain[i];
     if (isWater(t) || world.slopeClass[i] !== 0 || world.fire[i] > 0 || !passable(world, cls, x, y)) continue;
-    let score = -Math.hypot(x - s.x, y - s.y); // near the centre by default
+    const d = Math.hypot(x - s.x, y - s.y);
+    if (d < 1.5) continue; // the centre stays open
+    // Crowding: buildings on the sides weigh more than on the corners; houses next to fields count extra for fields.
+    let side = 0;
+    let corner = 0;
+    let houseNear = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const k = at.get(i + dy * W + dx);
+        if (!k || x + dx < 0 || x + dx >= W) continue;
+        if (dx && dy) corner++;
+        else side++;
+        if (k === 'house') houseNear++;
+      }
+    }
+    const crowd = side + 0.4 * corner;
+    const vary = hash2(x, y, s.id * 7919 + 17);
+    let score: number;
     if (type === 'farm') {
       if (!FARM_TERRAIN.includes(t) || world.moisture[i] < 40) continue;
+      score = -Math.abs(d - (4 + 1.2 * farms)) - 1.5 * houseNear + world.moisture[i] / 100 + 0.5 * vary;
     } else if (type === 'lumber') {
       if (FOREST_TERRAIN.includes(t)) continue; // stands next to the forest, not in it
       const trees = countNear(world, x, y, LUMBER_RADIUS, FOREST_TERRAIN);
       if (trees < 6) continue;
-      score += trees * 10;
+      score = trees * 10 - d - 2 * crowd + vary;
     } else if (type === 'quarry') {
       if (STONE_TERRAIN.includes(t) && t === T.MOUNTAIN) continue;
       const rock = countNear(world, x, y, QUARRY_RADIUS, STONE_TERRAIN);
       if (rock < 3) continue;
-      score += rock * 10;
+      score = rock * 10 - d - 2 * crowd + vary;
+    } else if (type === 'storehouse') {
+      score = -Math.abs(d - 2.5) - 2 * crowd + vary;
+    } else {
+      score = -1.2 * Math.abs(d - (2.5 + 0.8 * Math.sqrt(houses))) - 2.5 * crowd + 0.8 * vary;
     }
     if (score > bestScore) {
       bestScore = score;

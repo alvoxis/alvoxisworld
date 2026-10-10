@@ -16,6 +16,7 @@ import { COLORS, EMIGRATE_STRESS } from '../sim/settlements';
 
 const YEAR_STEPS = 24; // steps per game year (480 ticks / 20)
 const ICON = { food: '🌾', wood: '🪵', stone: '🪨', knowledge: '📖' } as const;
+const BUILD_ICON: Readonly<Record<BuildingType, string>> = { house: '🏠', farm: '🌾', lumber: '🪓', quarry: '⛏', storehouse: '📦' };
 const fmt = (n: number) => String(Math.round(n * 10) / 10).replace(/\.0$/, '');
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', parent?: HTMLElement): HTMLElementTagNameMap[K] {
@@ -35,7 +36,13 @@ export class SettlementCard {
   private upgradeBtn: HTMLButtonElement | null = null;
   private techRows = new Map<TechId, { name: HTMLElement; status: HTMLElement; btn: HTMLButtonElement }>();
   private histList!: HTMLElement;
+  private chips!: HTMLElement;
+  private alerts!: HTMLElement;
+  private more!: HTMLDetailsElement;
+  private chipSig = '';
   private buildSig = '';
+  /** Whether the details are open (kept while the player moves between settlements). */
+  private static detailsOpen = false;
   private histSig = '';
 
   constructor(private readonly game: Game, private readonly toast: (text: string) => void) {}
@@ -52,19 +59,15 @@ export class SettlementCard {
     this.techRows.clear();
     this.buildSig = this.histSig = '';
     const s = this.game.sim.settlements.get(id);
+    this.chipSig = '';
+    // Compact part: name and stage, a row of icon values, urgent alerts, and the build actions.
     this.title = el('div', 'title', container);
-    for (const key of ['population', 'composition', 'territory', 'age', 'status']) this.addLine(container, key);
+    this.chips = el('div', 'sc-chips', container);
+    this.alerts = el('div', 'sc-alerts', container);
+    this.alerts.setAttribute('role', 'status');
     this.civBox = null;
     if (s?.civ) {
-      const box = el('div', 'civ', container);
-      this.civBox = box;
-      for (const key of ['stage', 'next', 'housing', 'houses', 'housenext', 'pressure', 'workers', 'split', 'problems']) this.addLine(box, key);
-      el('div', 'sub', box).dataset.k = 'resources';
-      for (const key of ['food', 'wood', 'stone', 'knowledge']) this.addLine(box, key);
-      this.addLine(box, 'famine');
-      el('div', 'sub', box).dataset.k = 'buildings';
-      this.buildList = el('ul', 'settle-list', box);
-      const grid = el('div', 'build-grid', box);
+      const grid = el('div', 'build-grid', container);
       for (const type of BUILDING_TYPES) {
         const b = el('button', 'btn small', grid);
         b.type = 'button';
@@ -75,6 +78,25 @@ export class SettlementCard {
       up.type = 'button';
       up.addEventListener('click', () => this.upgrade());
       this.upgradeBtn = up;
+    }
+    // Everything else is in the details, which open and close with a tap (native <details>).
+    this.more = el('details', 'sc-more', container);
+    this.more.open = SettlementCard.detailsOpen;
+    this.more.addEventListener('toggle', () => {
+      SettlementCard.detailsOpen = this.more.open;
+    });
+    el('summary', '', this.more).dataset.k = 'details';
+    const body = this.more;
+    for (const key of ['population', 'composition', 'territory', 'age', 'status']) this.addLine(body, key);
+    if (s?.civ) {
+      const box = el('div', 'civ', body);
+      this.civBox = box;
+      for (const key of ['stage', 'next', 'housing', 'houses', 'housenext', 'pressure', 'workers', 'split', 'problems']) this.addLine(box, key);
+      el('div', 'sub', box).dataset.k = 'resources';
+      for (const key of ['food', 'wood', 'stone', 'knowledge']) this.addLine(box, key);
+      this.addLine(box, 'famine');
+      el('div', 'sub', box).dataset.k = 'buildings';
+      this.buildList = el('ul', 'settle-list', box);
       el('div', 'sub', box).dataset.k = 'tech';
       for (const id2 of TECH_IDS) {
         const row = el('div', 'tech-row', box);
@@ -88,11 +110,51 @@ export class SettlementCard {
       }
       this.addLine(box, 'auto');
     }
-    this.addLine(container, 'flow');
-    const hb = el('div', '', container);
+    this.addLine(body, 'flow');
+    const hb = el('div', '', body);
     el('b', '', hb).dataset.k = 'history';
-    this.histList = el('ul', 'settle-history', container);
+    this.histList = el('ul', 'settle-history', body);
     this.update();
+  }
+
+  /** The always-visible values (icons with short numbers; full names in tooltips and accessible names) and alerts. */
+  private updateCompact(s: NonNullable<ReturnType<Game['sim']['settlements']['get']>>): void {
+    const c = s.civ;
+    const chips: Array<[string, string, string]> = [];
+    const pop = s.members.length;
+    if (c) {
+      const cap = housing(c);
+      chips.push(['👥', `${pop}/${cap}`, t('chip.people', { pop, cap })]);
+      const houses = c.buildings.filter((b) => b.type === 'house' && b.done);
+      const ups = houses.filter((b) => b.up).length;
+      chips.push(['🏠', `${houses.length}${ups ? ` ⬆${ups}` : ''}`, t('chip.houses', { n: houses.length, up: ups })]);
+      const sites = c.buildings.filter((b) => !b.done).length;
+      if (sites) chips.push(['🔨', String(sites), t('chip.sites', { n: sites })]);
+      for (const [k, v] of [['food', c.food], ['wood', c.wood], ['stone', c.stone]] as const) chips.push([ICON[k], fmt(Math.floor(v)), `${td(`res.${k}`)}: ${fmt(v)} / ${storage(c)}`]);
+    } else {
+      chips.push(['👥', String(pop), `${t('settle.population')}: ${pop}`]);
+      chips.push(['📍', String(s.tiles.length), t('settle.territory_value', { tiles: s.tiles.length, r: s.radius })]);
+    }
+    const sig = chips.map((x) => x.join('|')).join(';');
+    if (sig !== this.chipSig) {
+      this.chipSig = sig;
+      this.chips.replaceChildren();
+      for (const [icon, value, label] of chips) {
+        const chip = el('span', 'sc-chip', this.chips);
+        chip.title = label;
+        chip.setAttribute('aria-label', label);
+        chip.textContent = `${icon} ${value}`;
+      }
+    }
+    // At most two urgent conditions, only when they apply.
+    const alerts: string[] = [];
+    if (c?.famine) alerts.push(`⚠ ${t('civ.famine')}`);
+    if (s.tiles.some((i) => this.game.sim.world.fire[i] > 0)) alerts.push(`🔥 ${t('alert.fire')}`);
+    if (s.stress >= EMIGRATE_STRESS / 2) alerts.push(`⚠ ${t('civ.pressure')}: ${Math.round(s.stress)}/${EMIGRATE_STRESS}`);
+    if (c && c.buildings.some((b) => slotsOf(b) > 0) && !c.jobs.length) alerts.push(`⚠ ${td('problem.unstaffed')}`);
+    const text = alerts.slice(0, 2).join(' · ');
+    if (this.alerts.textContent !== text) this.alerts.textContent = text;
+    this.alerts.hidden = !text;
   }
 
   private addLine(parent: HTMLElement, key: string): void {
@@ -159,6 +221,10 @@ export class SettlementCard {
     const sw = el('span', 'swatch');
     sw.style.background = COLORS[s.color];
     this.title.append(sw, s.name);
+    const stageChip = el('span', 'sc-stage', this.title);
+    stageChip.textContent = s.civ ? td(`civstage.${s.civ.stage}`) : td(`settle.status.${s.status}`);
+    (this.more.firstElementChild as HTMLElement).textContent = td('card.details');
+    this.updateCompact(s);
     const stages: Record<string, number> = { Juvenile: 0, Adult: 0, Elder: 0 };
     for (const m of s.members) {
       const i = sim.creatures.indexOf(m);
@@ -237,8 +303,11 @@ export class SettlementCard {
     for (const [type, btn] of this.buildBtns) {
       const cost = costOf(c, type);
       const block = buildBlock(world, s, sim.settlements.owner, type);
-      btn.textContent = `${td(`build.${type}`)} · ${cost.wood ? `${ICON.wood}${cost.wood}` : ''}${cost.stone ? ` ${ICON.stone}${cost.stone}` : ''}`;
-      btn.title = `${td(`build.${type}.desc`)}${block ? ` — ${this.buildReason(block, c.stage)}` : ''}`;
+      const price = `${cost.wood ? `${ICON.wood}${cost.wood}` : ''}${cost.stone ? ` ${ICON.stone}${cost.stone}` : ''}`;
+      // Icon and price on the button; the name, what it does and why it is unavailable in its tooltip and accessible name.
+      btn.textContent = `${BUILD_ICON[type]} ${price}`;
+      btn.title = `${td(`build.${type}`)} (${price}): ${td(`build.${type}.desc`)}${block ? ` — ${this.buildReason(block, c.stage)}` : ''}`;
+      btn.setAttribute('aria-label', btn.title);
       btn.classList.toggle('unavailable', !!block);
       btn.setAttribute('aria-disabled', String(!!block));
     }
@@ -246,8 +315,10 @@ export class SettlementCard {
       const target = upgradeTarget(c);
       const cost = target ? upgradeCost(c, target.level + 1) : null;
       const block = upgradeBlock(c);
-      this.upgradeBtn.textContent = `${td('build.upgrade')}${cost ? ` · ${cost.wood ? `${ICON.wood}${cost.wood}` : ''}${cost.stone ? ` ${ICON.stone}${cost.stone}` : ''}` : ''}`;
-      this.upgradeBtn.title = `${td('build.upgrade.desc')}${block ? ` — ${td(this.upgradeReason(block))}` : ''}`;
+      const price = cost ? `${cost.wood ? `${ICON.wood}${cost.wood}` : ''}${cost.stone ? ` ${ICON.stone}${cost.stone}` : ''}` : '';
+      this.upgradeBtn.textContent = `⬆${BUILD_ICON.house}${price ? ` ${price}` : ''}`;
+      this.upgradeBtn.title = `${td('build.upgrade')}${price ? ` (${price})` : ''}: ${td('build.upgrade.desc')}${block ? ` — ${td(this.upgradeReason(block))}` : ''}`;
+      this.upgradeBtn.setAttribute('aria-label', this.upgradeBtn.title);
       this.upgradeBtn.classList.toggle('unavailable', !!block);
       this.upgradeBtn.setAttribute('aria-disabled', String(!!block));
     }

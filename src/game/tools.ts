@@ -141,22 +141,6 @@ export const TOOLS: readonly Tool[] = [
   },
   ...SPECIES.map((s) => spawnTool(s.id)),
   {
-    id: 'found', label: 'Found settlement', category: 'creatures', icon: { emoji: '🏕️' }, usesBrush: false, repeatMs: Infinity,
-    hint: 'Found a settlement where at least 6 animals of one land species live within 8 tiles of the spot',
-    apply: (ctx, x, y) => {
-      const r = ctx.sim.foundSettlement(x, y, 'animal');
-      ctx.notify(typeof r === 'string' ? t(`toast.found_${r}`) : t('toast.found_ok', { name: r.name }));
-    },
-  },
-  {
-    id: 'found_human', label: 'Found human settlement', category: 'creatures', icon: { emoji: '🏘️' }, usesBrush: false, repeatMs: Infinity,
-    hint: 'Found a settlement of people where at least 6 free people live within 8 tiles of the spot',
-    apply: (ctx, x, y) => {
-      const r = ctx.sim.foundSettlement(x, y, 'human');
-      ctx.notify(typeof r === 'string' ? t(r === 'few' ? 'toast.found_few_people' : `toast.found_${r}`) : t('toast.found_ok', { name: r.name }));
-    },
-  },
-  {
     id: 'smite', label: 'Remove life', category: 'creatures', icon: { emoji: '⚡' }, usesBrush: true, repeatMs: 0,
     hint: 'Removes creatures under the brush',
     area: (r) => [{ radius: Math.max(1, r), kind: 'main' }],

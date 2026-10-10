@@ -1,5 +1,5 @@
 import { hash2 } from '../core/rng';
-import { Creatures, SPECIES, STATE } from '../sim/creatures';
+import { Creatures, SPECIES, STATE, type Architecture } from '../sim/creatures';
 import type { WeatherSystem } from '../sim/weather';
 import { SEA_LEVEL, T, TERRAIN, isWater } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
@@ -10,7 +10,7 @@ import type { MeteorInFlight } from '../sim/sky';
 import { COLORS, type Settlement } from '../sim/settlements';
 import type { Building, BuildingType, JobKind } from '../sim/civ';
 import { Tileset, TILE_PX, creatureSprite } from './tileset';
-import { HOUSE_STYLES, type HouseStyle } from './architecture';
+import { architectureOf, buildingDot, drawBuildingArt } from './architecture';
 
 /** Device pixels per tile at which 8-px-per-tile detail chunks are used. */
 export const DETAIL_SCALE = 9;
@@ -39,7 +39,6 @@ const DEEP_RGB = [20, 48, 108] as const;
 export type { VisualEffect } from './skyfx';
 
 /** Simulation state drawn on top of the map. */
-const BUILDING_COLORS: Record<BuildingType, string> = { house: '#c9a36b', storehouse: '#8d8579', farm: '#7fb046', lumber: '#7a5530', quarry: '#9a9791' };
 
 export interface Overlay {
   burning: readonly number[];
@@ -531,8 +530,8 @@ export class Renderer {
       ctx.stroke();
       // Buildings of a human settlement (finished ones solid, under construction faded).
       if (st.civ) {
-        const style = HOUSE_STYLES[SPECIES[st.species].civ?.architecture ?? 'human'];
-        for (const b of st.civ.buildings) this.drawBuilding(b, st.color, style, s, ox, oy, x0, y0, x1, y1);
+        const arch = architectureOf(st.species);
+        for (const b of st.civ.buildings) this.drawBuilding(b, st.color, arch, s, ox, oy, x0, y0, x1, y1);
       }
       // Centre marker.
       const cx = ox + (st.x + 0.5) * s;
@@ -574,7 +573,7 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawBuilding(b: Building, color: number, style: HouseStyle, s: number, ox: number, oy: number, x0: number, y0: number, x1: number, y1: number): void {
+  private drawBuilding(b: Building, color: number, arch: Architecture, s: number, ox: number, oy: number, x0: number, y0: number, x1: number, y1: number): void {
     if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) return;
     const ctx = this.ctx;
     const px = Math.round(ox + b.x * s);
@@ -582,40 +581,16 @@ export class Renderer {
     const w = Math.max(2, Math.round(s));
     const a = ctx.globalAlpha;
     ctx.globalAlpha = a * (b.done ? 1 : 0.45);
+    const level = b.done ? b.level : 1;
     if (s < 3) {
       // Far away: a coloured dot per building (houses by level, so towns read lighter and larger).
-      ctx.fillStyle = b.type === 'house' ? style.dots[Math.min(4, Math.max(1, b.level))] : BUILDING_COLORS[b.type];
+      ctx.fillStyle = buildingDot(arch, b.type, level);
       ctx.fillRect(px, py, w, w);
-      if (b.type === 'house' && b.level >= 3 && b.done) ctx.fillRect(px, py - w, w, w);
+      if (b.type === 'house' && level >= 3) ctx.fillRect(px, py - w, w, w);
     } else {
-      const u = s / 8; // art is drawn on an 8×8 grid
-      const r = (x: number, y: number, ww: number, hh: number, c: string) => {
-        ctx.fillStyle = c;
-        ctx.fillRect(Math.round(px + x * u), Math.round(py + y * u), Math.max(1, Math.round(ww * u)), Math.max(1, Math.round(hh * u)));
-      };
-      switch (b.type) {
-        case 'house':
-          style.draw(r, b.done ? b.level : 1, COLORS[color]);
-          break;
-        case 'storehouse':
-          r(0, 2, 8, 5, '#8d8579');
-          r(0, 1, 8, 2, COLORS[color]);
-          r(2, 4, 4, 3, '#4a4339');
-          break;
-        case 'farm':
-          r(0, 1, 8, 6, '#9a7a44');
-          for (let k = 0; k < 4; k++) r(1, 1 + k * 1.5, 6, 0.8, '#6fae3e');
-          break;
-        case 'lumber':
-          r(1, 4, 5, 3, '#7a5530');
-          r(5, 1, 2, 3, '#3f7d3a');
-          r(0, 7, 8, 1, '#5a3e22');
-          break;
-        default:
-          r(0, 3, 8, 4, '#7d7b78');
-          r(1, 1, 4, 3, '#a09d98');
-          r(5, 4, 2, 2, '#4a4947');
-      }
+      // Close: the outlined, shadowed sprite (built once per look and zoom, then reused).
+      const sprite = this.buildingSprite(arch, b.type, level, color, w);
+      ctx.drawImage(sprite.canvas, px - sprite.pad, py - w - sprite.pad);
     }
     ctx.globalAlpha = a;
     if (b.up && s >= 3) {
@@ -632,6 +607,51 @@ export class Renderer {
       ctx.fillStyle = b.up ? '#7fd3ff' : '#ffd34d';
       ctx.fillRect(px, py + w - 3, Math.round((w * b.progress) / b.needed), 3);
     }
+  }
+
+  private spriteCache = new Map<string, { canvas: HTMLCanvasElement; pad: number }>();
+
+  /**
+   * A building's sprite for one tile size: the art on a canvas one tile wide and two tiles tall (it may rise a tile
+   * above its own), with a dark outline so it reads against any ground and a soft shadow that sets it on its tile.
+   */
+  private buildingSprite(arch: Architecture, type: BuildingType, level: number, color: number, size: number): { canvas: HTMLCanvasElement; pad: number } {
+    const key = `${arch}|${type}|${level}|${color}|${size}`;
+    let hit = this.spriteCache.get(key);
+    if (hit) return hit;
+    if (this.spriteCache.size > 400) this.spriteCache.clear(); // zoom changes leave old sizes behind
+    const pad = Math.max(1, Math.round(size / 24));
+    const u = size / 8;
+    const make = () => {
+      const c = document.createElement('canvas');
+      c.width = size + 2 * pad;
+      c.height = 2 * size + 2 * pad;
+      return c;
+    };
+    const art = make();
+    const ac = art.getContext('2d')!;
+    drawBuildingArt(
+      (x, y, ww, hh, col) => {
+        ac.fillStyle = col;
+        ac.fillRect(pad + Math.round(x * u), pad + Math.round((y + 8) * u), Math.max(1, Math.round(ww * u)), Math.max(1, Math.round(hh * u)));
+      },
+      arch, type, level, COLORS[color],
+    );
+    const outline = make();
+    const oc = outline.getContext('2d')!;
+    for (const [dx, dy] of [[pad, 0], [-pad, 0], [0, pad], [0, -pad]]) oc.drawImage(art, dx, dy);
+    oc.globalCompositeOperation = 'source-in';
+    oc.fillStyle = 'rgba(20,14,10,0.85)';
+    oc.fillRect(0, 0, outline.width, outline.height);
+    const out = make();
+    const fc = out.getContext('2d')!;
+    fc.fillStyle = 'rgba(0,0,0,0.28)'; // ground shadow
+    fc.fillRect(pad + Math.round(0.4 * u), pad + Math.round(15 * u), Math.round(7.6 * u), Math.max(1, Math.round(1.2 * u)));
+    fc.drawImage(outline, 0, 0);
+    fc.drawImage(art, 0, 0);
+    hit = { canvas: out, pad };
+    this.spriteCache.set(key, hit);
+    return hit;
   }
 
   private drawFire(o: Overlay, s: number, ox: number, oy: number): void {

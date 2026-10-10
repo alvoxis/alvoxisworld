@@ -282,7 +282,7 @@ describe('self-running settlements', () => {
       civ.wood = 60;
       put(civ, 'house', 38, 38);
       put(civ, 'house', 39, 42);
-      run(sim, 480 * 6);
+      run(sim, 480 * 8); // 0.18 layout: buildings are farther apart, so the first upgrade comes a little later
       return { sim, civ };
     };
     const on = grow(true);

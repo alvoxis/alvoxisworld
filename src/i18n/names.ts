@@ -2,6 +2,7 @@
  * Display text for game data. Species, terrain, tools and effects keep their English
  * ids and fields (saves and rules use those); the screen shows these translations.
  */
+import { architectureOf } from '../render/architecture';
 import { TOOLS, type Tool } from '../game/tools';
 import { EFFECTS } from '../sim/effects';
 import { SPECIES } from '../sim/creatures';
@@ -26,7 +27,7 @@ export const stageName = (stage: string): string => td(`stage.${stage}`);
 
 /** Name of a house level in the architecture of a people (human names for anything else). */
 export function houseName(species: number, level: number): string {
-  return SPECIES[species]?.civ?.architecture === 'elven' ? td(`house.elven.${level}`) : td(`house.level.${level}`);
+  return architectureOf(species) === 'elven' ? td(`house.elven.${level}`) : td(`house.level.${level}`);
 }
 
 /** Label and hint of a tool in the current language. */

@@ -212,6 +212,10 @@ Without weather, cost per animal is unchanged; the small differences are run-to-
 
 `npm run bench:civ`, single run: 0.47 / 0.55 / 0.59 ms/tick (people only / groups / 12 settlements), the same as 0.15 within noise. The upgrade check runs once per settlement step; house sprites are a few more rectangles per visible house. Browser frame cost and phones were **not measured**; no physical iPhone was used.
 
+## Visual evolution (0.18)
+
+Buildings are now copied from cached sprites (one `drawImage` per visible building instead of 10–40 `fillRect` calls); a sprite is built once per look, settlement colour and tile size (the cache is cleared above 400 entries, i.e. after many zoom changes). The settlement card refreshes chips only when their values change. `findSite` adds a 3×3 neighbour check per candidate tile, run only when a building is placed. No browser frame-time measurement was made for this milestone; no physical iPhone was used.
+
 ## Elves (0.17)
 
 No new per-tick work: elves run through the same creature, group and settlement code. `npm run bench:civ` was not re-run for this milestone (it spawns humans only, so it would not exercise elves). Browser frame cost and phones were **not measured**; no physical iPhone was used.

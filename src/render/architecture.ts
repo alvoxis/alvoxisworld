@@ -1,10 +1,15 @@
 /**
- * Architecture of the peoples: how each people's houses look at each level (1–4). Only the look differs; the rules
- * (costs, capacity, upgrades, builders) are shared and live in sim/civ.ts. A people picks its style through
- * `CivProfile.architecture`; a new people needs one more entry here. No DOM: the art is a list of rectangles on the
- * 8×8 building grid, so it can be tested and drawn by any renderer. Higher levels may rise above their tile (negative y).
+ * Architecture of the peoples: how each people's buildings look. Only the look differs; the rules (costs, capacity,
+ * upgrades, builders) are shared and live in sim/civ.ts. A people picks its house style through
+ * `CivProfile.architecture`; a new people needs one more entry in HOUSE_STYLES. Workplaces (farm, lumber camp,
+ * quarry, storehouse) share one look for every people, with the settlement colour as an accent.
+ *
+ * No DOM: the art is a list of rectangles on the 8×8 building grid (one tile is 8 units wide), so it can be tested
+ * and drawn by any renderer. Buildings stand on their tile (y 0..8); taller levels rise above it (negative y, down to
+ * -8). The renderer adds a dark outline and a ground shadow and caches the result per zoom (renderer.ts).
  */
-import type { Architecture } from '../sim/creatures';
+import type { BuildingType } from '../sim/civ';
+import { SPECIES, type Architecture } from '../sim/creatures';
 
 /** Draws a rectangle in grid units (x, y, width, height, colour). */
 export type Rect = (x: number, y: number, w: number, h: number, c: string) => void;
@@ -16,104 +21,170 @@ export interface HouseStyle {
   draw(r: Rect, level: number, roof: string): void;
 }
 
+/** A #rrggbb colour made lighter (k > 0) or darker (k < 0). */
+export function shade(hex: string, k: number): string {
+  const n = parseInt(hex.slice(1, 7), 16);
+  const f = (v: number) => Math.max(0, Math.min(255, Math.round(k >= 0 ? v + (255 - v) * k : v * (1 + k))));
+  return `#${[(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => f(v).toString(16).padStart(2, '0')).join('')}`;
+}
+
+const DOOR = '#3b2817';
+const LIT = '#ffd98a';
+const GLASS = '#5b86b8';
+const LEAF_LIT = '#c8f5a8';
+
+/** A stepped gable roof in the settlement colour, from `top` down to `eave` (the lowest row darker). */
+function gable(r: Rect, roof: string, top: number, eave: number, x0 = 0, x1 = 8): void {
+  const rows = Math.max(2, Math.round(eave - top));
+  for (let k = 0; k < rows; k++) {
+    const inset = ((rows - 1 - k) / rows) * ((x1 - x0) / 2 - 0.6);
+    r(x0 + inset, top + k, x1 - x0 - 2 * inset, 1.05, k === rows - 1 ? shade(roof, -0.3) : roof);
+  }
+  r(x0 + (x1 - x0) / 2 - 0.5, top - 0.3, 1, 0.5, shade(roof, 0.25)); // ridge cap
+}
+
 /**
- * Human houses: 1 thatched hut, 2 timber house with a coloured roof, 3 stone base with a timber upper floor,
- * 4 two-storey pale stone town house with windows and a chimney.
+ * Human houses grow from mud and thatch to stone: 1 a low thatched hut with a pennant, 2 a log cottage with a
+ * gabled roof and lit windows, 3 a two-storey house on a stone ground floor with a timber frame and a chimney,
+ * 4 a tall pale stone town house with three rows of windows, a dormer and two chimneys.
  */
 function drawHumanHouse(r: Rect, level: number, roof: string): void {
   switch (level) {
     case 1:
-      r(2, 2, 4, 1, '#d9b765'); // thatch, stepped like a cone
-      r(1, 3, 6, 2, '#c4a052');
-      r(0, 5, 8, 2, '#a98a45');
-      r(3, 5, 2, 2, '#3b2817');
-      r(4, 1, 1, 1, roof); // a small pennant in the settlement colour
+      r(1.5, 5, 5, 2, '#9c7a4a'); // mud walls
+      r(1.5, 6.5, 5, 0.5, '#7d5f37');
+      r(0.5, 3.5, 7, 1.6, '#c9a352'); // thatch in layers
+      r(0.5, 4.8, 7, 0.4, '#a8873f');
+      r(1.5, 2.5, 5, 1.2, '#d6b25f');
+      r(2.5, 1.6, 3, 1, '#e0be6c');
+      r(3.4, 0.9, 1.2, 0.8, '#b48f43');
+      r(3.4, 5.4, 1.2, 1.6, DOOR);
+      r(6.6, 0.2, 0.4, 3.4, '#6b4a2a'); // pole with a pennant in the settlement colour
+      r(7, 0.2, 1, 0.7, roof);
       break;
     case 2:
-      r(1, 3, 6, 4, '#a8783e'); // log walls
-      r(1, 4, 6, 0.5, '#7c5428');
-      r(1, 5.5, 6, 0.5, '#7c5428');
-      r(0, 1, 8, 2, roof);
-      r(1, 0, 6, 1, roof);
-      r(3, 5, 2, 2, '#3b2817');
-      r(5.5, 3.5, 1, 1, '#ffd98a'); // lit window
+      r(0.5, 6.6, 7, 0.4, '#7c766c'); // footing
+      r(1, 3.6, 6, 3, '#b0803f'); // log walls
+      r(1, 4.4, 6, 0.3, '#7c5428');
+      r(1, 5.4, 6, 0.3, '#7c5428');
+      gable(r, roof, 0.4, 3.8);
+      r(3.3, 4.8, 1.4, 1.8, DOOR);
+      r(1.6, 4.2, 1.1, 1, LIT);
+      r(5.3, 4.2, 1.1, 1, LIT);
       break;
     case 3:
-      r(0, 3, 8, 4, '#8f8b84'); // stone ground floor
-      r(1, 4, 2, 0.5, '#6f6b65');
-      r(5, 5, 2, 0.5, '#6f6b65');
-      r(1, 0, 6, 3, '#a8783e'); // timber upper floor
-      r(1, 1.2, 6, 0.4, '#5e3f1e');
-      r(0, -2, 8, 2, roof);
-      r(2, -3, 4, 1, roof);
-      r(3, 5, 2, 2, '#3b2817');
-      r(2, 0.8, 1, 1, '#ffd98a');
-      r(5, 0.8, 1, 1, '#ffd98a');
+      r(0, 4, 8, 3, '#8f8b84'); // stone ground floor
+      r(0.5, 4.8, 2, 0.3, '#6f6b65');
+      r(4, 5.6, 2.5, 0.3, '#6f6b65');
+      r(1.5, 6.3, 2, 0.3, '#6f6b65');
+      r(3.2, 4.8, 1.6, 2.2, DOOR);
+      r(0.5, 0.8, 7, 3.2, '#b0803f'); // timber-framed upper floor
+      r(0.5, 0.8, 7, 0.3, '#5e3f1e');
+      r(0.5, 3.7, 7, 0.3, '#5e3f1e');
+      r(2.2, 0.8, 0.3, 3.2, '#5e3f1e');
+      r(5.5, 0.8, 0.3, 3.2, '#5e3f1e');
+      r(0.9, 1.6, 0.9, 1.1, LIT);
+      r(3.5, 1.6, 1, 1.1, LIT);
+      r(6.2, 1.6, 0.9, 1.1, LIT);
+      r(5.8, -3.2, 1, 2.4, '#6d5d4f'); // chimney
+      r(5.6, -3.4, 1.4, 0.4, '#4f433a');
+      gable(r, roof, -2.6, 1, -0.3, 8.3);
       break;
     default:
-      r(0, -2, 8, 9, '#e1dbcd'); // two storeys of pale stone
-      r(0, 2.5, 8, 0.5, '#b9b2a2');
-      r(0, -4, 8, 2, roof);
-      r(1, -5, 6, 1, roof);
-      r(6, -6, 1, 2, '#6d5d4f'); // chimney
-      for (const x of [1, 3.5, 6]) {
-        r(x, -1, 1, 1.5, '#5b86b8');
-        r(x, 3.5, 1, 1.5, '#5b86b8');
+      r(0, 6.4, 8, 0.6, '#9c958a'); // plinth
+      r(0, -3, 8, 9.4, '#e1dbcd'); // three storeys of pale stone
+      r(0, 0.6, 8, 0.4, '#b9b2a2');
+      r(0, 3.6, 8, 0.4, '#b9b2a2');
+      for (const x of [0.8, 3.5, 6.2]) {
+        r(x, -2.1, 1, 1.6, GLASS);
+        r(x, 1.4, 1, 1.6, GLASS);
       }
-      r(3.5, 5, 1.5, 2, '#3b2817');
+      r(0.8, 4.4, 1, 1.4, GLASS);
+      r(6.2, 4.4, 1, 1.4, GLASS);
+      r(3.3, 4.2, 1.4, 2.2, DOOR);
+      r(6.2, -7, 1, 2.6, '#6d5d4f'); // chimneys
+      r(1, -6.6, 0.9, 2, '#6d5d4f');
+      gable(r, roof, -6, -3, -0.3, 8.3);
+      r(3.3, -5.4, 1.4, 1.1, '#e1dbcd'); // dormer
+      r(3.6, -5.1, 0.8, 0.6, GLASS);
   }
 }
 
 /**
- * Elven houses: living wood and leaves instead of thatch and stone. 1 a leaf-covered dome shelter, 2 a round wooden
- * dwelling under a rounded leaf roof with a green-lit window, 3 a house on a platform in a tree under a wide canopy,
- * 4 a tall pale-wood spire hall with leaf wings and lit windows. The settlement colour shows in a pennant or band.
+ * Elven houses are living wood and leaves: 1 a dome of leaves on a wicker ring, 2 a round wooden dwelling under a
+ * rounded leaf roof, 3 a house on a platform in a tree under a wide canopy, with a ladder, 4 a tall pale-wood
+ * spire hall with leaf-roofed wings. The settlement colour shows in a pennant, a vine or a band.
  */
 function drawElvenHouse(r: Rect, level: number, roof: string): void {
   switch (level) {
     case 1:
-      r(3, 1, 2, 1, '#78c25c'); // a dome of leaves
-      r(2, 2, 4, 1, '#5fa84a');
-      r(1, 3, 6, 4, '#4f8f3c');
-      r(1, 4, 1, 1, '#3d7530');
-      r(6, 5, 1, 1, '#3d7530');
-      r(3, 5, 2, 2, '#22301a'); // round low entrance
-      r(4, 0, 1, 1, roof);
+      r(1, 6, 6, 1, '#7a5a34'); // wicker ring
+      r(1, 3.2, 6, 2.9, '#4f8f3c'); // dome of leaves
+      r(1.8, 2.3, 4.4, 1, '#5fa84a');
+      r(2.8, 1.5, 2.4, 0.9, '#78c25c');
+      r(1.6, 3.8, 0.6, 0.5, '#3d7530');
+      r(5.4, 4.6, 0.6, 0.5, '#3d7530');
+      r(3.6, 2.6, 0.6, 0.4, '#8fd36e');
+      r(3.2, 4.6, 1.6, 2.4, '#22301a'); // low round entrance
+      r(4, 0.5, 0.3, 1.1, '#6b4a2a');
+      r(4.3, 0.5, 0.9, 0.5, roof);
       break;
     case 2:
-      r(1, 3, 6, 4, '#8a6a42'); // round wooden walls
-      r(1, 4.5, 6, 0.4, '#6c5030');
-      r(2, 0, 4, 1, '#6cc06a'); // rounded leaf roof
-      r(1, 1, 6, 1, '#4fa458');
-      r(0, 2, 8, 1.2, '#3f8f4a');
-      r(3, 5, 2, 2, '#2b2015');
-      r(5.5, 3.5, 1, 1, '#c8f5a8'); // green-lit window
-      r(0, 2, 1, 0.6, roof);
+      r(1, 3.8, 6, 3.2, '#8a6a42'); // round wooden walls
+      r(1, 4.8, 6, 0.3, '#6c5030');
+      r(1, 5.9, 6, 0.3, '#6c5030');
+      r(0, 2.8, 8, 1.2, '#3f8f4a'); // rounded leaf roof
+      r(0.6, 1.8, 6.8, 1.1, '#4fa458');
+      r(1.6, 0.9, 4.8, 1, '#5fb865');
+      r(2.8, 0.2, 2.4, 0.8, '#78c25c');
+      r(0, 3.9, 0.8, 0.5, '#3f8f4a');
+      r(7.2, 3.9, 0.8, 0.5, '#3f8f4a');
+      r(0.4, 2.9, 1.2, 0.4, roof); // vine in the settlement colour
+      r(3.2, 4.8, 1.6, 2.2, '#2b2015');
+      r(1.6, 4.3, 1, 1, LEAF_LIT);
+      r(5.4, 4.3, 1, 1, LEAF_LIT);
       break;
     case 3:
-      r(3, 2, 2, 5, '#6b4a2a'); // trunk
-      r(2, 6, 4, 1, '#5a3d22'); // roots
-      r(0, 2, 8, 1, '#8a6a42'); // platform
-      r(1, -1, 6, 3, '#a07a4c'); // the house on the platform
-      r(2, 0, 1, 1, '#c8f5a8');
-      r(5, 0, 1, 1, '#c8f5a8');
-      r(0, -3, 8, 2, '#3f8f4a'); // wide canopy
-      r(1, -4, 6, 1, '#5fb865');
-      r(3, -5, 2, 1, '#78c25c');
-      r(6, -5, 1, 1, roof);
+      r(3, 2, 2, 5, '#6b4a2a'); // trunk with roots
+      r(3.5, 3, 0.3, 3, '#563a20');
+      r(2, 6.4, 4, 0.6, '#5a3d22');
+      r(1.6, 6.8, 1, 0.3, '#5a3d22');
+      r(5.4, 6.8, 1, 0.3, '#5a3d22');
+      r(5.3, 2.4, 0.3, 4.2, '#8a6a42'); // ladder
+      r(6.1, 2.4, 0.3, 4.2, '#8a6a42');
+      for (const y of [3.2, 4.4, 5.6]) r(5.3, y, 1.1, 0.2, '#8a6a42');
+      r(0, 1.8, 8, 0.6, '#8a6a42'); // platform
+      r(1, -1.4, 6, 3.2, '#a07a4c'); // the house on it
+      r(1, 0, 6, 0.3, '#7d5c34');
+      r(1.8, -0.6, 1, 1, LEAF_LIT);
+      r(5.2, -0.6, 1, 1, LEAF_LIT);
+      r(3.4, -0.3, 1.2, 2.1, '#2b2015');
+      r(-0.4, -3.2, 8.8, 1.9, '#3f8f4a'); // wide canopy
+      r(0.4, -4.2, 7.2, 1.1, '#4fa458');
+      r(1.6, -5, 4.8, 0.9, '#5fb865');
+      r(3, -5.6, 2, 0.7, '#78c25c');
+      r(6.8, -6.2, 0.3, 1.2, '#6b4a2a');
+      r(7.1, -6.2, 0.9, 0.5, roof);
       break;
     default:
-      r(2, -3, 4, 10, '#e2d6b8'); // tall hall of pale wood
-      r(2, -3, 4, 0.6, roof); // band in the settlement colour
-      r(3, -6, 2, 3, '#4fa458'); // leaf spire
-      r(3.5, -7, 1, 1, '#78c25c');
-      r(0, -1, 2, 4, '#4fa458'); // leaf wings
-      r(6, -1, 2, 4, '#4fa458');
-      r(0, 3, 2, 0.6, '#3f8f4a');
-      r(6, 3, 2, 0.6, '#3f8f4a');
-      r(3.5, -1, 1, 1.5, '#c8f5a8');
-      r(3.5, 2.2, 1, 1.5, '#c8f5a8');
-      r(3, 5, 2, 2, '#3b2817');
+      r(0.5, 6.4, 7, 0.6, '#bfb08c'); // terrace
+      r(0, 1, 2, 5.4, '#d4c6a4'); // wings
+      r(6, 1, 2, 5.4, '#d4c6a4');
+      r(-0.3, 0, 2.6, 1.1, '#4fa458');
+      r(5.7, 0, 2.6, 1.1, '#4fa458');
+      r(0.6, 2.4, 0.8, 1, LEAF_LIT);
+      r(6.6, 2.4, 0.8, 1, LEAF_LIT);
+      r(2, -3, 4, 9.4, '#e2d6b8'); // tall hall of pale wood
+      r(2, -0.2, 4, 0.3, '#c8b994');
+      r(2, 2.8, 4, 0.3, '#c8b994');
+      r(2, -3, 4, 0.5, roof); // band in the settlement colour
+      r(2.3, -4.4, 3.4, 1.4, '#3f8f4a'); // leaf spire
+      r(2.9, -5.6, 2.2, 1.2, '#4fa458');
+      r(3.4, -6.7, 1.2, 1.1, '#5fb865');
+      r(3.8, -7.6, 0.4, 0.9, '#78c25c');
+      r(3.5, -1.8, 1, 1.6, LEAF_LIT);
+      r(3.5, 1.2, 1, 1.4, LEAF_LIT);
+      r(3.2, 4.2, 1.6, 2.2, DOOR);
   }
 }
 
@@ -121,3 +192,94 @@ export const HOUSE_STYLES: Readonly<Record<Architecture, HouseStyle>> = {
   human: { dots: ['', '#b8964f', '#c9a36b', '#a7a39b', '#e4ded2'], draw: drawHumanHouse },
   elven: { dots: ['', '#4f8f3c', '#6f8a4a', '#7fae5a', '#d9e8c0'], draw: drawElvenHouse },
 };
+
+export type Workplace = Exclude<BuildingType, 'house'>;
+
+/**
+ * Workplaces read by their use: a fenced field with rows of crops and a scarecrow, a lumber camp with a log pile
+ * under a lean-to and an axe in a stump, a quarry pit with cut blocks and a pick, a wide plank barn with a big door.
+ */
+export const WORKPLACES: Readonly<Record<Workplace, { dot: string; draw(r: Rect, roof: string): void }>> = {
+  farm: {
+    dot: '#7fb046',
+    draw(r, roof) {
+      r(0, 0.5, 8, 7, '#8a6a3c'); // tilled soil
+      for (const y of [0.8, 2.5, 4.2, 5.9]) {
+        r(0, y + 0.95, 8, 0.4, '#6e5230'); // furrow
+        for (let x = 0.5; x < 7.5; x += 1.5) {
+          r(x, y, 0.6, 0.9, '#7cc04a'); // crop with a ripe tip
+          r(x, y, 0.6, 0.3, '#d8d060');
+        }
+      }
+      r(0, 0.5, 0.3, 7, '#b08a52'); // fence posts
+      r(7.7, 0.5, 0.3, 7, '#b08a52');
+      r(6.6, -1, 0.3, 2, '#6b4a2a'); // scarecrow with a hat in the settlement colour
+      r(6.1, -0.6, 1.3, 0.3, '#6b4a2a');
+      r(6.4, -1.4, 0.7, 0.6, roof);
+    },
+  },
+  lumber: {
+    dot: '#7a5530',
+    draw(r, roof) {
+      r(0, 6.6, 8, 0.5, '#6b5434');
+      r(0.3, 3, 0.3, 3.6, '#6b4a2a'); // lean-to
+      r(5.1, 3, 0.3, 3.6, '#6b4a2a');
+      r(0, 2.4, 5.8, 0.7, roof);
+      r(0.4, 4.6, 4.8, 0.9, '#8a5a2b'); // log pile with cut ends
+      r(0.4, 5.5, 4.8, 0.9, '#7a4f25');
+      r(0.9, 3.7, 3.8, 0.9, '#8a5a2b');
+      for (const [x, y] of [[0.4, 4.7], [0.4, 5.6], [0.9, 3.8]]) r(x, y, 0.6, 0.7, '#d2a46a');
+      r(5.8, 5, 1.6, 1.6, '#7a4f25'); // stump with an axe
+      r(5.8, 5, 1.6, 0.4, '#d2a46a');
+      r(6.5, 3.2, 0.3, 1.9, '#9a6a34');
+      r(6.8, 3.2, 0.8, 0.7, '#d6dbe2');
+    },
+  },
+  quarry: {
+    dot: '#9a9791',
+    draw(r, roof) {
+      r(0.5, 2.5, 7, 4.5, '#6f6c67'); // stepped pit
+      r(0.5, 2.5, 7, 0.5, '#8d8a84');
+      r(1.3, 3.4, 5.4, 2.8, '#4f4c48');
+      r(1.3, 3.4, 5.4, 0.4, '#5f5c58');
+      r(0.2, 6.2, 1.6, 1, '#b5b1aa'); // cut blocks
+      r(6.2, 6.1, 1.6, 1.1, '#b5b1aa');
+      r(5.4, 0.6, 1.8, 1.4, '#a09d98');
+      r(2, 1, 2.4, 0.4, '#d6dbe2'); // pick
+      r(3, 1, 0.3, 1.8, '#9a6a34');
+      r(0.6, 0, 0.3, 1.2, '#6b4a2a');
+      r(0.9, 0, 0.8, 0.5, roof);
+    },
+  },
+  storehouse: {
+    dot: '#a77b47',
+    draw(r, roof) {
+      r(0, 6.5, 8, 0.5, '#7c766c'); // footing
+      r(0, 2.6, 8, 4, '#a77b47'); // plank barn
+      r(0, 3.6, 8, 0.25, '#86602f');
+      r(0, 4.8, 8, 0.25, '#86602f');
+      r(2.5, 3.8, 3, 2.8, '#5a3d22'); // big door with a cross brace
+      r(2.5, 5, 3, 0.3, '#a77b47');
+      r(3.85, 3.8, 0.3, 2.8, '#a77b47');
+      r(6.2, 5.6, 1.2, 1, '#c39a5e'); // crate and sack
+      r(0.6, 5.7, 1, 0.9, '#d9c9a3');
+      gable(r, roof, -0.6, 2.8, -0.3, 8.3);
+    },
+  },
+};
+
+/** Building style of a settlement's species (human style for any species without one). */
+export function architectureOf(species: number): Architecture {
+  return SPECIES[species]?.civ?.architecture ?? 'human';
+}
+
+/** Draws any building: houses in the people's style and level, workplaces in the shared style. */
+export function drawBuildingArt(r: Rect, arch: Architecture, type: BuildingType, level: number, roof: string): void {
+  if (type === 'house') HOUSE_STYLES[arch].draw(r, level, roof);
+  else WORKPLACES[type].draw(r, roof);
+}
+
+/** Far-away colour of a building. */
+export function buildingDot(arch: Architecture, type: BuildingType, level: number): string {
+  return type === 'house' ? HOUSE_STYLES[arch].dots[Math.max(1, Math.min(4, level))] : WORKPLACES[type].dot;
+}

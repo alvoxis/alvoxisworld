@@ -155,20 +155,33 @@ export class Hud {
     row.replaceChildren();
     for (const tool of TOOLS.filter((t) => t.category === this.category)) {
       const b = document.createElement('button');
+      b.type = 'button';
       b.className = 'tool';
-      b.classList.toggle('active', tool.id === this.game.tool.id);
+      const on = tool.id === this.game.tool.id;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
       const label = toolLabel(tool);
-      b.title = label;
-      b.append(this.icon(tool), label);
+      const hint = toolHint(tool);
+      // Icon-only tile: the name is its accessible name and tooltip, and is shown above the palette when selected.
+      b.setAttribute('aria-label', label);
+      b.title = hint ? `${label} — ${hint}` : label;
+      b.dataset.tool = tool.id;
+      b.append(this.icon(tool));
       b.addEventListener('click', () => {
         this.game.setTool(tool.id);
         this.renderTools();
         this.syncBrush();
-        const hint = toolHint(tool);
         this.toast(hint ? t('tool.hint', { label, hint }) : label);
       });
       row.appendChild(b);
     }
+    const cur = this.game.tool;
+    const name = toolLabel(cur);
+    const hint = toolHint(cur);
+    $('tool-name').replaceChildren();
+    const nb = document.createElement('b');
+    nb.textContent = name;
+    $('tool-name').append(nb, hint ? ` · ${hint}` : '');
   }
 
   private layoutMinimap(): void {
@@ -597,18 +610,21 @@ export class Hud {
       [t('info.life_nearby'), life || t('info.life_none')],
     ];
     body.dataset.settlement = r.settlementId ? String(r.settlementId) : '';
+    // On a settlement the tile facts go into the card's details, so the compact card stays small.
+    let target: HTMLElement = body;
     if (r.settlementId) {
       const card = document.createElement('div');
       card.id = 'settle-card';
       body.appendChild(card);
       this.card.mount(card, r.settlementId);
+      target = card.querySelector<HTMLElement>('details.sc-more') ?? body;
     }
     for (const [k, v] of lines) {
       const div = document.createElement('div');
       const b = document.createElement('b');
       b.textContent = `${k}: `;
       div.append(b, v);
-      body.appendChild(div);
+      target.appendChild(div);
     }
     el.hidden = false;
   }
