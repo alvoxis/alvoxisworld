@@ -2,7 +2,7 @@
  * Small original SVG icons (inline, a few hundred bytes each, no network requests).
  * Drawn on a 32×32 grid with simple shapes so they stay crisp at any phone density.
  */
-export type CategoryId = 'creatures' | 'biomes' | 'powers' | 'effects';
+export type CategoryId = 'creatures' | 'biomes' | 'terrain' | 'powers' | 'effects';
 
 const svg = (body: string) =>
   `<svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false">${body}</svg>`;
@@ -22,6 +22,14 @@ export const CATEGORY_ICONS: Record<CategoryId, string> = {
       '<path d="M2 25 L11 9 L17 18 L21 12.5 L30 25 Z" fill="#8c8a85"/>' +
       '<path d="M11 9 L14.2 14.4 L12.2 13.4 L11 15 L9.6 13.2 L7.9 14.4 Z" fill="#f4f7fb"/>' +
       '<rect x="2" y="25" width="28" height="4.5" rx="1.5" fill="#4c9f3e"/>',
+  ),
+  // Terrain: a raised peak above a dug pit, with an up arrow.
+  terrain: svg(
+    '<path d="M2 22 L10 10 L15 16 L20 7 L30 22 Z" fill="#a08a6a" stroke="#6d5a40" stroke-width="1.1" stroke-linejoin="round"/>' +
+      '<path d="M20 7 L22.6 11 L20.6 10.2 L19.2 11.6 L18 10.4 Z" fill="#f4f7fb"/>' +
+      '<rect x="2" y="22" width="28" height="7" rx="2" fill="#4c9f3e"/>' +
+      '<ellipse cx="11" cy="25.5" rx="5" ry="2" fill="#2a5aa0"/>' +
+      '<path d="M26 4 L29 8 H27 V12 H25 V8 H23 Z" fill="#ffd34d"/>',
   ),
   // Powers: a lightning bolt in a glow.
   powers: svg(

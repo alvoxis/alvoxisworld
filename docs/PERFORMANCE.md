@@ -212,6 +212,14 @@ Without weather, cost per animal is unchanged; the small differences are run-to-
 
 `npm run bench:civ`, single run: 0.47 / 0.55 / 0.59 ms/tick (people only / groups / 12 settlements), the same as 0.15 within noise. The upgrade check runs once per settlement step; house sprites are a few more rectangles per visible house. Browser frame cost and phones were **not measured**; no physical iPhone was used.
 
+## World evolution (0.20)
+
+`npm run bench:civ`, single run (noisy): people only 0.44, groups with autonomous settling 0.69, 12 settlements 0.60 ms/tick (settlement step 0.135 ms/tick averaged, was 0.12: trail wear). Trails are sampled once per settlement step and drawn from cached blocks rebuilt only when a tile crosses a threshold; building life (smoke, glow, soot) is a few rectangles per visible building and off in reduced quality; creature frames are pre-rendered (two per species and direction). In headless Chromium with iPhone 13 emulation and software rendering, a busy scene with two settlements gave a median and 90th-percentile frame interval of 16.7 ms (the 60 Hz cap) over 120 frames; this is emulation, **not a phone**.
+
+## Kingdoms (0.19)
+
+The kingdom step is cheap: validation and succession every 20 ticks walk the members of each kingdom's settlements (a few hundred ids); forming every 240 ticks compares settlements pairwise (at most 12 settlements). The renderer draws one cached tint image per kingdom and the pre-split border edges; both are rebuilt only when membership or territories change. No browser frame-time measurement was made; no physical iPhone was used.
+
 ## Visual evolution (0.18)
 
 Buildings are now copied from cached sprites (one `drawImage` per visible building instead of 10–40 `fillRect` calls); a sprite is built once per look, settlement colour and tile size (the cache is cleared above 400 entries, i.e. after many zoom changes). The settlement card refreshes chips only when their values change. `findSite` adds a 3×3 neighbour check per candidate tile, run only when a building is placed. No browser frame-time measurement was made for this milestone; no physical iPhone was used.

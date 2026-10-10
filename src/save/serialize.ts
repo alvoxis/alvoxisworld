@@ -4,6 +4,7 @@ import { FOOD_CELL } from '../sim/foodmap';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
 import type { SettlementsSave } from '../sim/settlements';
 import type { GroupsSave } from '../sim/groups';
+import type { KingdomsSave } from '../sim/kingdoms';
 import { MAX_QUEUED_METEORS, MAX_SHOWERS, type DisasterConfig, type MeteorInFlight, type Shower } from '../sim/sky';
 import type { WeatherConfig, WeatherSystem } from '../sim/weather';
 import { T } from '../world/terrain';
@@ -25,9 +26,13 @@ import { WATER_FLAG, World } from '../world/world';
  *      absent = none / defaults, so saves 1–9 load unchanged,
  * 11 = groups of free people (optional `groups` block), settlement `stress`/`lastEmigration` and `bans`; absent = none / defaults,
  * 12 = elves (a seventh species, id 6). Nothing in the format changes (species ids and `statSpecies` already cover it);
- *      the bump only makes older builds refuse saves that may contain elves. Saves 1–11 load unchanged.
+ *      the bump only makes older builds refuse saves that may contain elves. Saves 1–11 load unchanged,
+ * 13 = kingdoms (optional `kingdoms` block: settlement ids, capital, ruler id, rulers and events); absent = none,
+ *      references are validated on load. Saves 1–12 load unchanged,
+ * 14 = terrain and settlement visuals: optional settlement `wear` (trails as [tile, wear] pairs) and the `shipyard`
+ *      building type; absent = no trails. Heights and water depth were already part of every save. Saves 1–13 load unchanged.
  */
-export const SAVE_VERSION = 12;
+export const SAVE_VERSION = 14;
 
 /** Version 6 additions. Everything in it is optional in a save and validated on load. */
 export interface SkySave {
@@ -137,6 +142,8 @@ export interface SaveData {
   settlements?: SettlementsSave;
   /** Version 11. */
   groups?: GroupsSave;
+  /** Version 13: kingdoms (absent = none). */
+  kingdoms?: KingdomsSave;
 }
 
 const COPIED = [
@@ -180,6 +187,7 @@ export function serialize(sim: Simulation): SaveData {
     history: sim.history.map((h) => ({ ...h })),
     settlements: sim.settlements.exportState(),
     groups: sim.groups.exportState(),
+    kingdoms: sim.kingdoms.exportState(),
     sky: {
       config: { ...sim.sky.config },
       meteors: sim.sky.meteors.map((m) => ({ ...m })),
@@ -421,6 +429,7 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
   sim.creatures.reindex();
   sim.settlements.importState(data.settlements, world, sim.creatures);
   sim.groups.importState(data.groups, world, sim.creatures, sim.settlements);
+  sim.kingdoms.importState(data.kingdoms, world, sim.creatures, sim.settlements);
   sim.history = data.history.map((h) => ({ ...h }));
   // Saves before 7 built their navigation data without slopes: have it rebuilt once.
   if (data.version < 7) world.passVersion++;

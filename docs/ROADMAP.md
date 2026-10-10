@@ -44,6 +44,12 @@ Residents take jobs (construction, field work, woodcutting, quarrying), walk to 
 ## ✅ Housing Evolution 0.16 (done)
 Houses go from huts to wooden, reinforced and urban houses with the settlement's stage and Better building; upgrades cost resources, take builders and time and add room; visible on the map and in the card. Save format still 11. Next logical step: architecture per people, more building types growing the same way.
 
+## ✅ World Evolution 0.20 (done, with foundations)
+Terrain tab (raise, lower, deepen water, smooth, strength, limits), rescue of walled-in creatures, outlined two-frame creature art with distinct elves, trails from real movement, a shipyard foundation on sea coasts, chimney smoke, elven window light, soot and ground detail. Save format 14. Next: built roads and bridges, ships and sailing, swaying vegetation, day/night light.
+
+## ✅ Kingdoms & Leaders 0.19 (done)
+Kingdoms form by themselves from neighbouring settlements of one people, with a living ruler, succession, a capital, a cached territory tint and border on the map, a kingdom card and political events. Save format 13. Next logical step: relations between kingdoms (diplomacy, then wars), splitting, rulers with traits.
+
 ## ✅ Visual Evolution, Settlement Layout & Mobile UI 0.18 (done)
 Outlined, cached building sprites (four clear house levels per people, recognisable workplaces), a ring-shaped settlement layout for new buildings, an icon tool palette without the manual founding tools, and a compact settlement card with details on demand. Save format unchanged (12). Next logical step: multi-tile buildings, roads, per-people workplaces.
 

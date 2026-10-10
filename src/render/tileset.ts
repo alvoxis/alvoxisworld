@@ -1,3 +1,4 @@
+import { CREATURE_ART } from './creatureart';
 import { Rng } from '../core/rng';
 import { T, TERRAIN, TERRAIN_COUNT } from '../world/terrain';
 
@@ -245,120 +246,36 @@ export class Tileset {
   }
 }
 
-type PixelArt = { rows: readonly string[]; palette: Record<string, string> };
-
 /**
- * Original pixel-art sprites as character maps (one char = one pixel, '.' = clear),
- * facing right. Sprite pixels are 1/8 of a tile, the same scale as terrain pixels.
+ * A creature sprite (facing right) from creatureart.ts, with a one-pixel dark outline baked in so it reads on any
+ * ground. The canvas is the art plus a 1-pixel margin on every side (OUTLINE_PAD).
  */
-const PIXEL_ART: Record<number, PixelArt> = {
-  2: {
-    // Hadrosaur: crested plant-eater, 12×12 (1.5 tiles).
-    rows: [
-      '..........c.',
-      '.........cc.',
-      '........gggg',
-      '........gegg',
-      '.......ggg..',
-      'd.....gggg..',
-      'ddgggggggg..',
-      '.dggggggggg.',
-      '..gbbbbbbgg.',
-      '...l....l...',
-      '...l....l...',
-      '..ll...ll...',
-    ],
-    palette: { g: '#6f8f4a', d: '#4e6a33', b: '#a9b979', c: '#c8643a', e: '#111111', l: '#3f5528' },
-  },
-  3: {
-    // Tyrant: big two-legged predator, 14×14 (1.75 tiles).
-    rows: [
-      '.........rrrr.',
-      '........rrrerr',
-      '........rrrrrr',
-      '........rrttt.',
-      '........rrrr..',
-      '.......rrr....',
-      'd.....rrrr.a..',
-      'dd..rrrrrrra..',
-      '.ddrrrrrrrr...',
-      '..drrrbbbrr...',
-      '....rrbbrr....',
-      '.....d...d....',
-      '.....d...d....',
-      '....dd..dd....',
-    ],
-    palette: { r: '#7a3b2a', d: '#552618', b: '#b0705a', t: '#f2efe6', e: '#f2c14e', a: '#6a3022' },
-  },
-  5: {
-    // Human, 8×8 (one tile): head, tunic, legs.
-    rows: ['..hhh...', '..hhh...', '...h....', '.tttttt.', 'ahtttth.', '..tttt..', '..l..l..', '..l..l..'].map((r) => r.slice(0, 8)),
-    palette: { h: '#e8b98a', t: '#3f6fb5', a: '#e8b98a', l: '#4a3a2a' },
-  },
-  6: {
-    // Elf, 8×8 (one tile): pale hair, pointed ears, green hooded cloak with a gold clasp, slim dark legs.
-    rows: ['..yyy...', '.ehhhe..', '..yhy...', '.gggggg.', 'hggbggh.', '..gggg..', '..l..l..', '..l..l..'],
-    palette: { y: '#f3e7a6', h: '#f1d3b3', e: '#f1d3b3', g: '#2f7d45', b: '#e0b84a', l: '#3b4a2e' },
-  },
-  4: {
-    // Fish, 6×6 (0.75 tiles).
-    rows: ['......', '.d.ss.', 'ddsses', 'ddssss', '.d.ss.', '......'],
-    palette: { s: '#9fc4d8', d: '#5f8fae', e: '#102030' },
-  },
-};
-
-/** Creature sprites drawn in code, facing right. */
-export function creatureSprite(species: number): HTMLCanvasElement {
-  const art = PIXEL_ART[species];
-  if (art) {
-    const c = document.createElement('canvas');
-    c.width = art.rows[0].length;
-    c.height = art.rows.length;
-    const ctx = c.getContext('2d')!;
-    art.rows.forEach((row, y) => {
-      for (let x = 0; x < row.length; x++) {
-        const color = art.palette[row[x]];
-        if (!color) continue;
-        ctx.fillStyle = color;
-        ctx.fillRect(x, y, 1, 1);
-      }
-    });
-    return c;
-  }
+export const OUTLINE_PAD = 1;
+export function creatureSprite(species: number, frame = 0): HTMLCanvasElement {
+  const art = CREATURE_ART[species] ?? CREATURE_ART[0];
+  const rows = art.frames[Math.min(frame, art.frames.length - 1)];
+  const w = rows[0].length;
+  const h = rows.length;
   const c = document.createElement('canvas');
-  c.width = 8;
-  c.height = 8;
+  c.width = w + 2 * OUTLINE_PAD;
+  c.height = h + 2 * OUTLINE_PAD;
   const ctx = c.getContext('2d')!;
-  const px = (x: number, y: number, color: string) => {
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y, 1, 1);
-  };
-  if (species === 0) {
-    // Grazer: woolly body, dark head, legs.
-    const body = '#efe6cf';
-    for (let y = 3; y <= 5; y++) for (let x = 1; x <= 5; x++) px(x, y, body);
-    px(1, 3, '#d8cdb2');
-    px(6, 3, '#3a2e26');
-    px(6, 4, '#3a2e26');
-    px(7, 4, '#3a2e26');
-    px(2, 6, '#3a2e26');
-    px(5, 6, '#3a2e26');
-  } else {
-    // Raptor: lean reptile with a tail.
-    const body = '#c8502e';
-    px(0, 4, body);
-    px(1, 4, body);
-    for (let x = 2; x <= 5; x++) px(x, 3, body);
-    for (let x = 2; x <= 4; x++) px(x, 4, '#e07a46');
-    px(5, 2, body);
-    px(6, 2, body);
-    px(7, 2, '#f4d2a0');
-    px(6, 1, '#1a1a1a');
-    px(3, 5, '#7a2c18');
-    px(3, 6, '#7a2c18');
-    px(5, 5, '#7a2c18');
-    px(5, 6, '#7a2c18');
+  const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && !!art.palette[rows[y][x]];
+  ctx.fillStyle = 'rgba(16,12,10,0.8)';
+  for (let y = -1; y <= h; y++) {
+    for (let x = -1; x <= w; x++) {
+      if (solid(x, y)) continue;
+      if (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1)) ctx.fillRect(x + OUTLINE_PAD, y + OUTLINE_PAD, 1, 1);
+    }
   }
+  rows.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      const color = art.palette[row[x]];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(x + OUTLINE_PAD, y + OUTLINE_PAD, 1, 1);
+    }
+  });
   return c;
 }
 
@@ -478,6 +395,33 @@ function reedSprite(): Sprite {
   });
 }
 
+/** A small cluster of flowers on grass: three blossoms on short stems. */
+function flowerSprite(petal: RGB): Sprite {
+  return makeSprite(5, 4, 2, 3, (set) => {
+    for (const [x, y] of [[0, 1], [2, 0], [4, 1]] as const) {
+      set(x, y, petal);
+      set(x, y + 1, [62, 120, 50]);
+    }
+    set(2, 1, [255, 236, 140]);
+    set(2, 2, [62, 120, 50]);
+  });
+}
+
+/** One or two stones with a lit top and a shadow. */
+function stoneSprite(base: RGB, pair: boolean): Sprite {
+  return makeSprite(5, 3, 2, 2, (set) => {
+    set(1, 0, shade(base, 1.25));
+    set(2, 0, shade(base, 1.15));
+    set(1, 1, base);
+    set(2, 1, shade(base, 0.85));
+    set(3, 2, [20, 20, 20], 60);
+    if (pair) {
+      set(4, 1, shade(base, 1.1));
+      set(4, 2, shade(base, 0.8));
+    }
+  });
+}
+
 /** Sprite catalogue (drawn at 8 px per tile; halved copies are used at 4 px per tile). */
 export const SPRITES = {
   oak: [treeSprite(3, [52, 118, 52], [92, 60, 34]), treeSprite(2, [64, 132, 58], [92, 60, 34]), treeSprite(3, [44, 106, 50], [84, 56, 32])],
@@ -491,6 +435,9 @@ export const SPRITES = {
   smallSnowPeak: [peakSprite(10, 8, true, 7), peakSprite(8, 7, true, 8)],
   reed: [reedSprite()],
   bush: [bushSprite([74, 138, 58]), bushSprite([92, 150, 62])],
+  flowers: [flowerSprite([235, 92, 110]), flowerSprite([250, 220, 90]), flowerSprite([170, 140, 235])],
+  stones: [stoneSprite([138, 134, 126], false), stoneSprite([150, 144, 132], true)],
+  sandStones: [stoneSprite([196, 176, 138], false), stoneSprite([180, 160, 124], true)],
 };
 
 /** Half-resolution copy (2×2 box filter with alpha weighting) for 4-px-per-tile chunks. */

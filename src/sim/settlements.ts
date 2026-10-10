@@ -16,7 +16,7 @@
 import { hash2 } from '../core/rng';
 import { T, isWater } from '../world/terrain';
 import type { World } from '../world/world';
-import { SPECIES, type Creatures } from './creatures';
+import { SPECIES, STATE, type Creatures } from './creatures';
 import { MOVE, passable } from './pathfinding';
 import {
   RADIUS_BONUS, civStep, exportCiv, housing, importCiv, jobKind, newCiv, startBuilding, startResearch, startUpgrade, type JobKind, type UpgradeFail,
@@ -52,6 +52,17 @@ export const MAX_RADIUS = 18;
 export const MAX_RADIUS_TOTAL = MAX_RADIUS + RADIUS_BONUS.town;
 /** A settlement needs at least this much connected land. */
 export const MIN_TERRITORY = 20;
+/** Wear added per person per step, the wear that shows a trail and a worn path, and how often (steps) wear fades by 1. */
+export const TRAIL_STEP = 3;
+export const TRAIL_WEAR = 40;
+export const PATH_WEAR = 160;
+export const TRAIL_FADE_STEPS = 4;
+/** States that wear trails: movement with a goal, and work at a workplace (by STATE value). */
+const PURPOSE: Readonly<Record<number, boolean>> = {
+  [STATE.SEEK_FOOD]: true, [STATE.SEEK_WATER]: true, [STATE.SEEK_MATE]: true, [STATE.TRAVEL]: true, [STATE.WORK]: true,
+};
+/** Tiles behind a walking person that are worn too (the way it came since the last step). */
+export const TRAIL_BACK = 2;
 
 export const COLORS = ['#e6584c', '#3f8fe0', '#e0b030', '#46b86a', '#b165d6', '#e8843a', '#2cb5b0', '#d9588e'] as const;
 
@@ -144,6 +155,16 @@ export class Settlements {
   private dirty = false;
   /** Settlements run themselves (build, research) unless the player turns it off. */
   auto = true;
+  /**
+   * Trails: how worn each land tile is by people of a settlement walking over it (0..255, sampled every step from
+   * real positions; fades slowly). Tiles at TRAIL_WEAR show as a trail, at PATH_WEAR as a worn path. Drawing only:
+   * trails do not change movement. Allocated when the first person wears the land.
+   */
+  wear: Uint8Array | null = null;
+  /** Tiles with any wear (for fading without scanning the map). */
+  private worn = new Set<number>();
+  /** Bumped when a tile crosses a trail threshold (the renderer caches on it). */
+  trailVersion = 0;
   /** People who left a settlement cannot rejoin that one before `until` (creature id → settlement and tick). */
   bans = new Map<number, { sid: number; until: number }>();
   /** Told when part of a settlement leaves (the groups system takes them in). */
@@ -191,6 +212,9 @@ export class Settlements {
     this.owner = null;
     this.bans.clear();
     this.memberOf.clear();
+    this.wear = null;
+    this.worn.clear();
+    this.trailVersion++;
     this.workTile.clear();
     this.workKindOf.clear();
     this.terrainVersion = -1;
@@ -420,6 +444,7 @@ export class Settlements {
       } else if (pop < MIN_VIABLE) s.status = 'fading';
     }
     this.rebuildWork(world);
+    this.wearTrails(world, creatures, tick);
     // The land can change under a settlement (floods, craters, snow): territories follow.
     if (world.passVersion !== this.terrainVersion) this.dirty = true;
     if (this.dirty) this.recomputeTerritory(world);
@@ -450,6 +475,62 @@ export class Settlements {
   }
 
   private creaturesRef: Creatures | null = null;
+
+  /** People of settlements wear the land tiles they stand on (inside their territory); old wear fades. */
+  private wearTrails(world: World, creatures: Creatures, tick: number): void {
+    const W = world.width;
+    for (const s of this.list) {
+      if (!s.civ || !this.owner) continue;
+      for (const id of s.members) {
+        const i = creatures.indexOf(id);
+        if (i < 0) continue;
+        // The tile underfoot, and for someone walking also the tiles just behind along the heading (the way it came
+        // since the last step), so trails join up. Uses only saved state, so it is the same after loading.
+        // Only purposeful movement makes trails (going to work, to food or water, to a mate, travelling) and the
+        // spot where someone works; aimless wandering does not, so trails show the routes people really use.
+        const st = creatures.state[i];
+        if (!PURPOSE[st]) continue;
+        const back = st === STATE.WORK ? 0 : TRAIL_BACK;
+        let last = -1;
+        for (let k = 0; k <= back * 2; k++) {
+          const d = k / 2;
+          const t = Math.floor(creatures.y[i] - creatures.dy[i] * d) * W + Math.floor(creatures.x[i] - creatures.dx[i] * d);
+          if (t === last) continue;
+          last = t;
+          if (t < 0 || t >= world.terrain.length || this.owner[t] !== s.id || isWater(world.terrain[t])) continue;
+          this.wear ??= new Uint8Array(world.width * world.height);
+          const before = this.wear[t];
+          this.wear[t] = Math.min(255, before + TRAIL_STEP);
+          this.worn.add(t);
+          if ((before < TRAIL_WEAR && this.wear[t] >= TRAIL_WEAR) || (before < PATH_WEAR && this.wear[t] >= PATH_WEAR)) this.trailVersion++;
+        }
+      }
+    }
+    if (this.wear && tick % (STEP_TICKS * TRAIL_FADE_STEPS) === 0) {
+      for (const t of [...this.worn]) {
+        const before = this.wear[t];
+        // Water over a trail (a flood, a new lake) washes it away; elsewhere it fades by one.
+        const v = isWater(world.terrain[t]) ? 0 : before - 1;
+        this.wear[t] = Math.max(0, v);
+        if (this.wear[t] === 0) this.worn.delete(t);
+        if ((before >= TRAIL_WEAR && this.wear[t] < TRAIL_WEAR) || (before >= PATH_WEAR && this.wear[t] < PATH_WEAR)) this.trailVersion++;
+      }
+    }
+  }
+
+  /** Tiles worn enough to show as trails, as [tile, wear] pairs (the renderer reads this only when trailVersion changes). */
+  trailTiles(): number[] {
+    const out: number[] = [];
+    if (this.wear) for (const t of this.worn) if (this.wear[t] >= TRAIL_WEAR) out.push(t, this.wear[t]);
+    return out;
+  }
+
+  /** Worn tiles as [tile, wear] pairs (for saving). */
+  exportWear(): number[] {
+    const out: number[] = [];
+    if (this.wear) for (const t of [...this.worn].sort((a, b) => a - b)) out.push(t, this.wear[t]);
+    return out;
+  }
 
   private rebuildWork(world: World): void {
     this.workTile.clear();
@@ -588,6 +669,7 @@ export class Settlements {
     return {
       nextId: this.nextId,
       auto: this.auto,
+      wear: this.exportWear(),
       bans: [...this.bans].map(([id, b]) => [id, b.sid, b.until] as [number, number, number]),
       list: this.list.map((s) => ({
         id: s.id, name: s.name, species: s.species, color: s.color, x: s.x, y: s.y, founded: s.founded, radius: s.radius,
@@ -641,6 +723,16 @@ export class Settlements {
       });
     }
     this.auto = save.auto !== false;
+    // Trails (format 14): [tile, wear] pairs; anything out of range is ignored.
+    const wear = Array.isArray(save.wear) ? save.wear : [];
+    for (let k = 0; k + 1 < wear.length && k < 2 * world.width * world.height; k += 2) {
+      const t = wear[k];
+      const v = wear[k + 1];
+      if (!Number.isInteger(t) || t < 0 || t >= world.width * world.height || typeof v !== 'number' || !(v >= 1)) continue;
+      this.wear ??= new Uint8Array(world.width * world.height);
+      this.wear[t] = Math.min(255, Math.floor(v));
+      this.worn.add(t);
+    }
     for (const b of Array.isArray(save.bans) ? save.bans.slice(0, 500) : []) {
       if (Array.isArray(b) && b.every((v) => typeof v === 'number' && Number.isFinite(v)) && ids.has(b[1])) this.bans.set(b[0], { sid: b[1], until: b[2] });
     }
@@ -660,6 +752,8 @@ export interface SettlementsSave {
   nextId: number;
   /** Version 10: settlements build and research by themselves (absent = true). */
   auto?: boolean;
+  /** Version 14: worn tiles (trails) as [tile index, wear 1..255] pairs. */
+  wear?: number[];
   /** Version 11: people who recently left a settlement: [creature id, settlement id, tick until which they cannot return]. */
   bans?: Array<[number, number, number]>;
   list: Array<{

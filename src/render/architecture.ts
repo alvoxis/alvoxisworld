@@ -38,7 +38,8 @@ function gable(r: Rect, roof: string, top: number, eave: number, x0 = 0, x1 = 8)
   const rows = Math.max(2, Math.round(eave - top));
   for (let k = 0; k < rows; k++) {
     const inset = ((rows - 1 - k) / rows) * ((x1 - x0) / 2 - 0.6);
-    r(x0 + inset, top + k, x1 - x0 - 2 * inset, 1.05, k === rows - 1 ? shade(roof, -0.3) : roof);
+    // Rows of shingles: alternate rows a shade darker, the eave darkest.
+    r(x0 + inset, top + k, x1 - x0 - 2 * inset, 1.05, k === rows - 1 ? shade(roof, -0.3) : k % 2 ? shade(roof, -0.1) : roof);
   }
   r(x0 + (x1 - x0) / 2 - 0.5, top - 0.3, 1, 0.5, shade(roof, 0.25)); // ridge cap
 }
@@ -193,7 +194,7 @@ export const HOUSE_STYLES: Readonly<Record<Architecture, HouseStyle>> = {
   elven: { dots: ['', '#4f8f3c', '#6f8a4a', '#7fae5a', '#d9e8c0'], draw: drawElvenHouse },
 };
 
-export type Workplace = Exclude<BuildingType, 'house'>;
+export type Workplace = Exclude<BuildingType, 'house' | 'shipyard'>;
 
 /**
  * Workplaces read by their use: a fenced field with rows of crops and a scarecrow, a lumber camp with a log pile
@@ -273,13 +274,34 @@ export function architectureOf(species: number): Architecture {
   return SPECIES[species]?.civ?.architecture ?? 'human';
 }
 
+/**
+ * Shipyard (shared look): a plank dock on posts, a boat hull on its slipway with ribs showing, a crane with a hanging
+ * load, and a mooring post with a pennant in the settlement colour.
+ */
+function drawShipyard(r: Rect, roof: string): void {
+  r(0, 5.6, 8, 0.8, '#8a6a42'); // dock planks
+  for (const x of [0.4, 3.6, 6.8]) r(x, 6.4, 0.5, 1.4, '#5a3d22'); // posts
+  r(1, 3.4, 5, 1.8, '#7a4f25'); // hull
+  r(1.6, 5.2, 3.8, 0.5, '#5a3d22');
+  for (const x of [1.8, 3, 4.2]) r(x, 3.4, 0.3, 1.8, '#c39a5e'); // ribs
+  r(0.4, 3, 0.4, 1, '#7a4f25'); // bow
+  r(6.6, 0, 0.4, 5.6, '#6b4a2a'); // crane mast and arm
+  r(4.6, 0, 2.4, 0.4, '#6b4a2a');
+  r(4.8, 0.4, 0.15, 1.6, '#d6dbe2'); // rope and load
+  r(4.4, 2, 0.9, 0.7, '#a77b47');
+  r(7.2, 4.4, 0.4, 1.2, '#5a3d22'); // mooring post
+  r(7.6, 4.4, 0.6, 0.4, roof);
+}
+
 /** Draws any building: houses in the people's style and level, workplaces in the shared style. */
 export function drawBuildingArt(r: Rect, arch: Architecture, type: BuildingType, level: number, roof: string): void {
   if (type === 'house') HOUSE_STYLES[arch].draw(r, level, roof);
+  else if (type === 'shipyard') drawShipyard(r, roof);
   else WORKPLACES[type].draw(r, roof);
 }
 
 /** Far-away colour of a building. */
 export function buildingDot(arch: Architecture, type: BuildingType, level: number): string {
+  if (type === 'shipyard') return '#6b8fb3';
   return type === 'house' ? HOUSE_STYLES[arch].dots[Math.max(1, Math.min(4, level))] : WORKPLACES[type].dot;
 }

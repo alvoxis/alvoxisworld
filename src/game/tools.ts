@@ -3,18 +3,19 @@ import { SPECIES } from '../sim/creatures';
 import { EFFECTS } from '../sim/effects';
 import { Simulation } from '../sim/simulation';
 import { WEATHER_KIND } from '../sim/weather';
-import { applyHeightBrush, applyPaintBrush, applySmoothBrush } from '../world/brush';
+import { applyDeepenBrush, applyHeightBrush, BRUSH_STRENGTH, applyPaintBrush, applySmoothBrush } from '../world/brush';
 import { T, TERRAIN } from '../world/terrain';
 
 /**
  * Tool tabs. 'view' tools (Move, Inspect) are not a tab: they are always-visible
  * quick buttons so the camera and inspection stay reachable from every tab.
  */
-export type ToolCategory = 'view' | 'creatures' | 'biomes' | 'powers' | 'effects';
+export type ToolCategory = 'view' | 'creatures' | 'biomes' | 'terrain' | 'powers' | 'effects';
 
 export const CATEGORIES: ReadonlyArray<{ id: Exclude<ToolCategory, 'view'>; label: string; short: string }> = [
   { id: 'creatures', label: 'Creatures', short: 'Life' },
   { id: 'biomes', label: 'Biomes', short: 'Biomes' },
+  { id: 'terrain', label: 'Terrain', short: 'Terrain' },
   { id: 'powers', label: 'God Powers', short: 'Powers' },
   { id: 'effects', label: 'Buffs & Debuffs', short: 'Effects' },
 ];
@@ -166,22 +167,28 @@ export const TOOLS: readonly Tool[] = [
   paintTool(T.HILLS),
   paintTool(T.MOUNTAIN),
 
-  // God powers: terrain and water.
+  // Terrain: sculpt the real heights (passability, slopes and water follow). Power sets the strength per stroke.
   {
-    id: 'raise', label: 'Raise', category: 'powers', icon: { emoji: '⛰️' }, usesBrush: true, repeatMs: 50, undoable: true,
+    id: 'raise', label: 'Raise', category: 'terrain', icon: { emoji: '⛰️' }, usesBrush: true, usesIntensity: true, repeatMs: 50, undoable: true,
     hint: 'Raises land (keeps rivers and lakes above sea level)',
-    apply: ({ sim }, x, y, r) => applyHeightBrush(sim.world, { x, y, radius: r }, 1),
+    apply: ({ sim, intensity }, x, y, r) => applyHeightBrush(sim.world, { x, y, radius: r, strength: BRUSH_STRENGTH[intensity - 1] ?? 6 }, 1),
   },
   {
-    id: 'lower', label: 'Lower', category: 'powers', icon: { emoji: '🕳️' }, usesBrush: true, repeatMs: 50, undoable: true,
+    id: 'lower', label: 'Lower', category: 'terrain', icon: { emoji: '🕳️' }, usesBrush: true, usesIntensity: true, repeatMs: 50, undoable: true,
     hint: 'Lowers land; below sea level it becomes sea',
-    apply: ({ sim }, x, y, r) => applyHeightBrush(sim.world, { x, y, radius: r }, -1),
+    apply: ({ sim, intensity }, x, y, r) => applyHeightBrush(sim.world, { x, y, radius: r, strength: BRUSH_STRENGTH[intensity - 1] ?? 6 }, -1),
   },
   {
-    id: 'smooth', label: 'Smooth', category: 'powers', icon: { emoji: '〰️' }, usesBrush: true, repeatMs: 60, undoable: true,
+    id: 'deepen', label: 'Deepen water', category: 'terrain', icon: { emoji: '🌀' }, usesBrush: true, usesIntensity: true, repeatMs: 50, undoable: true,
+    hint: 'Makes water deeper; land is not touched',
+    apply: ({ sim, intensity }, x, y, r) => applyDeepenBrush(sim.world, { x, y, radius: r, strength: BRUSH_STRENGTH[intensity - 1] ?? 6 }),
+  },
+  {
+    id: 'smooth', label: 'Smooth', category: 'terrain', icon: { emoji: '〰️' }, usesBrush: true, repeatMs: 60, undoable: true,
     hint: 'Evens out heights',
     apply: ({ sim }, x, y, r) => applySmoothBrush(sim.world, { x, y, radius: r }),
   },
+  // God powers: water.
   {
     id: 'flood', label: 'Flood', category: 'powers', icon: { emoji: '🌊' }, usesBrush: true, repeatMs: 0, undoable: true,
     hint: 'Temporary flood water; drains back to the land beneath',

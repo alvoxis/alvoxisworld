@@ -1,6 +1,6 @@
 import { hash2, Rng } from '../core/rng';
 import { SLOPE } from '../world/passability';
-import { SEA_LEVEL, T, TERRAIN, TERRAIN_COUNT } from '../world/terrain';
+import { MOUNTAIN_LEVEL, SEA_LEVEL, T, TERRAIN, TERRAIN_COUNT } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
 import { SPRITES, Tileset, VARIANTS, halfSprite, type Sprite } from './tileset';
 
@@ -84,6 +84,9 @@ const FEATURES = {
   smallSnowPeak: feature(SPRITES.smallSnowPeak),
   reed: feature(SPRITES.reed),
   bush: feature(SPRITES.bush),
+  flowers: feature(SPRITES.flowers),
+  stones: feature(SPRITES.stones),
+  sandStones: feature(SPRITES.sandStones),
 };
 
 /**
@@ -352,7 +355,16 @@ export class TerrainPainter {
             break;
           }
           case T.GRASS:
+            // Sparse ground detail: a bush on about 6% of grass tiles, a few flowers on another 7%.
             if (h1 < 0.06) feat = FEATURES.bush;
+            else if (h1 < 0.13) feat = FEATURES.flowers;
+            break;
+          case T.HILLS:
+            if (h1 < 0.12) feat = FEATURES.stones;
+            break;
+          case T.DESERT:
+          case T.SAND:
+            if (h1 < 0.04) feat = FEATURES.sandStones;
             break;
           case T.JUNGLE:
             feat = FEATURES.jungle;
@@ -364,10 +376,13 @@ export class TerrainPainter {
           case T.SAVANNA:
             if (h1 < 0.28) feat = FEATURES.acacia;
             break;
+          case T.SNOW:
           case T.MOUNTAIN: {
             // Big peaks on ridge crests (highest tile among its neighbours), smaller ones scattered elsewhere.
+            // Snow at mountain height is a snow-capped mountain too; snow on cold lowland has no peaks.
             const ti = ty * world.width + tx;
             const hh = world.heights[ti];
+            if (id === T.SNOW && hh < MOUNTAIN_LEVEL) break;
             let crest = true;
             let ties = 0;
             for (let dy = -1; dy <= 1 && crest; dy++) {

@@ -15,6 +15,7 @@ import { SPEED_LEVELS } from '../sim/simulation';
 import { SAVE_VERSION } from '../save/serialize';
 import { Minimap } from './minimap';
 import { SettlementCard } from './settlementcard';
+import { KingdomCard } from './kingdomcard';
 import { CATEGORY_ICONS, GEAR_ICON } from './icons';
 import { LANGS, getLang, onLangChange, setLang, t, td, tn, type Lang } from '../i18n';
 import {
@@ -331,6 +332,7 @@ export class Hud {
   private static readonly NOTIFY = new Set([
     'settlement_built', 'settlement_destroyed_fire', 'settlement_destroyed_flood', 'settlement_famine', 'settlement_stage',
     'settlement_exhausted', 'settlement_farm_stopped', 'settlement_house_upgraded', 'settlement_housing_tier',
+    'kingdom_founded', 'kingdom_succession', 'kingdom_dissolved',
   ]);
   private seenEvent: object | null = null;
   private lastEventToast = 0;
@@ -393,6 +395,7 @@ export class Hud {
     // An open settlement card follows the simulation.
     const card = document.getElementById('settle-card');
     if (card && !$('info').hidden) this.card.update();
+    if (document.getElementById('kingdom-card') && !$('info').hidden) this.kingdomCard.update();
   }
 
   /**
@@ -471,6 +474,17 @@ export class Hud {
     });
     body.appendChild(homeBtn);
     const groupLine = line(t('info.group'));
+    const kingdomLine = line(t('info.kingdom'));
+    const kingdomBtn = document.createElement('button');
+    kingdomBtn.className = 'btn small';
+    kingdomBtn.type = 'button';
+    kingdomBtn.hidden = true;
+    kingdomBtn.addEventListener('click', () => {
+      const st = game.sim.settlements.settlementOf(info.id);
+      const k = st && game.sim.kingdoms.kingdomOf(st.id);
+      if (k) this.showKingdom(k.id);
+    });
+    body.appendChild(kingdomBtn);
     const jobLine = line(t('info.job'));
     const meter = (label: string) => {
       const wrap = document.createElement('div');
@@ -571,6 +585,14 @@ export class Hud {
               ? t('doing.rest')
               : stateName(now.state, STATE_NAMES);
       jobLine.parentElement!.hidden = !st?.civ;
+      // Kingdom of the creature's settlement, and whether this creature rules it.
+      const kg = st ? game.sim.kingdoms.kingdomOf(st.id) : undefined;
+      kingdomLine.parentElement!.hidden = !kg;
+      kingdomBtn.hidden = !kg;
+      if (kg) {
+        kingdomLine.textContent = kg.ruler === now.id ? t('info.kingdom_ruler', { name: kg.name }) : `♛ ${kg.name}`;
+        kingdomBtn.textContent = `♛ ${t('info.kingdom_open')}`;
+      }
       jobLine.textContent = job
         ? t('info.job_value', { task: td(`job.${job.kind}`), place: td(`build.${job.building.type}`), x: job.building.x, y: job.building.y })
         : t('info.job_none');
@@ -592,7 +614,34 @@ export class Hud {
   }
 
   private lastTile: TileReport | null = null;
-  private readonly card = new SettlementCard(this.game, (text) => this.toast(text));
+  private readonly card = new SettlementCard(this.game, (text) => this.toast(text), (id) => this.showKingdom(id));
+  private readonly kingdomCard = new KingdomCard(
+    this.game,
+    (sid) => {
+      const st = this.game.sim.settlements.get(sid);
+      const rep = st && this.game.report(st.x + 0.5, st.y + 0.5);
+      if (rep) this.showInfo(rep);
+    },
+    (id) => {
+      const i = this.game.sim.creatures.indexOf(id);
+      if (i < 0) return;
+      this.game.camera.centerOn(this.game.sim.creatures.x[i], this.game.sim.creatures.y[i]);
+      this.game.select(id); // the normal selection: the creature card replaces the kingdom card
+    },
+  );
+
+  /** Shows a kingdom's card (opened from a settlement card or a creature card). */
+  private showKingdom(id: number): void {
+    const body = $('info-body');
+    this.game.select(0);
+    body.dataset.mode = 'kingdom';
+    body.replaceChildren();
+    const card = document.createElement('div');
+    card.id = 'kingdom-card';
+    body.appendChild(card);
+    this.kingdomCard.mount(card, id);
+    $('info').hidden = false;
+  }
 
   private showInfo(r: TileReport): void {
     this.lastTile = r;

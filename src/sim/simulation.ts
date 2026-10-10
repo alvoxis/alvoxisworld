@@ -10,6 +10,7 @@ import { T, isWater } from '../world/terrain';
 import { WATER_FLAG } from '../world/world';
 import { Weather, WEATHER_KIND, type WeatherKind } from './weather';
 import { vegetationTick } from './vegetation';
+import { Kingdoms } from './kingdoms';
 import { Groups } from './groups';
 import { EMIGRATE_BAN_TICKS, Settlements, type FoundFail, type Settlement, type SettlementKind } from './settlements';
 
@@ -47,6 +48,7 @@ export class Simulation {
   readonly sky = new Sky();
   readonly settlements = new Settlements();
   readonly groups = new Groups();
+  readonly kingdoms = new Kingdoms();
   rng: Rng;
   tick = 0;
   speed: Speed = 1;
@@ -77,12 +79,14 @@ export class Simulation {
     this.creatures.onDeath = (id) => {
       this.settlements.onDeath(id);
       this.groups.onDeath(id);
+      this.kingdoms.onDeath(id, this.tick);
     };
     this.creatures.groupGoal = (id) => this.groups.goalOf(id);
     this.creatures.workGoal = (id) => this.settlements.workGoal(id);
     this.settlements.onEmigrate = (ids, st, tick) => this.groups.createGroup(this.world, this.creatures, ids, tick, st.id, tick + EMIGRATE_BAN_TICKS);
     this.creatures.breedBlock = (id) => this.settlements.breedBlocked(id);
     this.settlements.onEvent = (text, code, p) => this.log(text, code, p);
+    this.kingdoms.onEvent = (text, code, p) => this.log(text, code, p);
     // A person who joins or founds a settlement leaves its group at once (never in both, not even between group steps).
     this.settlements.onJoin = (id) => this.groups.release(id);
   }
@@ -104,6 +108,7 @@ export class Simulation {
     this.sky.reset();
     this.settlements.reset();
     this.groups.reset();
+    this.kingdoms.reset();
     this.creatures.dangers = [];
     this.weather.refresh(world);
     this.rng = new Rng(world.seed ^ 0x51ed270b);
@@ -178,6 +183,7 @@ export class Simulation {
     this.creatures.tick(this.world, this.rng, this.tick);
     this.settlements.step(this.world, this.creatures, this.tick);
     this.groups.step(this.world, this.creatures, this.settlements, this.tick);
+    this.kingdoms.step(this.world, this.creatures, this.settlements, this.tick);
     this.tick++;
 
     const now = this.date;

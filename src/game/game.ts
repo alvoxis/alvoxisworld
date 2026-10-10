@@ -54,6 +54,16 @@ export class Game {
   countIndex = 1;
   /** Shows a short message (set by the UI). */
   onNotify: (text: string) => void = () => {};
+  /** Trails for the renderer (a stable object: the version is read each frame, tiles only when it changes). */
+  private readonly trailView = {
+    game: this as Game,
+    get version(): number {
+      return this.game.sim.settlements.trailVersion;
+    },
+    tiles(): number[] {
+      return this.game.sim.settlements.trailTiles();
+    },
+  };
   readonly undo = new UndoHistory();
   /** Short visual effects (meteor flash, quake ripple). */
   private effects: VisualEffect[] = [];
@@ -208,6 +218,13 @@ export class Game {
       settlements: this.sim.settlements.list,
       settlementBorders: this.showSettlementBorders,
       workKind: (id) => this.sim.settlements.workKind(id),
+      trails: this.trailView,
+      kingdoms: {
+        list: this.sim.kingdoms.list,
+        version: `${this.sim.kingdoms.version}|${this.sim.settlements.version}`,
+        kingdomOf: (sid) => this.sim.kingdoms.kingdomOf(sid),
+        owner: this.sim.settlements.owner,
+      },
       now,
     });
   }

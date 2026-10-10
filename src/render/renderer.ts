@@ -8,8 +8,9 @@ import { TerrainPainter, type PaintOptions } from './painter';
 import { SkyRenderer, type Bolt, type Dust, type VisualEffect } from './skyfx';
 import type { MeteorInFlight } from '../sim/sky';
 import { COLORS, type Settlement } from '../sim/settlements';
+import { KINGDOM_COLORS, type Kingdom } from '../sim/kingdoms';
 import type { Building, BuildingType, JobKind } from '../sim/civ';
-import { Tileset, TILE_PX, creatureSprite } from './tileset';
+import { OUTLINE_PAD, Tileset, TILE_PX, creatureSprite } from './tileset';
 import { architectureOf, buildingDot, drawBuildingArt } from './architecture';
 
 /** Device pixels per tile at which 8-px-per-tile detail chunks are used. */
@@ -53,9 +54,29 @@ export interface Overlay {
   /** Settlements and whether to draw their borders (the player's choice). */
   settlements: readonly Settlement[];
   settlementBorders: boolean;
+  /** Trails worn by settlement people: [tile, wear] pairs, rebuilt into a cache only when `version` changes. */
+  trails?: { version: number; tiles: () => number[] };
+  /** Kingdoms above the settlements (territory tint, outer border, name at the capital). */
+  kingdoms?: KingdomView;
   /** Kind of work of a settlement worker (drawn as a small tool over people at work). */
   workKind?: (id: number) => JobKind | undefined;
   now: number;
+}
+
+export interface KingdomView {
+  list: readonly Kingdom[];
+  /** Changes whenever kingdoms or territories change (the renderer rebuilds its cache then). */
+  version: string;
+  kingdomOf(settlementId: number): Kingdom | undefined;
+  owner: Uint16Array | null;
+}
+
+interface KingdomCache {
+  version: string;
+  /** Per kingdom: a 1-pixel-per-tile tint of its land and where it sits. */
+  tints: Map<number, { canvas: HTMLCanvasElement; x: number; y: number; color: string }>;
+  /** Per member settlement: edges on the kingdom's outside, and edges facing another settlement of the same kingdom. */
+  edges: Map<number, { outer: Int32Array; inner: Int32Array; color: string }>;
 }
 
 /** Circles previewing where the current tool acts (see AreaRing in game/tools.ts). */
@@ -151,7 +172,8 @@ export class Renderer {
   private readonly painter = new TerrainPainter(this.tileset);
   private readonly detail = new ChunkLevel(8, MAX_DETAIL_CHUNKS);
   private readonly mid = new ChunkLevel(4, MAX_MID_CHUNKS);
-  private readonly sprites: Array<{ right: HTMLCanvasElement; left: HTMLCanvasElement }>;
+  /** Per species, two walking frames, each facing right and left. */
+  private readonly sprites: Array<Array<{ right: HTMLCanvasElement; left: HTMLCanvasElement }>>;
   private readonly flames: HTMLCanvasElement[];
   private readonly skyfx = new SkyRenderer();
   winter = false;
@@ -163,17 +185,19 @@ export class Renderer {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false })!;
-    this.sprites = SPECIES.map((s) => {
-      const right = creatureSprite(s.id);
-      const left = document.createElement('canvas');
-      left.width = right.width;
-      left.height = right.height;
-      const lctx = left.getContext('2d')!;
-      lctx.translate(right.width, 0);
-      lctx.scale(-1, 1);
-      lctx.drawImage(right, 0, 0);
-      return { right, left };
-    });
+    this.sprites = SPECIES.map((s) =>
+      [0, 1].map((frame) => {
+        const right = creatureSprite(s.id, frame);
+        const left = document.createElement('canvas');
+        left.width = right.width;
+        left.height = right.height;
+        const lctx = left.getContext('2d')!;
+        lctx.translate(right.width, 0);
+        lctx.scale(-1, 1);
+        lctx.drawImage(right, 0, 0);
+        return { right, left };
+      }),
+    );
     this.flames = flameFrames();
   }
 
@@ -376,6 +400,7 @@ export class Renderer {
   ): void {
     const ctx = this.ctx;
     const w = this.world;
+    this.frameNow = overlay?.now ?? 0;
     const s = camera.zoom * this.dpr; // device px per tile
     this.flushDirty(camera, s, this.quality.lowRes ? FLUSH_BUDGET_LOW_MS : FLUSH_BUDGET_MS);
     const ox = -camera.x * s;
@@ -399,9 +424,14 @@ export class Renderer {
 
     if (overlay) this.drawFire(overlay, s, ox, oy);
     // Settlements (borders, buildings, centre marker) are drawn first so that people are never hidden behind them.
-    if (overlay?.settlementBorders && overlay.settlements.length) this.drawSettlements(overlay.settlements, camera, s, ox, oy);
+    if (overlay?.trails) this.drawTrails(overlay.trails, camera, s, ox, oy);
+    if (overlay?.settlementBorders && overlay.settlements.length) {
+      const kc = overlay.kingdoms?.list.length ? this.kingdomCache(overlay.settlements, overlay.kingdoms) : null;
+      if (kc && !this.quality.reduced) this.drawKingdomTints(kc, s, ox, oy);
+      this.drawSettlements(overlay.settlements, camera, s, ox, oy, kc);
+    }
     this.drawCreatures(camera, creatures, s, ox, oy, alpha, overlay);
-    if (overlay?.settlementBorders && overlay.settlements.length && s >= 3 * this.dpr) this.drawSettlementLabels(overlay.settlements, s, ox, oy);
+    if (overlay?.settlementBorders && overlay.settlements.length && s >= 3 * this.dpr) this.drawSettlementLabels(overlay.settlements, s, ox, oy, overlay.kingdoms);
     if (overlay) {
       this.skyfx.draw(ctx, camera, s, ox, oy, this.dpr, {
         systems: overlay.weather,
@@ -494,7 +524,139 @@ export class Renderer {
    * in the settlement's colour with a dark outline, a marker at the centre and, close up, the name.
    * Nothing is recomputed here; the lists change only when a territory changes.
    */
-  private drawSettlements(list: readonly Settlement[], camera: Camera, s: number, ox: number, oy: number): void {
+  private trailCache: { version: number; blocks: Map<number, HTMLCanvasElement> } | null = null;
+
+  /**
+   * Trails: per 64×64-tile block one small canvas (4 px per tile) with a narrow dirt path through each worn tile,
+   * joined to worn neighbours, so the trails people walk read as a connected network. Rebuilt only on a new version.
+   */
+  private drawTrails(tr: NonNullable<Overlay['trails']>, camera: Camera, s: number, ox: number, oy: number): void {
+    const W = this.world.width;
+    const B = 64;
+    const P = 4;
+    if (!this.trailCache || this.trailCache.version !== tr.version) {
+      const pairs = tr.tiles();
+      const wear = new Map<number, number>();
+      for (let k = 0; k < pairs.length; k += 2) wear.set(pairs[k], pairs[k + 1]);
+      const blocks = new Map<number, HTMLCanvasElement>();
+      const bw = Math.ceil(W / B);
+      for (const [t, v] of wear) {
+        const x = t % W;
+        const y = (t - x) / W;
+        const key = Math.floor(y / B) * bw + Math.floor(x / B);
+        let c = blocks.get(key);
+        if (!c) {
+          c = document.createElement('canvas');
+          c.width = c.height = B * P;
+          blocks.set(key, c);
+        }
+        const ctx = c.getContext('2d')!;
+        const lx = (x % B) * P;
+        const ly = (y % B) * P;
+        // A soft patch of trodden earth: the side facing unworn land stops one pixel short, so trails have
+        // rounded, organic edges and join seamlessly where neighbours are worn too.
+        ctx.fillStyle = v >= 160 ? 'rgba(184,152,104,0.75)' : 'rgba(150,118,74,0.5)';
+        const l = x > 0 && wear.has(t - 1) ? 0 : 1;
+        const r = x + 1 < W && wear.has(t + 1) ? 0 : 1;
+        const u = wear.has(t - W) ? 0 : 1;
+        const d = wear.has(t + W) ? 0 : 1;
+        ctx.fillRect(lx + l, ly + u, P - l - r, P - u - d);
+      }
+      this.trailCache = { version: tr.version, blocks };
+    }
+    if (!this.trailCache.blocks.size) return;
+    const ctx = this.ctx;
+    const smooth = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    const bw = Math.ceil(W / B);
+    const vx0 = camera.x - B;
+    const vy0 = camera.y - B;
+    const vx1 = camera.x + this.canvas.width / s;
+    const vy1 = camera.y + this.canvas.height / s;
+    for (const [key, c] of this.trailCache.blocks) {
+      const bx = (key % bw) * B;
+      const by = Math.floor(key / bw) * B;
+      if (bx < vx0 || by < vy0 || bx > vx1 || by > vy1) continue;
+      ctx.drawImage(c, ox + bx * s, oy + by * s, B * s, B * s);
+    }
+    ctx.imageSmoothingEnabled = smooth;
+  }
+
+  private kc: KingdomCache | null = null;
+
+  /** Rebuilt only when kingdoms or territories change (never per frame). */
+  private kingdomCache(list: readonly Settlement[], kv: KingdomView): KingdomCache {
+    if (this.kc && this.kc.version === kv.version) return this.kc;
+    const W = this.world.width;
+    const H = this.world.height;
+    const owner = kv.owner;
+    const tints: KingdomCache['tints'] = new Map();
+    const edges: KingdomCache['edges'] = new Map();
+    for (const k of kv.list) {
+      const color = KINGDOM_COLORS[k.color] ?? KINGDOM_COLORS[0];
+      const members = list.filter((st) => k.members.includes(st.id));
+      let x0 = W;
+      let y0 = H;
+      let x1 = -1;
+      let y1 = -1;
+      for (const st of members) {
+        for (const i of st.tiles) {
+          const x = i % W;
+          const y = (i - x) / W;
+          x0 = Math.min(x0, x);
+          y0 = Math.min(y0, y);
+          x1 = Math.max(x1, x);
+          y1 = Math.max(y1, y);
+        }
+        // Split the border: sides facing land of the same kingdom are inner, everything else is the kingdom's edge.
+        const outer: number[] = [];
+        const inner: number[] = [];
+        for (const e of st.edges) {
+          const i = e >> 2;
+          const x = i % W;
+          const y = (i - x) / W;
+          const side = e & 3;
+          const nx = side === 1 ? x + 1 : side === 3 ? x - 1 : x;
+          const ny = side === 0 ? y - 1 : side === 2 ? y + 1 : y;
+          const n = nx >= 0 && ny >= 0 && nx < W && ny < H && owner ? owner[ny * W + nx] : 0;
+          (n && n !== st.id && kv.kingdomOf(n) === k ? inner : outer).push(e);
+        }
+        edges.set(st.id, { outer: Int32Array.from(outer), inner: Int32Array.from(inner), color });
+      }
+      if (x1 < 0) continue;
+      const c = document.createElement('canvas');
+      c.width = x1 - x0 + 1;
+      c.height = y1 - y0 + 1;
+      const cx = c.getContext('2d')!;
+      const img = cx.createImageData(c.width, c.height);
+      const n = parseInt(color.slice(1), 16);
+      for (const st of members) {
+        for (const i of st.tiles) {
+          const x = i % W;
+          const y = (i - x) / W;
+          const o = ((y - y0) * c.width + (x - x0)) * 4;
+          img.data[o] = (n >> 16) & 255;
+          img.data[o + 1] = (n >> 8) & 255;
+          img.data[o + 2] = n & 255;
+          img.data[o + 3] = 40; // a light tint: terrain, buildings and people stay readable
+        }
+      }
+      cx.putImageData(img, 0, 0);
+      tints.set(k.id, { canvas: c, x: x0, y: y0, color });
+    }
+    this.kc = { version: kv.version, tints, edges };
+    return this.kc;
+  }
+
+  private drawKingdomTints(kc: KingdomCache, s: number, ox: number, oy: number): void {
+    const ctx = this.ctx;
+    const smooth = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    for (const t of kc.tints.values()) ctx.drawImage(t.canvas, ox + t.x * s, oy + t.y * s, t.canvas.width * s, t.canvas.height * s);
+    ctx.imageSmoothingEnabled = smooth;
+  }
+
+  private drawSettlements(list: readonly Settlement[], camera: Camera, s: number, ox: number, oy: number, kc: KingdomCache | null = null): void {
     const ctx = this.ctx;
     const W = this.world.width;
     const cw = this.canvas.width;
@@ -505,10 +667,9 @@ export class Renderer {
     const y1 = camera.y + ch / s + 1;
     ctx.save();
     ctx.lineCap = 'butt';
-    for (const st of list) {
-      if (!st.edges.length) continue;
+    const path = (es: Int32Array) => {
       ctx.beginPath();
-      for (const e of st.edges) {
+      for (const e of es) {
         const i = e >> 2;
         const x = i % W;
         const y = (i - x) / W;
@@ -522,12 +683,35 @@ export class Renderer {
           default: ctx.moveTo(px, py); ctx.lineTo(px, py + s);
         }
       }
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.lineWidth = Math.max(3, 3 * this.dpr);
-      ctx.stroke();
-      ctx.strokeStyle = COLORS[st.color];
-      ctx.lineWidth = Math.max(1.5, 1.6 * this.dpr);
-      ctx.stroke();
+    };
+    for (const st of list) {
+      if (!st.edges.length) continue;
+      const ke = kc?.edges.get(st.id);
+      if (ke) {
+        // In a kingdom: the kingdom's outer border, a little bolder, in its colour; faint lines between its settlements.
+        path(ke.outer);
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+        ctx.lineWidth = Math.max(3.5, 3.6 * this.dpr);
+        ctx.stroke();
+        ctx.strokeStyle = ke.color;
+        ctx.lineWidth = Math.max(2, 2.1 * this.dpr);
+        ctx.stroke();
+        if (ke.inner.length) {
+          path(ke.inner);
+          ctx.globalAlpha = 0.45;
+          ctx.lineWidth = Math.max(1, this.dpr);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      } else {
+        path(st.edges);
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.lineWidth = Math.max(3, 3 * this.dpr);
+        ctx.stroke();
+        ctx.strokeStyle = COLORS[st.color];
+        ctx.lineWidth = Math.max(1.5, 1.6 * this.dpr);
+        ctx.stroke();
+      }
       // Buildings of a human settlement (finished ones solid, under construction faded).
       if (st.civ) {
         const arch = architectureOf(st.species);
@@ -554,7 +738,7 @@ export class Renderer {
   }
 
   /** Names and populations above the settlement centres, drawn over the people (small text, offset upward). */
-  private drawSettlementLabels(list: readonly Settlement[], s: number, ox: number, oy: number): void {
+  private drawSettlementLabels(list: readonly Settlement[], s: number, ox: number, oy: number, kv?: KingdomView): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.font = `${Math.round(11 * this.dpr)}px sans-serif`;
@@ -569,6 +753,15 @@ export class Renderer {
       ctx.strokeText(label, cx, cy);
       ctx.fillStyle = '#fff';
       ctx.fillText(label, cx, cy);
+      // The capital also names its kingdom, in the kingdom's colour, just above.
+      const k = kv?.kingdomOf(st.id);
+      if (k && k.capital === st.id) {
+        const name = `♛ ${k.name}`;
+        const ky = cy - Math.round(13 * this.dpr);
+        ctx.strokeText(name, cx, ky);
+        ctx.fillStyle = KINGDOM_COLORS[k.color] ?? '#fff';
+        ctx.fillText(name, cx, ky);
+      }
     }
     ctx.restore();
   }
@@ -591,6 +784,7 @@ export class Renderer {
       // Close: the outlined, shadowed sprite (built once per look and zoom, then reused).
       const sprite = this.buildingSprite(arch, b.type, level, color, w);
       ctx.drawImage(sprite.canvas, px - sprite.pad, py - w - sprite.pad);
+      if (!this.quality.reduced) this.drawBuildingLife(b, arch, level, px, py, w);
     }
     ctx.globalAlpha = a;
     if (b.up && s >= 3) {
@@ -606,6 +800,43 @@ export class Renderer {
       ctx.fillRect(px, py + w - 3, w, 3);
       ctx.fillStyle = b.up ? '#7fd3ff' : '#ffd34d';
       ctx.fillRect(px, py + w - 3, Math.round((w * b.progress) / b.needed), 3);
+    }
+  }
+
+  private frameNow = 0;
+
+  /**
+   * Small cosmetic signs of life and damage on a building (drawing only): smoke drifting from the chimneys of human
+   * houses (levels 3–4), a slow warm glow in elven windows (levels 2–4), and soot over any building that has fire on
+   * or next to its tile (fire destroys it on the next settlement step, as before).
+   */
+  private drawBuildingLife(b: Building, arch: Architecture, level: number, px: number, py: number, w: number): void {
+    const ctx = this.ctx;
+    const u = w / 8;
+    const t = this.frameNow / 1000;
+    if (b.done && b.type === 'house' && arch === 'human' && level >= 3) {
+      const chimneys = level >= 4 ? [[6.5, -7], [1.45, -6.6]] : [[6.3, -3.4]];
+      for (const [cx, cy] of chimneys) {
+        for (let k = 0; k < 3; k++) {
+          const ph = (t * 0.6 + k / 3 + (b.id % 7) * 0.13) % 1; // each puff rises and fades
+          const r = Math.max(1, u * (0.5 + ph * 0.9));
+          ctx.fillStyle = `rgba(225,225,230,${(0.45 * (1 - ph)).toFixed(3)})`;
+          ctx.fillRect(Math.round(px + (cx + ph * 1.4) * u - r / 2), Math.round(py + (cy - ph * 3.2) * u - r / 2), Math.round(r), Math.round(r));
+        }
+      }
+    } else if (b.done && b.type === 'house' && arch === 'elven' && level >= 2) {
+      // A soft halo around each lit window, pulsing slowly (window places as in architecture.ts).
+      const a = 0.16 + 0.1 * Math.sin(t * 1.7 + b.id);
+      ctx.fillStyle = `rgba(200,255,170,${a.toFixed(3)})`;
+      const windows = level === 2 ? [[1.6, 4.3], [5.4, 4.3]] : level === 3 ? [[1.8, -0.6], [5.2, -0.6]] : [[3.5, -1.8], [3.5, 1.2], [0.6, 2.4], [6.6, 2.4]];
+      for (const [wx, wy] of windows) ctx.fillRect(Math.round(px + (wx - 0.5) * u), Math.round(py + (wy - 0.5) * u), Math.round(2 * u), Math.round(2 * u));
+    }
+    const W = this.world.width;
+    const i = b.y * W + b.x;
+    const fire = this.world.fire;
+    if (fire[i] || (b.x > 0 && fire[i - 1]) || (b.x < W - 1 && fire[i + 1]) || fire[i - W] || fire[i + W]) {
+      ctx.fillStyle = 'rgba(30,18,10,0.45)'; // soot
+      ctx.fillRect(px, py - (level >= 3 ? w : 0), w, level >= 3 ? 2 * w : w);
     }
   }
 
@@ -687,7 +918,8 @@ export class Renderer {
 
   private drawCreatures(camera: Camera, cr: Creatures, s: number, ox: number, oy: number, alpha: number, overlay?: Overlay): void {
     const workKind = overlay?.workKind;
-    const frame = overlay ? Math.floor(overlay.now / 300) & 1 : 0;
+    const now = overlay?.now ?? 0;
+    const markFrame = overlay ? Math.floor(overlay.now / 300) & 1 : 0;
     const ctx = this.ctx;
     const minX = camera.x - 2;
     const minY = camera.y - 2;
@@ -704,19 +936,29 @@ export class Renderer {
       const py = Math.round(oy + y * s);
       const juvenile = cr.age[i] < def.adultAge;
       if (big) {
-        const set = this.sprites[sp];
+        // Walking creatures alternate two frames (fleeing ones faster); standing, eating or working ones hold still.
+        const moving = cr.x[i] !== cr.px[i] || cr.y[i] !== cr.py[i];
+        const frame = moving ? (Math.floor(now / (cr.state[i] === STATE.FLEE ? 110 : 190)) + cr.id[i]) & 1 : 0;
+        const set = this.sprites[sp][frame];
         const sprite = cr.dx[i] >= 0 ? set.right : set.left;
         // One sprite pixel = 1/8 tile, like terrain; juveniles are drawn smaller. Nothing is drawn smaller than
         // MIN_SPRITE_PX device pixels (people a little larger), so creatures stay visible and tappable at any zoom.
+        // The sprite canvas carries a 1-pixel outline margin, so the scale is taken from the art inside it.
+        const artW = sprite.width - 2 * OUTLINE_PAD;
         const minW = (def.sentient ? MIN_PERSON_PX : MIN_SPRITE_PX) * this.dpr;
-        const scale = Math.max(s / TILE_PX, minW / sprite.width) * (juvenile ? 0.75 : 1);
+        const scale = Math.max(s / TILE_PX, minW / artW) * (juvenile ? 0.75 : 1);
         const w = Math.max(2, Math.round(sprite.width * scale));
         const h = Math.max(2, Math.round(sprite.height * scale));
+        // A soft ground shadow under the feet, so nobody floats.
+        if (def.habitat === 'land') {
+          ctx.fillStyle = 'rgba(0,0,0,0.22)';
+          ctx.fillRect(px - Math.round(w * 0.3), py + Math.round(h * 0.2), Math.round(w * 0.6), Math.max(1, Math.round(h * 0.08)));
+        }
         ctx.drawImage(sprite, px - (w >> 1), py - h + Math.round(h * 0.25), w, h);
         if (workKind && cr.state[i] === STATE.WORK) {
           const kind = workKind(cr.id[i]);
           // A tiny tool beside the head, swinging in two frames (cheap: only people at work).
-          if (kind) drawWorkMark(ctx, kind, px + (w >> 1) - Math.round(w * 0.1), py - h + Math.round(h * 0.25) - frame * Math.max(1, Math.round(scale)), Math.max(1, Math.round(scale)), frame);
+          if (kind) drawWorkMark(ctx, kind, px + (w >> 1) - Math.round(w * 0.1), py - h + Math.round(h * 0.25) - markFrame * Math.max(1, Math.round(scale)), Math.max(1, Math.round(scale)), markFrame);
         }
       } else {
         // Far out: a dot with a dark rim, large enough to see (people brighter and bigger).

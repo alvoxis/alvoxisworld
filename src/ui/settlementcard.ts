@@ -16,7 +16,7 @@ import { COLORS, EMIGRATE_STRESS } from '../sim/settlements';
 
 const YEAR_STEPS = 24; // steps per game year (480 ticks / 20)
 const ICON = { food: '🌾', wood: '🪵', stone: '🪨', knowledge: '📖' } as const;
-const BUILD_ICON: Readonly<Record<BuildingType, string>> = { house: '🏠', farm: '🌾', lumber: '🪓', quarry: '⛏', storehouse: '📦' };
+const BUILD_ICON: Readonly<Record<BuildingType, string>> = { house: '🏠', farm: '🌾', lumber: '🪓', quarry: '⛏', storehouse: '📦', shipyard: '⚓' };
 const fmt = (n: number) => String(Math.round(n * 10) / 10).replace(/\.0$/, '');
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', parent?: HTMLElement): HTMLElementTagNameMap[K] {
@@ -45,7 +45,12 @@ export class SettlementCard {
   private static detailsOpen = false;
   private histSig = '';
 
-  constructor(private readonly game: Game, private readonly toast: (text: string) => void) {}
+  constructor(
+    private readonly game: Game,
+    private readonly toast: (text: string) => void,
+    /** Opens the card of a kingdom (from the ♛ chip). */
+    private readonly openKingdom: (id: number) => void = () => {},
+  ) {}
 
   get settlementId(): number {
     return this.id;
@@ -135,10 +140,20 @@ export class SettlementCard {
       chips.push(['👥', String(pop), `${t('settle.population')}: ${pop}`]);
       chips.push(['📍', String(s.tiles.length), t('settle.territory_value', { tiles: s.tiles.length, r: s.radius })]);
     }
-    const sig = chips.map((x) => x.join('|')).join(';');
+    const kingdom = this.game.sim.kingdoms.kingdomOf(s.id);
+    const sig = chips.map((x) => x.join('|')).join(';') + `|${kingdom?.id ?? 0}:${kingdom?.name ?? ''}:${td('chip.kingdom')}`;
     if (sig !== this.chipSig) {
       this.chipSig = sig;
       this.chips.replaceChildren();
+      if (kingdom) {
+        // The kingdom this settlement belongs to: a chip that opens the kingdom card.
+        const kb = el('button', 'sc-chip kc-link', this.chips);
+        kb.type = 'button';
+        kb.textContent = `♛ ${kingdom.name}`;
+        kb.title = t('chip.kingdom', { name: kingdom.name });
+        kb.setAttribute('aria-label', kb.title);
+        kb.addEventListener('click', () => this.openKingdom(kingdom.id));
+      }
       for (const [icon, value, label] of chips) {
         const chip = el('span', 'sc-chip', this.chips);
         chip.title = label;
@@ -392,6 +407,7 @@ export class SettlementCard {
       case 'storehouse': return t('bstate.storehouse', { n: STOREHOUSE_BONUS });
       case 'farm': return FARM_TERRAIN.includes(world.terrain[b.y * world.width + b.x]) ? td('bstate.farm_ok') : td('bstate.farm_barren');
       case 'lumber': return !b.empty && (b.acc > 0 || this.treeNear(b)) ? td('bstate.lumber_ok') : td('bstate.lumber_none');
+      case 'shipyard': return td('bstate.shipyard');
       default: return b.reserve > 0.5 ? t('bstate.quarry_ok', { n: Math.round(b.reserve) }) : td('bstate.quarry_done');
     }
   }

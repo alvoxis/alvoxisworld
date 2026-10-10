@@ -52,17 +52,48 @@ export function reclassify(world: World, x: number, y: number): void {
   world.setTerrain(x, y, id);
 }
 
+/**
+ * Height limits for the sculpting tools (heights are 0..255, sea level 110): the deepest sea floor and the highest
+ * peak a brush may make. Mountains start at MOUNTAIN_LEVEL; land species that cannot climb never cross them.
+ */
+export const HEIGHT_LIMITS = { min: 8, max: 250 } as const;
+/** Height change at the centre of a stroke for power 1, 2 and 3. */
+export const BRUSH_STRENGTH: readonly number[] = [3, 6, 10];
+
 function setHeight(world: World, x: number, y: number, h: number): void {
-  world.setHeight(x, y, h);
+  world.setHeight(x, y, Math.max(HEIGHT_LIMITS.min, Math.min(HEIGHT_LIMITS.max, h)));
 }
 
-/** Raises (sign 1) or lowers (sign -1) terrain with a soft falloff, then re-derives biomes. */
+/**
+ * Raises (sign 1) or lowers (sign -1) terrain, then re-derives biomes. The change falls off with the square of the
+ * distance from the centre and slows down near the height limits, so repeated strokes build a peak with slopes
+ * (not a flat-topped block) and a pit with sloping sides.
+ */
 export function applyHeightBrush(world: World, s: BrushStroke, sign: 1 | -1): void {
   const strength = s.strength ?? 6;
   forEachInCircle(world, s.x, s.y, s.radius, (x, y, w) => {
     const i = world.idx(x, y);
-    const delta = sign * Math.max(1, strength * w);
-    setHeight(world, x, y, world.heights[i] + delta);
+    const h = world.heights[i];
+    const room = sign > 0 ? HEIGHT_LIMITS.max - h : h - HEIGHT_LIMITS.min;
+    const soft = Math.max(0.15, Math.min(1, room / 60)); // slower in the last 60 steps before a limit
+    const delta = sign * Math.max(w > 0.35 ? 1 : 0, strength * w * w * soft);
+    if (!delta) return;
+    setHeight(world, x, y, h + delta);
+    reclassify(world, x, y);
+  });
+}
+
+/**
+ * Deepens water only: every water tile under the brush is lowered (land is left alone), so repeated strokes
+ * make the sea deeper (shallow becomes deep water below SHALLOW_DEPTH). A lake or river pushed below sea
+ * level becomes sea, as with Lower.
+ */
+export function applyDeepenBrush(world: World, s: BrushStroke): void {
+  const strength = s.strength ?? 6;
+  forEachInCircle(world, s.x, s.y, s.radius, (x, y, w) => {
+    const i = world.idx(x, y);
+    if (!isWater(world.terrain[i])) return;
+    setHeight(world, x, y, world.heights[i] - Math.max(1, strength * w));
     reclassify(world, x, y);
   });
 }

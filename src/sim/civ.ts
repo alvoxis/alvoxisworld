@@ -22,8 +22,8 @@ import { SPECIES, STATE } from './creatures';
 import { passable } from './pathfinding';
 import type { Settlement } from './settlements';
 
-export type BuildingType = 'house' | 'storehouse' | 'farm' | 'lumber' | 'quarry';
-export const BUILDING_TYPES: readonly BuildingType[] = ['house', 'farm', 'lumber', 'quarry', 'storehouse'];
+export type BuildingType = 'house' | 'storehouse' | 'farm' | 'lumber' | 'quarry' | 'shipyard';
+export const BUILDING_TYPES: readonly BuildingType[] = ['house', 'farm', 'lumber', 'quarry', 'storehouse', 'shipyard'];
 export type TechId = 'farming' | 'construction' | 'harvesting';
 export const TECH_IDS: readonly TechId[] = ['farming', 'construction', 'harvesting'];
 export type Stage = 'camp' | 'village' | 'town';
@@ -41,6 +41,8 @@ export const BUILDINGS: Readonly<Record<BuildingType, BuildingDef>> = {
   farm: { wood: 8, stone: 0, steps: 5 },
   lumber: { wood: 8, stone: 0, steps: 5 },
   quarry: { wood: 12, stone: 0, steps: 7 },
+  /** A dock and slipway on the sea shore. A foundation: ships and sailing are not simulated yet. */
+  shipyard: { wood: 24, stone: 6, steps: 9 },
 };
 
 export interface TechDef {
@@ -86,9 +88,13 @@ export const QUARRY_RADIUS = 5;
 export const FARM_TERRAIN: readonly number[] = [T.GRASS, T.SAVANNA, T.SOIL];
 export const FOREST_TERRAIN: readonly number[] = [T.FOREST, T.JUNGLE];
 export const STONE_TERRAIN: readonly number[] = [T.HILLS, T.MOUNTAIN];
+export const OPEN_SEA: readonly number[] = [T.SHALLOW_WATER, T.DEEP_WATER];
 
 /** Workers a finished building can use; the full yield needs all of them. */
-export const WORK_SLOTS: Readonly<Record<BuildingType, number>> = { house: 0, storehouse: 0, farm: 2, lumber: 2, quarry: 2 };
+export const WORK_SLOTS: Readonly<Record<BuildingType, number>> = { house: 0, storehouse: 0, farm: 2, lumber: 2, quarry: 2, shipyard: 0 };
+/** A shipyard stands on a shore tile next to open sea with at least this many sea tiles within SHIPYARD_REACH. */
+export const SHIPYARD_SEA = 10;
+export const SHIPYARD_REACH = 3;
 /** Builders a site can use, and construction steps done per builder per step. */
 export const BUILDERS = 3;
 export const BUILD_PER_WORKER = 0.5;
@@ -355,6 +361,14 @@ export function findSite(world: World, s: Settlement, owner: Uint16Array, type: 
       const rock = countNear(world, x, y, QUARRY_RADIUS, STONE_TERRAIN);
       if (rock < 3) continue;
       score = rock * 10 - d - 2 * crowd + vary;
+    } else if (type === 'shipyard') {
+      // On the shore of open, navigable sea (not a lake or river): a sea tile on a side, enough sea around.
+      let side = false;
+      for (const n of [i - W, i + W, x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1]) if (n >= 0 && n < world.terrain.length && OPEN_SEA.includes(world.terrain[n])) side = true;
+      if (!side) continue;
+      const sea = countNear(world, x, y, SHIPYARD_REACH, OPEN_SEA);
+      if (sea < SHIPYARD_SEA) continue;
+      score = sea - d - 2 * crowd + vary;
     } else if (type === 'storehouse') {
       score = -Math.abs(d - 2.5) - 2 * crowd + vary;
     } else {
@@ -773,6 +787,7 @@ function autoManage(host: CivHost, s: Settlement): void {
   if (c.food < 30 && count('farm') < Math.ceil(pop / 7)) wants.push('farm');
   if (count('storehouse') === 0 && pop >= 14) wants.push('storehouse');
   if (count('quarry') === 0 && c.stage !== 'camp') wants.push('quarry');
+  if (count('shipyard') === 0 && c.stage === 'town' && count('storehouse') > 0) wants.push('shipyard'); // only where findSite finds a shore
   for (const t of wants) {
     if (buildBlock(world, s, owner, t) === null) {
       const b = startBuilding(world, s, owner, t, tick);

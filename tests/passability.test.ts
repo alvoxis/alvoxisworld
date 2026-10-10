@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { UndoHistory } from '../src/game/undo';
 import { deserializeInto, serialize } from '../src/save/serialize';
-import { GRAZER, HADROSAUR, STATE } from '../src/sim/creatures';
+import { GRAZER, HADROSAUR, SPECIES, STATE } from '../src/sim/creatures';
 import { computeNav, NavScheduler } from '../src/sim/navjobs';
 import { MOVE, NOT_FOUND, Pathfinder, WaterField, navGridOf, passable, passableId, tileCost } from '../src/sim/pathfinding';
 import { RegionGraph, computeRegions } from '../src/sim/regions';
@@ -342,7 +342,7 @@ describe('animals and obstacles', () => {
     expect(passable(w2, MOVE.LAND, Math.floor(s2.creatures.x[0]), Math.floor(s2.creatures.y[0]))).toBe(true);
   });
 
-  it('an animal walled in beyond its reach stays put instead of walking through, and the simulation counts it as trapped', () => {
+  it('an animal walled in beyond its reach is carried (never walked through the rock) to the nearest usable tile, alive', () => {
     const w = flat(40, 40);
     const sim = quiet(w);
     sim.creatures.spawn(HADROSAUR, 20.5, 20.5, sim.rng, { hunger: 5, thirst: 5 });
@@ -352,9 +352,13 @@ describe('animals and obstacles', () => {
     const x0 = sim.creatures.x[0];
     const y0 = sim.creatures.y[0];
     run(sim, 60);
-    expect(sim.creatures.x[0]).toBe(x0);
-    expect(sim.creatures.y[0]).toBe(y0);
-    expect(sim.creatures.trapped).toBeGreaterThan(50);
+    // 0.20: instead of standing forever inside the rock it is moved once to the nearest tile it can use.
+    expect(sim.creatures.isAlive(0)).toBe(true);
+    expect(sim.creatures.rescued).toBe(1);
+    expect(sim.creatures.trapped).toBeGreaterThanOrEqual(1);
+    expect(Math.hypot(sim.creatures.x[0] - 20, sim.creatures.y[0] - 20)).toBeGreaterThanOrEqual(8.5);
+    expect(Math.hypot(sim.creatures.x[0] - x0, sim.creatures.y[0] - y0)).toBeLessThan(12);
+    expect(passable(w, SPECIES[HADROSAUR].move, Math.floor(sim.creatures.x[0]), Math.floor(sim.creatures.y[0]))).toBe(true);
   });
 
   it('re-plans around a wall that rises while it is walking, and rebuilds shared navigation at most once per throttle window', () => {

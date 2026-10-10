@@ -77,7 +77,7 @@ export interface CivProfile {
   /** Other species that may live in its settlements and groups. Empty today: settlements and groups are single-species. */
   compatible: readonly number[];
   /** Weights of the site score (sites.ts): edible land, liked terrain, trees, rock and free land within reach. */
-  weights: Readonly<{ food: number; like: number; trees: number; rock: number; space: number }>;
+  weights: Readonly<{ food: number; like: number; trees: number; rock: number; space: number; coast: number }>;
   /** Least distance (tiles) from a new home to the centre of any existing settlement. */
   gap: number;
   /** Building style of its settlements (render/architecture.ts); the rules of buildings are shared by all peoples. */
@@ -145,7 +145,7 @@ export const SPECIES: readonly SpeciesDef[] = [
       minFounders: 4,
       groupMax: 24,
       compatible: [],
-      weights: { food: 0.45, like: 0.3, trees: 0.1, rock: 0.05, space: 0.1 },
+      weights: { food: 0.45, like: 0.3, trees: 0.1, rock: 0.05, space: 0.1, coast: 0.04 },
       gap: 16,
       architecture: 'human',
     },
@@ -166,7 +166,7 @@ export const SPECIES: readonly SpeciesDef[] = [
       minFounders: 4,
       groupMax: 16,
       compatible: [],
-      weights: { food: 0.35, like: 0.3, trees: 0.25, rock: 0, space: 0.1 },
+      weights: { food: 0.35, like: 0.3, trees: 0.25, rock: 0, space: 0.1, coast: 0.02 },
       gap: 20,
       architecture: 'elven',
     },
@@ -225,6 +225,8 @@ const ESCAPE_DAMAGE = 0.045;
 const FIRE_SIGHT = 3;
 /** How far (tiles) an animal on blocked ground looks for a tile it can use. */
 const UNSTICK_RADIUS = 4;
+/** How far a creature walled in by raised ground is carried to the nearest usable tile. */
+export const RESCUE_RADIUS = 24;
 
 export const MAX_CREATURES = 6000;
 
@@ -376,6 +378,8 @@ export class Creatures {
   anyFire = false;
   /** Animal-ticks spent standing on blocked ground (statistics and tests). */
   trapped = 0;
+  /** Creatures carried out of ground they were walled in by (diagnostics). */
+  rescued = 0;
   /** Zones to run from (around meteors about to land), set by Simulation each tick; empty most of the time. */
   dangers: Array<{ x: number; y: number; r: number }> = [];
 
@@ -1644,7 +1648,17 @@ export class Creatures {
     this.clearPath(i);
     this.state[i] = STATE.WANDER;
     this.trapped++;
-    if (bx < 0) return true; // trapped: no move this tick
+    if (bx < 0) {
+      // Walled in (a whole mountain was raised around it): it is carried to the nearest tile it can use within
+      // RESCUE_RADIUS (nearest first, then scan order: deterministic). Nobody is killed by a raised mountain.
+      const to = this.rescueTile(world, sp, cx, cy);
+      if (to >= 0) {
+        this.x[i] = this.px[i] = (to % world.width) + 0.5;
+        this.y[i] = this.py[i] = Math.floor(to / world.width) + 0.5;
+        this.rescued++;
+      }
+      return true;
+    }
     const ux = bx + 0.5 - this.x[i];
     const uy = by + 0.5 - this.y[i];
     const d = Math.hypot(ux, uy) || 1;
@@ -1654,6 +1668,26 @@ export class Creatures {
     this.x[i] += this.dx[i] * step;
     this.y[i] += this.dy[i] * step;
     return true;
+  }
+
+  /** Nearest tile within RESCUE_RADIUS that the species can stand on (-1 = none). */
+  private rescueTile(world: World, sp: SpeciesDef, cx: number, cy: number): number {
+    for (let r = UNSTICK_RADIUS + 1; r <= RESCUE_RADIUS; r++) {
+      let best = -1;
+      let bd = Infinity;
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r || !Creatures.canEnter(world, sp.id, cx + dx, cy + dy)) continue;
+          const d = dx * dx + dy * dy;
+          if (d < bd) {
+            bd = d;
+            best = (cy + dy) * world.width + cx + dx;
+          }
+        }
+      }
+      if (best >= 0) return best;
+    }
+    return -1;
   }
 
   /** Moves along the current heading. Returns false (without moving) if blocked. */

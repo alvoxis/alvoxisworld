@@ -51,6 +51,7 @@ export function assessSite(world: World, creatures: Creatures, settlements: Sett
   let free = 0;
   let like = 0;
   let water = 0;
+  let sea = 0;
   let fire = 0;
   let trees = 0;
   let rock = 0;
@@ -61,6 +62,7 @@ export function assessSite(world: World, creatures: Creatures, settlements: Sett
       if (d > R) continue;
       const i = y * W + x;
       const t = world.terrain[i];
+      if ((t === T.SHALLOW_WATER || t === T.DEEP_WATER) && d <= WATER_REACH) sea++; // open sea: a coast for harbours later
       if (d <= SITE_RADIUS) {
         if (isWater(t)) {
           if (d <= WATER_REACH) water++;
@@ -97,6 +99,6 @@ export function assessSite(world: World, creatures: Creatures, settlements: Sett
   const k = prof.weights;
   const score =
     k.food * Math.min(1, foodShare / 0.6) + k.like * Math.min(1, like / Math.max(1, land)) + k.trees * Math.min(1, trees / 30) + k.rock * Math.min(1, rock / 15) +
-    k.space * Math.min(1, free / 150) - Math.min(0.3, predators * 0.1);
+    k.space * Math.min(1, free / 150) + k.coast * Math.min(1, sea / 20) - Math.min(0.3, predators * 0.1);
   return { ok: true, score, capacity: Math.max(3, Math.min(16, Math.floor(edible8 / 12))) };
 }
