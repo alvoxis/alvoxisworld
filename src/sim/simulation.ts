@@ -83,7 +83,7 @@ export class Simulation {
   step(): void {
     const date = this.date;
     vegetationTick(this.world, this.rng, SEASON_GROWTH[date.season]);
-    const before = SPECIES.map((s) => this.creatures.countSpecies(s.id));
+    const before = this.creatures.countAll();
     this.creatures.tick(this.world, this.rng, this.tick);
     this.tick++;
 
@@ -92,9 +92,9 @@ export class Simulation {
       this.lastSeason = now.seasonIndex;
       this.onSeasonChange(now.seasonIndex);
     }
+    const after = this.creatures.countAll();
     SPECIES.forEach((s, k) => {
-      const count = this.creatures.countSpecies(s.id);
-      if (before[k] > 0 && count === 0) this.log(`${s.plural} went extinct.`);
+      if (before[k] > 0 && after[k] === 0) this.log(`${s.plural} went extinct.`);
     });
   }
 

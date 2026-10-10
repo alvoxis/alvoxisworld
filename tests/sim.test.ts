@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Camera } from '../src/render/camera';
 import { deserializeInto, serialize } from '../src/save/serialize';
 import { dateFromTick, TICKS_PER_YEAR } from '../src/sim/clock';
-import { CAUSE, GRAZER, MAX_CREATURES, RAPTOR, SPECIES } from '../src/sim/creatures';
+import { CAUSE, FISH, GRAZER, HADROSAUR, MAX_CREATURES, RAPTOR, SPECIES, TYRANT } from '../src/sim/creatures';
 import { Simulation } from '../src/sim/simulation';
 import { applyPaintBrush } from '../src/world/brush';
 import { generateWorld } from '../src/world/generator';
@@ -76,6 +76,40 @@ describe('simulation', () => {
     expect(grazers).toBeLessThan(MAX_CREATURES * SPECIES[GRAZER].maxShare + 10);
     expect(sim.creatures.countSpecies(RAPTOR)).toBeGreaterThan(0);
     expect(sim.creatures.deathsBy(GRAZER, CAUSE.PREDATION)).toBeGreaterThan(10);
+  });
+
+  it('mixed ecosystem: predators persist and rarely die of thirst (long run, rivers on)', () => {
+    // Same scenario as the stability investigation in docs/ECOSYSTEM.md (seed 11, 6 years).
+    const w = generateWorld(512, 320, 11);
+    const sim = new Simulation(w);
+    const r = new Rng(11);
+    const place = (want: number, n: number, fn: (x: number, y: number, k: number) => void) => {
+      let k = 0;
+      for (let a = 0; a < 20000 && k < n; a++) {
+        const x = r.next() * w.width;
+        const y = r.next() * w.height;
+        if (w.terrainAt(Math.floor(x), Math.floor(y)) !== want) continue;
+        fn(x, y, k);
+        k++;
+      }
+    };
+    place(T.GRASS, 15, (x, y, k) => {
+      sim.spawnInCircle(GRAZER, x, y, 3, 8);
+      if (k % 3 === 0) sim.spawnInCircle(RAPTOR, x, y, 3, 2);
+    });
+    place(T.FOREST, 8, (x, y, k) => {
+      sim.spawnInCircle(HADROSAUR, x, y, 3, 4);
+      if (k % 4 === 0) sim.spawnInCircle(TYRANT, x, y, 3, 2);
+    });
+    place(T.SHALLOW_WATER, 8, (x, y) => sim.spawnInCircle(FISH, x, y, 3, 6));
+    for (let i = 0; i < TICKS_PER_YEAR * 6; i++) sim.step();
+    const c = sim.creatures;
+    for (const s of [GRAZER, RAPTOR, HADROSAUR, TYRANT]) expect(c.countSpecies(s)).toBeGreaterThan(0);
+    const raptorDeaths = [1, 2, 3, 4, 5].reduce((n, k) => n + c.deathsBy(RAPTOR, k), 0);
+    expect(c.deathsBy(RAPTOR, CAUSE.THIRST)).toBeLessThanOrEqual(Math.max(2, raptorDeaths * 0.1));
+    expect(c.deathsBy(TYRANT, CAUSE.THIRST)).toBeLessThanOrEqual(1);
+    // Predators don't out-breed their prey.
+    expect(c.countSpecies(GRAZER)).toBeGreaterThan(c.countSpecies(RAPTOR) * 5);
   });
 
   it('bare soil regrows over time', () => {

@@ -1,8 +1,12 @@
-import { CAUSE, Creatures, MAX_CREATURES, SPECIES, STATE } from '../sim/creatures';
+import { CAUSE, Creatures, MAX_CREATURES, PATH_MAX, SPECIES, STATE } from '../sim/creatures';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
 import { World } from '../world/world';
 
-export const SAVE_VERSION = 2;
+/**
+ * Save versions: 1 = Milestone 1 (energy only), 2 = creature ids/needs/states,
+ * 3 = adds routes and remaining behaviour fields so a loaded world continues exactly.
+ */
+export const SAVE_VERSION = 3;
 
 /** Creature fields stored in a save (one typed array per field, length = count). */
 export interface CreatureSave {
@@ -24,6 +28,16 @@ export interface CreatureSave {
   targetId: Uint32Array;
   timer: Uint16Array;
   breedTimer: Uint16Array;
+  /** Version 3 additions (absent in version 2 saves). */
+  searchCd?: Uint8Array;
+  harm?: Uint8Array;
+  pathLen?: Uint8Array;
+  pathPos?: Uint8Array;
+  pathGoal?: Int32Array;
+  huntTicks?: Uint16Array;
+  ignoreId?: Uint32Array;
+  /** count × PATH_MAX waypoint tile indices. */
+  path?: Int32Array;
   births: number;
   deaths: number;
   deathStats: Uint32Array;
@@ -65,6 +79,8 @@ const COPIED = [
   'id', 'species', 'x', 'y', 'dx', 'dy', 'health', 'hunger', 'thirst', 'age', 'state', 'tx', 'ty', 'targetId',
   'timer', 'breedTimer',
 ] as const;
+/** Fields added in version 3; missing ones (version 2 saves) get neutral defaults. */
+const COPIED_V3 = ['searchCd', 'harm', 'pathLen', 'pathPos', 'pathGoal', 'huntTicks', 'ignoreId'] as const;
 
 export function serialize(sim: Simulation): SaveData {
   const w = sim.world;
@@ -78,7 +94,8 @@ export function serialize(sim: Simulation): SaveData {
     deathStats: c.deathStats.slice(),
     birthStats: c.birthStats.slice(),
   } as CreatureSave;
-  for (const k of COPIED) (creatures as unknown as Record<string, unknown>)[k] = c[k].slice(0, n);
+  for (const k of [...COPIED, ...COPIED_V3]) (creatures as unknown as Record<string, unknown>)[k] = c[k].slice(0, n);
+  creatures.path = c.path.slice(0, n * PATH_MAX);
   return {
     version: SAVE_VERSION,
     savedAt: new Date().toISOString(),
@@ -96,7 +113,8 @@ export function serialize(sim: Simulation): SaveData {
   };
 }
 
-function loadCreaturesV2(c: Creatures, src: CreatureSave): void {
+/** Versions 2 and 3 (version 2 lacks the COPIED_V3 fields and routes). */
+function loadCreatures(c: Creatures, src: CreatureSave): void {
   const count = Math.min(src.count, MAX_CREATURES);
   for (const k of COPIED) {
     const arr = src[k];
@@ -105,7 +123,13 @@ function loadCreaturesV2(c: Creatures, src: CreatureSave): void {
   }
   c.px.set(c.x.subarray(0, count));
   c.py.set(c.y.subarray(0, count));
-  c.harm.fill(CAUSE.NONE, 0, count);
+  for (const k of COPIED_V3) {
+    const arr = src[k];
+    if (arr && arr.length >= count) (c[k] as Uint8Array).set(arr.subarray(0, count) as unknown as ArrayLike<number>);
+    else (c[k] as Uint8Array).fill(k === 'pathGoal' ? -1 : 0, 0, count);
+  }
+  if (src.path && src.path.length >= count * PATH_MAX) c.path.set(src.path.subarray(0, count * PATH_MAX));
+  else c.pathLen.fill(0, 0, count);
   c.count = count;
   c.nextId = src.nextId;
   c.births = src.births;
@@ -134,6 +158,11 @@ function loadCreaturesV1(c: Creatures, src: CreatureSaveV1): void {
     c.timer[i] = 0;
     c.breedTimer[i] = 0;
     c.harm[i] = CAUSE.NONE;
+    c.searchCd[i] = 0;
+    c.pathLen[i] = c.pathPos[i] = 0;
+    c.pathGoal[i] = -1;
+    c.huntTicks[i] = 0;
+    c.ignoreId[i] = 0;
   }
   c.count = count;
   c.nextId = count + 1;
@@ -143,7 +172,7 @@ function loadCreaturesV1(c: Creatures, src: CreatureSaveV1): void {
 
 /** Validates a snapshot and loads it into the simulation, replacing the current world. */
 export function deserializeInto(sim: Simulation, data: SaveData): World {
-  if (!data || (data.version !== 1 && data.version !== SAVE_VERSION)) throw new Error('Unsupported save version');
+  if (!data || ![1, 2, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
   const n = data.width * data.height;
   for (const arr of [data.heights, data.terrain, data.temperature, data.moisture]) {
     if (!(arr instanceof Uint8Array) || arr.length !== n) throw new Error('Corrupt save: map size mismatch');
@@ -157,7 +186,8 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
 
   sim.reset(world, data.tick, data.rngState);
   if (data.version === 1) loadCreaturesV1(sim.creatures, data.creatures as CreatureSaveV1);
-  else loadCreaturesV2(sim.creatures, data.creatures as CreatureSave);
+  else loadCreatures(sim.creatures, data.creatures as CreatureSave);
+  sim.creatures.reindex();
   sim.history = data.history.map((h) => ({ ...h }));
   return world;
 }

@@ -1,5 +1,6 @@
 import { Rng } from '../core/rng';
 import { T, isWater } from '../world/terrain';
+import { MOVE, NO_BUDGET, NOT_FOUND, Pathfinder, UNREACHABLE, WaterField, isDrinkSpot, passable, type MoveClass } from './pathfinding';
 import { World } from '../world/world';
 
 // ---------------------------------------------------------------------------
@@ -37,8 +38,8 @@ export interface SpeciesDef {
   attack: number;
   /** Hunger removed by a kill. */
   meat: number;
-  /** Terrain this species cannot enter, in addition to its habitat rule. */
-  impassable: readonly number[];
+  /** Where it can move (see pathfinding.ts): LAND, LOWLAND (no mountains/snow) or WATER. */
+  move: MoveClass;
   /** Search radius in tiles for food, prey, mates and threats. */
   sight: number;
   breedCooldown: number;
@@ -63,35 +64,35 @@ export const SPECIES: readonly SpeciesDef[] = [
     id: GRAZER, key: 'grazer', name: 'Grazer', plural: 'Grazers', diet: 'herbivore', habitat: 'land',
     speed: 0.11, size: 1, adultAge: 300, maxAge: 1900, maxHealth: 40, hungerRate: 0.25, thirstRate: 0.16,
     food: [T.GRASS, T.SAVANNA, T.TUNDRA, T.HILLS, T.SWAMP], biteGain: 3, prey: [], attack: 0, meat: 0,
-    impassable: [], sight: 8, breedCooldown: 240, breedChance: 0.03, litter: 2, crowdLimit: 3, maxShare: 0.45,
+    move: MOVE.LAND, sight: 8, breedCooldown: 240, breedChance: 0.03, litter: 2, crowdLimit: 3, maxShare: 0.45,
     color: '#efe6cf',
   },
   {
     id: RAPTOR, key: 'raptor', name: 'Raptor', plural: 'Raptors', diet: 'carnivore', habitat: 'land',
     speed: 0.18, size: 1, adultAge: 400, maxAge: 2600, maxHealth: 60, hungerRate: 0.15, thirstRate: 0.14,
     food: [], biteGain: 0, prey: [GRAZER], attack: 8, meat: 90,
-    impassable: [], sight: 14, breedCooldown: 420, breedChance: 0.02, litter: 1, crowdLimit: 2, maxShare: 0.15,
+    move: MOVE.LAND, sight: 14, breedCooldown: 420, breedChance: 0.02, litter: 1, crowdLimit: 2, maxShare: 0.15,
     color: '#c8502e',
   },
   {
     id: HADROSAUR, key: 'hadrosaur', name: 'Hadrosaur', plural: 'Hadrosaurs', diet: 'herbivore', habitat: 'land',
     speed: 0.09, size: 1.5, adultAge: 600, maxAge: 3400, maxHealth: 120, hungerRate: 0.2, thirstRate: 0.14,
     food: [T.FOREST, T.JUNGLE, T.SWAMP, T.GRASS], biteGain: 2.5, prey: [], attack: 0, meat: 0,
-    impassable: [T.MOUNTAIN, T.SNOW], sight: 10, breedCooldown: 480, breedChance: 0.02, litter: 1, crowdLimit: 2,
+    move: MOVE.LOWLAND, sight: 10, breedCooldown: 480, breedChance: 0.02, litter: 1, crowdLimit: 2,
     maxShare: 0.25, color: '#6f8f4a',
   },
   {
     id: TYRANT, key: 'tyrant', name: 'Tyrant', plural: 'Tyrants', diet: 'carnivore', habitat: 'land',
     speed: 0.14, size: 1.8, adultAge: 900, maxAge: 4000, maxHealth: 220, hungerRate: 0.14, thirstRate: 0.12,
-    food: [], biteGain: 0, prey: [HADROSAUR, GRAZER, RAPTOR], attack: 25, meat: 100,
-    impassable: [T.MOUNTAIN, T.SNOW], sight: 13, breedCooldown: 900, breedChance: 0.015, litter: 1, crowdLimit: 1,
+    food: [], biteGain: 0, prey: [HADROSAUR, GRAZER], attack: 25, meat: 100,
+    move: MOVE.LOWLAND, sight: 13, breedCooldown: 600, breedChance: 0.015, litter: 1, crowdLimit: 3,
     maxShare: 0.05, color: '#7a3b2a',
   },
   {
     id: FISH, key: 'fish', name: 'Fish', plural: 'Fish', diet: 'herbivore', habitat: 'water',
     speed: 0.1, size: 0.8, adultAge: 250, maxAge: 1500, maxHealth: 20, hungerRate: 0.2, thirstRate: 0,
-    food: [T.SHALLOW_WATER], biteGain: 3, prey: [], attack: 0, meat: 0,
-    impassable: [], sight: 8, breedCooldown: 200, breedChance: 0.03, litter: 2, crowdLimit: 3, maxShare: 0.3,
+    food: [T.SHALLOW_WATER, T.RIVER, T.LAKE], biteGain: 3, prey: [], attack: 0, meat: 0,
+    move: MOVE.WATER, sight: 8, breedCooldown: 200, breedChance: 0.03, litter: 2, crowdLimit: 3, maxShare: 0.3,
     color: '#9fc4d8',
   },
 ];
@@ -135,8 +136,23 @@ const THINK_EVERY = 4;
 const HUNGRY = 40;
 const THIRSTY = 50;
 const SATED = 8;
-const WATER_SEARCH = 32;
 const ATTACK_RANGE = 0.8;
+/** Waypoints stored per creature; longer routes are re-planned when the stored part is used up. */
+export const PATH_MAX = 32;
+/** Total search node expansions allowed per simulation tick (shared by all creatures). */
+export const NODE_BUDGET = 40000;
+/** Minimum ticks between water-field rebuilds after terrain edits. */
+const FIELD_REBUILD_TICKS = 10;
+/** Radius (in 8×8 grid cells) a hungry predator scans for prey-rich areas. */
+const PROWL_CELLS = 6;
+/** Prey needed within sight per predator before predators breed. */
+const PREY_PER_PREDATOR = 3;
+/** Thirst above which water beats food, however hungry the animal is. */
+const CRITICAL_THIRST = 85;
+/** A chase that hasn't ended in a kill after this many ticks is abandoned. */
+const MAX_CHASE_TICKS = 250;
+/** Within this distance a predator pounces (short burst of speed). */
+const POUNCE_RANGE = 2.5;
 
 export type LifeStage = 'Juvenile' | 'Adult' | 'Elder';
 
@@ -158,6 +174,14 @@ export interface DeathRecord {
   id: number;
   species: number;
   cause: number;
+}
+
+/** Whether a species may live on a tile (land animals wade in rivers; fish need water). */
+function habitatOk(world: World, sp: SpeciesDef, tx: number, ty: number): boolean {
+  if (!world.inBounds(tx, ty)) return false;
+  const id = world.terrain[world.idx(tx, ty)];
+  if (sp.move === MOVE.WATER) return isWater(id);
+  return !isWater(id) || id === T.RIVER;
 }
 
 /**
@@ -184,24 +208,34 @@ export class Creatures {
   readonly thirst = new Float32Array(MAX_CREATURES);
   readonly age = new Float32Array(MAX_CREATURES);
   readonly state = new Uint8Array(MAX_CREATURES);
-  /** Movement target (tile coordinates) for SEEK_* states. */
+  /** Point to move away from while fleeing (the threat's position). */
   readonly tx = new Float32Array(MAX_CREATURES);
   readonly ty = new Float32Array(MAX_CREATURES);
   /** Hunted creature id for HUNT. */
   readonly targetId = new Uint32Array(MAX_CREATURES);
-  /** Ticks left committed to the current wander/flee direction. */
+  /** Ticks left committed to the current wander/flee heading, or before a hunt re-plan. */
   readonly timer = new Uint16Array(MAX_CREATURES);
   readonly breedTimer = new Uint16Array(MAX_CREATURES);
-  /** Ticks before a failed food/water search may run again (keeps far-from-water animals cheap). */
+  /** Ticks before a failed search may run again (keeps animals with no options cheap). */
   readonly searchCd = new Uint8Array(MAX_CREATURES);
   /** Last cause of damage, used to attribute death. */
   readonly harm = new Uint8Array(MAX_CREATURES);
+  /** Planned route: tile indices path[i * PATH_MAX + k] for k < pathLen; pathPos = next waypoint. */
+  readonly path = new Int32Array(MAX_CREATURES * PATH_MAX);
+  readonly pathLen = new Uint8Array(MAX_CREATURES);
+  readonly pathPos = new Uint8Array(MAX_CREATURES);
+  /** Tile the path was planned to (the goal; may lie beyond a truncated path). */
+  readonly pathGoal = new Int32Array(MAX_CREATURES);
+  /** Ticks spent on the current chase (a chase is abandoned after MAX_CHASE_TICKS). */
+  readonly huntTicks = new Uint16Array(MAX_CREATURES);
+  /** A prey id this predator found unreachable or too fast; skipped when choosing targets. */
+  readonly ignoreId = new Uint32Array(MAX_CREATURES);
   private readonly dead = new Uint8Array(MAX_CREATURES);
 
   private readonly fields = [
     this.id, this.species, this.x, this.y, this.px, this.py, this.dx, this.dy, this.health, this.hunger,
     this.thirst, this.age, this.state, this.tx, this.ty, this.targetId, this.timer, this.breedTimer, this.harm,
-    this.searchCd, this.dead,
+    this.searchCd, this.pathLen, this.pathPos, this.pathGoal, this.huntTicks, this.ignoreId, this.dead,
   ];
 
   births = 0;
@@ -211,6 +245,12 @@ export class Creatures {
   readonly birthStats = new Uint32Array(SPECIES.length);
   /** Deaths since the last call to drainDeaths() (for UI/history). */
   private recentDeaths: DeathRecord[] = [];
+
+  /** Shared grid search and water-distance field (see pathfinding.ts). */
+  readonly pathfinder = new Pathfinder();
+  readonly water = new WaterField();
+  private fieldWorld: World | null = null;
+  private lastFieldBuild = -Infinity;
 
   // Spatial hash of all creatures, rebuilt every tick (linked lists in typed arrays).
   private gridHead = new Int32Array(0);
@@ -222,6 +262,19 @@ export class Creatures {
   private readonly byId = new Map<number, number>();
 
   // ---- queries ---------------------------------------------------------
+
+  /** Living creatures per species, in one pass. */
+  countAll(): Uint32Array {
+    const out = new Uint32Array(SPECIES.length);
+    for (let i = 0; i < this.count; i++) if (!this.dead[i]) out[this.species[i]]++;
+    return out;
+  }
+
+  /** Rebuilds the id → index lookup (after bulk loading arrays, e.g. from a save). */
+  reindex(): void {
+    this.byId.clear();
+    for (let i = 0; i < this.count; i++) this.byId.set(this.id[i], i);
+  }
 
   countSpecies(species: number): number {
     let n = 0;
@@ -294,11 +347,7 @@ export class Creatures {
 
   /** Whether a species may stand on the given tile. */
   static canEnter(world: World, species: number, tx: number, ty: number): boolean {
-    if (!world.inBounds(tx, ty)) return false;
-    const id = world.terrain[world.idx(tx, ty)];
-    const sp = SPECIES[species];
-    if (isWater(id) !== (sp.habitat === 'water')) return false;
-    return !sp.impassable.includes(id);
+    return passable(world, SPECIES[species].move, tx, ty);
   }
 
   // ---- lifecycle -------------------------------------------------------
@@ -330,6 +379,10 @@ export class Creatures {
     this.breedTimer[i] = Math.floor(sp.breedCooldown / 2);
     this.harm[i] = CAUSE.NONE;
     this.searchCd[i] = 0;
+    this.pathLen[i] = this.pathPos[i] = 0;
+    this.pathGoal[i] = -1;
+    this.huntTicks[i] = 0;
+    this.ignoreId[i] = 0;
     this.dead[i] = 0;
     this.byId.set(id, i);
     return id;
@@ -368,11 +421,24 @@ export class Creatures {
     this.birthStats.fill(0);
     this.recentDeaths = [];
     this.byId.clear();
+    this.fieldWorld = null;
+    this.lastFieldBuild = -Infinity;
   }
 
   // ---- simulation ------------------------------------------------------
 
+  /** Rebuilds the shared water field if the map's passability changed (throttled). */
+  private updateWaterField(world: World, tick: number): void {
+    if (!this.water.isStale(world)) return;
+    if (this.fieldWorld === world && tick - this.lastFieldBuild < FIELD_REBUILD_TICKS) return;
+    this.water.build(world);
+    this.fieldWorld = world;
+    this.lastFieldBuild = tick;
+  }
+
   tick(world: World, rng: Rng, tick: number): void {
+    this.updateWaterField(world, tick);
+    this.pathfinder.beginTick(NODE_BUDGET);
     this.buildGrid(world);
     const n = this.count; // newborns appended this tick act next tick
     for (let i = 0; i < n; i++) {
@@ -394,8 +460,8 @@ export class Creatures {
       // Habitat check (the player may have flooded or drained the tile).
       const cx = Math.floor(this.x[i]);
       const cy = Math.floor(this.y[i]);
-      if (!world.inBounds(cx, cy) || isWater(world.terrain[world.idx(cx, cy)]) !== (sp.habitat === 'water')) {
-        this.kill(i, sp.habitat === 'water' ? CAUSE.STRANDED : CAUSE.DROWNED);
+      if (!habitatOk(world, sp, cx, cy)) {
+        this.kill(i, sp.move === MOVE.WATER ? CAUSE.STRANDED : CAUSE.DROWNED);
         continue;
       }
 
@@ -432,14 +498,19 @@ export class Creatures {
     const sp = SPECIES[this.species[i]];
     const s = this.state[i];
 
-    // 1. Danger first.
+    // 1. Danger first. Keep the current escape heading for a while to avoid dithering.
     const threats = PREDATORS_OF[sp.id];
     if (threats.length) {
-      const p = this.nearestOf(threats, this.x[i], this.y[i], Math.min(sp.sight, 6), i);
+      const p = this.nearestOf(threats, this.x[i], this.y[i], Math.min(sp.sight, 6), i, 0);
       if (p >= 0) {
-        this.setDir(i, this.x[i] - this.x[p], this.y[i] - this.y[p]);
-        this.state[i] = STATE.FLEE;
-        this.timer[i] = 12;
+        this.tx[i] = this.x[p];
+        this.ty[i] = this.y[p];
+        if (s !== STATE.FLEE || this.timer[i] < 6) {
+          this.clearPath(i);
+          this.state[i] = STATE.FLEE;
+          this.chooseHeading(world, rng, i, this.x[p], this.y[p]);
+          this.timer[i] = 16;
+        }
         return;
       }
     }
@@ -450,41 +521,60 @@ export class Creatures {
     if (s === STATE.DRINK && this.thirst[i] > SATED) return;
 
     // 3. Most pressing need.
+    const canSearch = this.searchCd[i] === 0;
     const thirsty = sp.thirstRate > 0 && this.thirst[i] > THIRSTY;
     const hungry = this.hunger[i] > HUNGRY;
-    const canSearch = this.searchCd[i] === 0;
-    if (thirsty && (!hungry || this.thirst[i] >= this.hunger[i])) {
-      if (s !== STATE.SEEK_WATER && canSearch) this.seekWater(world, rng, i);
+    if (thirsty && (!hungry || this.thirst[i] >= this.hunger[i] || this.thirst[i] > CRITICAL_THIRST)) {
+      if (s !== STATE.SEEK_WATER && canSearch) this.seekWater(world, i);
       return;
     }
     if (hungry) {
-      if (sp.diet === 'carnivore') this.seekPrey(i);
-      else if (s !== STATE.SEEK_FOOD && canSearch) this.seekFood(world, rng, i);
+      if (sp.diet === 'carnivore') this.seekPrey(world, i);
+      else if (s !== STATE.SEEK_FOOD && canSearch) this.seekFood(world, i);
       return;
     }
     if (thirsty) {
-      if (s !== STATE.SEEK_WATER && canSearch) this.seekWater(world, rng, i);
+      if (s !== STATE.SEEK_WATER && canSearch) this.seekWater(world, i);
       return;
     }
-    // 4. No pressing needs: look for a mate if ready to breed.
-    if (this.readyToBreed(i) && this.roomToBreed(i)) {
+
+    // 4. No pressing needs: look for a mate if ready to breed. The route is re-planned
+    //    when the mate has moved, and a pair within breeding range waits (courtship).
+    if (canSearch && this.readyToBreed(i) && this.roomToBreed(i)) {
       const m = this.nearestMate(i, sp.sight * 1.5);
       if (m >= 0) {
-        this.state[i] = STATE.SEEK_MATE;
-        this.tx[i] = this.x[m];
-        this.ty[i] = this.y[m];
-        return;
+        const mx = Math.floor(this.x[m]);
+        const my = Math.floor(this.y[m]);
+        const near = Math.hypot(this.x[m] - this.x[i], this.y[m] - this.y[i]) < 3;
+        const g = this.pathGoal[i];
+        const w = world.width;
+        const stale = g < 0 || Math.max(Math.abs((g % w) - mx), Math.abs(Math.floor(g / w) - my)) > 2;
+        if (near || (s === STATE.SEEK_MATE && !stale && this.pathPos[i] < this.pathLen[i])) {
+          this.state[i] = STATE.SEEK_MATE;
+          if (near) this.clearPath(i);
+          return;
+        }
+        const r = this.planTo(world, i, mx, my, 1500);
+        if (r >= 0) {
+          this.state[i] = STATE.SEEK_MATE;
+          return;
+        }
+        if (r === NOT_FOUND) this.searchCd[i] = 20;
+        if (r === NO_BUDGET && s === STATE.SEEK_MATE) return;
       }
     }
-    if (s !== STATE.WANDER) this.state[i] = STATE.WANDER;
+    if (s !== STATE.WANDER) {
+      this.state[i] = STATE.WANDER;
+      this.clearPath(i);
+    }
   }
 
   private act(world: World, rng: Rng, i: number): void {
     const sp = SPECIES[this.species[i]];
-    const stageMul = this.age[i] < sp.adultAge ? 0.85 : this.age[i] > sp.maxAge * 0.8 ? 0.85 : 1;
-    const speed = sp.speed * stageMul;
     const tx = Math.floor(this.x[i]);
     const ty = Math.floor(this.y[i]);
+    const wading = sp.move !== MOVE.WATER && world.terrain[world.idx(tx, ty)] === T.RIVER;
+    const speed = this.speedOf(i) * (wading ? 0.6 : 1);
 
     switch (this.state[i]) {
       case STATE.EAT: {
@@ -505,7 +595,7 @@ export class Creatures {
         break;
       }
       case STATE.DRINK:
-        if (!this.nearWater(world, tx, ty)) {
+        if (!isDrinkSpot(world, tx, ty)) {
           this.state[i] = STATE.WANDER;
           break;
         }
@@ -513,59 +603,48 @@ export class Creatures {
         if (this.thirst[i] <= SATED) this.state[i] = STATE.WANDER;
         break;
       case STATE.SEEK_FOOD:
-        if (sp.food.includes(world.terrain[world.idx(tx, ty)])) {
+        if (sp.diet === 'herbivore' && sp.food.includes(world.terrain[world.idx(tx, ty)])) {
+          this.clearPath(i);
           this.state[i] = STATE.EAT;
           break;
         }
-        this.moveToward(world, rng, i, this.tx[i], this.ty[i], speed);
+        // Herbivores walk to the food tile; predators prowl toward prey-rich ground.
+        if (this.followPath(world, i, speed) !== 'moving') {
+          this.clearPath(i);
+          this.state[i] = STATE.WANDER;
+        }
         break;
-      case STATE.SEEK_WATER:
-        if (this.nearWater(world, tx, ty)) {
+      case STATE.SEEK_WATER: {
+        if (isDrinkSpot(world, tx, ty)) {
           this.state[i] = STATE.DRINK;
           break;
         }
-        this.moveToward(world, rng, i, this.tx[i], this.ty[i], speed);
-        break;
-      case STATE.HUNT: {
-        const p = this.indexOf(this.targetId[i]);
-        if (p < 0 || this.dead[p]) {
-          this.state[i] = STATE.WANDER;
-          this.targetId[i] = 0;
+        const next = this.water.nextStep(world, sp.move, tx, ty);
+        if (next < 0) {
+          this.state[i] = STATE.WANDER; // no reachable water from here (or field not ready)
+          this.searchCd[i] = 24;
           break;
         }
-        const ddx = this.x[p] - this.x[i];
-        const ddy = this.y[p] - this.y[i];
-        const d = Math.hypot(ddx, ddy);
-        if (d > sp.sight * 1.5) {
-          this.state[i] = STATE.WANDER; // lost the trail
-          this.targetId[i] = 0;
-          break;
-        }
-        if (d <= ATTACK_RANGE) {
-          this.health[p] -= sp.attack;
-          this.harm[p] = CAUSE.PREDATION;
-          if (this.health[p] <= 0) {
-            this.kill(p, CAUSE.PREDATION);
-            this.hunger[i] = Math.max(0, this.hunger[i] - sp.meat);
-            this.state[i] = STATE.WANDER;
-            this.targetId[i] = 0;
-          }
-          break;
-        }
-        this.moveToward(world, rng, i, this.x[p], this.y[p], speed * 1.15);
+        const w = world.width;
+        this.moveToPoint(world, i, (next % w) + 0.5, Math.floor(next / w) + 0.5, speed);
         break;
       }
+      case STATE.HUNT:
+        this.actHunt(world, rng, i, speed);
+        break;
       case STATE.SEEK_MATE:
-        if (Math.hypot(this.tx[i] - this.x[i], this.ty[i] - this.y[i]) < 1.5) {
-          this.state[i] = STATE.WANDER;
-          break;
-        }
-        this.moveToward(world, rng, i, this.tx[i], this.ty[i], speed * 0.8);
+        // With no route left the pair is together (courtship): wait for the breeding roll.
+        if (this.pathPos[i] >= this.pathLen[i]) break;
+        if (this.followPath(world, i, speed * 0.8) === 'blocked') this.clearPath(i);
         break;
       case STATE.FLEE:
         if (this.timer[i] > 0) this.timer[i]--;
         else this.state[i] = STATE.WANDER;
-        this.step(world, rng, i, speed * 1.25);
+        if (!this.stepHeading(world, i, speed * 1.25)) {
+          // Cornered against water or a ridge: pick the best open heading away.
+          this.chooseHeading(world, rng, i, this.tx[i], this.ty[i]);
+          this.stepHeading(world, i, speed * 1.25);
+        }
         break;
       default: {
         // WANDER: hold a heading for a while so animals explore instead of jittering.
@@ -575,23 +654,95 @@ export class Creatures {
           this.timer[i] = 20 + Math.floor(rng.next() * 40);
         }
         const searching = this.hunger[i] > HUNGRY || (sp.thirstRate > 0 && this.thirst[i] > THIRSTY);
-        this.step(world, rng, i, speed * (searching ? 1 : 0.6));
+        const v = speed * (searching ? 1 : 0.6);
+        if (!this.stepHeading(world, i, v)) {
+          this.chooseHeading(world, rng, i);
+          this.stepHeading(world, i, v);
+        }
       }
     }
   }
 
-  /** Adult, healthy, fed, watered and off cooldown. */
-  private readyToBreed(i: number): boolean {
+  private actHunt(world: World, rng: Rng, i: number, speed: number): void {
     const sp = SPECIES[this.species[i]];
-    if (this.dead[i] || this.breedTimer[i] > 0 || this.age[i] < sp.adultAge || this.age[i] > sp.maxAge * 0.8) return false;
-    return this.health[i] >= sp.maxHealth * 0.6 && this.hunger[i] <= 50 && this.thirst[i] <= 50;
+    const p = this.indexOf(this.targetId[i]);
+    if (p < 0) {
+      this.endHunt(i);
+      return;
+    }
+    const d = Math.hypot(this.x[p] - this.x[i], this.y[p] - this.y[i]);
+    if (d > sp.sight * 2) {
+      this.endHunt(i); // lost the trail
+      return;
+    }
+    if (++this.huntTicks[i] > MAX_CHASE_TICKS) {
+      // Not closing in: give up on this one and look for easier prey.
+      this.ignoreId[i] = this.targetId[i];
+      this.endHunt(i);
+      this.searchCd[i] = 10;
+      return;
+    }
+    if (d <= ATTACK_RANGE) {
+      this.health[p] -= sp.attack;
+      this.harm[p] = CAUSE.PREDATION;
+      if (this.health[p] <= 0) {
+        this.kill(p, CAUSE.PREDATION);
+        this.hunger[i] = Math.max(0, this.hunger[i] - sp.meat);
+        this.ignoreId[i] = 0;
+        this.endHunt(i);
+      }
+      return;
+    }
+    // Sprint while chasing; a short burst (pounce) to close the final gap.
+    const chase = speed * (d < POUNCE_RANGE ? 1.6 : 1.15);
+    // Close and in the open: run straight at it.
+    if (d < 6 && this.rayClear(world, sp.move, this.x[i], this.y[i], this.x[p], this.y[p])) {
+      this.clearPath(i);
+      this.setDir(i, this.x[p] - this.x[i], this.y[p] - this.y[i]);
+      if (this.stepHeading(world, i, chase)) return;
+    }
+    // Otherwise follow a path, re-planned when the prey has moved away from its end.
+    const w = world.width;
+    const goal = Math.floor(this.y[p]) * w + Math.floor(this.x[p]);
+    const g = this.pathGoal[i];
+    const drift = g < 0 ? Infinity : Math.max(Math.abs((g % w) - (goal % w)), Math.abs(Math.floor(g / w) - Math.floor(goal / w)));
+    if (this.pathPos[i] >= this.pathLen[i] || (drift > 2 && this.timer[i] === 0)) {
+      const r = this.planTo(world, i, goal % w, Math.floor(goal / w), 2500);
+      this.timer[i] = 8;
+      if (r === NOT_FOUND) {
+        // Unreachable (across a lake, behind a ridge…): give up on this one.
+        this.ignoreId[i] = this.targetId[i];
+        this.endHunt(i);
+        this.searchCd[i] = 20;
+        return;
+      }
+      if (r === NO_BUDGET) {
+        this.setDir(i, this.x[p] - this.x[i], this.y[p] - this.y[i]);
+        if (!this.stepHeading(world, i, chase)) this.chooseHeading(world, rng, i);
+        return;
+      }
+    }
+    if (this.timer[i] > 0) this.timer[i]--;
+    if (this.followPath(world, i, chase) === 'blocked') this.clearPath(i);
   }
 
-  /** Population limits: species share of all slots, and local carrying capacity. */
-  private roomToBreed(i: number): boolean {
+  /** Current base speed of creature i (juveniles and elders are slower). */
+  private speedOf(i: number): number {
     const sp = SPECIES[this.species[i]];
-    if (this.speciesCount[sp.id] >= MAX_CREATURES * sp.maxShare) return false;
-    return this.crowd[sp.id][this.cellOf(this.x[i], this.y[i])] - 1 < sp.crowdLimit; // excludes the parent itself
+    const stageMul = this.age[i] < sp.adultAge ? 0.85 : this.age[i] > sp.maxAge * 0.8 ? 0.85 : 1;
+    return sp.speed * stageMul;
+  }
+
+  /** Whether predator i, sprinting, is faster than prey j fleeing. */
+  private canCatch(i: number, j: number): boolean {
+    return this.speedOf(i) * 1.15 > this.speedOf(j) * 1.25;
+  }
+
+  private endHunt(i: number): void {
+    this.state[i] = STATE.WANDER;
+    this.targetId[i] = 0;
+    this.huntTicks[i] = 0;
+    this.clearPath(i);
   }
 
   private tryBreed(world: World, rng: Rng, i: number): void {
@@ -599,6 +750,7 @@ export class Creatures {
     if (!this.readyToBreed(i)) return;
     if (!rng.chance(sp.breedChance)) return;
     if (!this.roomToBreed(i) || !this.hasMate(i)) return;
+    if (sp.diet === 'carnivore' && !this.preyCanSupport(i)) return;
     const cell = this.cellOf(this.x[i], this.y[i]);
 
     for (let k = 0; k < sp.litter; k++) {
@@ -616,72 +768,152 @@ export class Creatures {
     this.breedTimer[i] = sp.breedCooldown;
   }
 
+  /** Adult, healthy, fed, watered and off cooldown. */
+  private readyToBreed(i: number): boolean {
+    const sp = SPECIES[this.species[i]];
+    if (this.dead[i] || this.breedTimer[i] > 0 || this.age[i] < sp.adultAge || this.age[i] > sp.maxAge * 0.8) return false;
+    return this.health[i] >= sp.maxHealth * 0.6 && this.hunger[i] <= 50 && this.thirst[i] <= 50;
+  }
+
+  /**
+   * Predators only breed where prey is plentiful: at least PREY_PER_PREDATOR prey
+   * per predator of the same species within sight. Without this, efficient hunters
+   * out-breed their food supply and crash it (seen in long simulations).
+   */
+  private preyCanSupport(i: number): boolean {
+    const sp = SPECIES[this.species[i]];
+    let prey = 0;
+    let rivals = 1;
+    this.forEachNear(this.x[i], this.y[i], sp.sight, (j) => {
+      if (sp.prey.includes(this.species[j])) prey++;
+      else if (j !== i && this.species[j] === sp.id) rivals++;
+      return false;
+    });
+    return prey >= PREY_PER_PREDATOR * rivals;
+  }
+
+  /** Population limits: species share of all slots, and local carrying capacity. */
+  private roomToBreed(i: number): boolean {
+    const sp = SPECIES[this.species[i]];
+    if (this.speciesCount[sp.id] >= MAX_CREATURES * sp.maxShare) return false;
+    return this.crowd[sp.id][this.cellOf(this.x[i], this.y[i])] - 1 < sp.crowdLimit; // excludes the parent itself
+  }
+
   // ---- behaviours ------------------------------------------------------
 
-  private seekFood(world: World, rng: Rng, i: number): void {
+  /** Herbivores: path to the nearest *reachable* food tile within sight. */
+  private seekFood(world: World, i: number): void {
     const sp = SPECIES[this.species[i]];
     const tx = Math.floor(this.x[i]);
     const ty = Math.floor(this.y[i]);
-    if (sp.food.includes(world.terrain[world.idx(tx, ty)])) {
-      this.state[i] = STATE.EAT;
-      return;
-    }
-    const found = findTile(world, tx, ty, sp.sight, rng, (x, y) =>
-      sp.food.includes(world.terrain[world.idx(x, y)]) && Creatures.canEnter(world, sp.id, x, y),
+    const terrain = world.terrain;
+    const food = sp.food;
+    const r = this.pathfinder.nearest(
+      world, sp.move, tx, ty, (2 * sp.sight + 1) ** 2, (t) => food.includes(terrain[t]),
+      this.path, i * PATH_MAX, PATH_MAX,
     );
-    if (!found) this.searchCd[i] = 16;
-    if (found) {
+    if (r === 0) {
+      this.clearPath(i);
+      this.state[i] = STATE.EAT;
+    } else if (r > 0) {
+      this.pathLen[i] = r;
+      this.pathPos[i] = 0;
+      this.pathGoal[i] = this.path[i * PATH_MAX + r - 1];
       this.state[i] = STATE.SEEK_FOOD;
-      this.tx[i] = found[0] + 0.5;
-      this.ty[i] = found[1] + 0.5;
-    } else {
-      this.state[i] = STATE.WANDER; // nothing in sight: roam and look again later
+    } else if (r === NOT_FOUND) {
+      this.clearPath(i);
+      this.searchCd[i] = 16;
+      this.state[i] = STATE.WANDER; // nothing reachable in sight: roam and look again later
     }
+    // NO_BUDGET: keep the current state and retry on a later think.
   }
 
-  private seekWater(world: World, rng: Rng, i: number): void {
+  /** Land animals follow the shared water field, which only leads to reachable water. */
+  private seekWater(world: World, i: number): void {
+    const sp = SPECIES[this.species[i]];
     const tx = Math.floor(this.x[i]);
     const ty = Math.floor(this.y[i]);
-    if (this.nearWater(world, tx, ty)) {
+    if (isDrinkSpot(world, tx, ty)) {
       this.state[i] = STATE.DRINK;
       return;
     }
-    const found = findTile(world, tx, ty, WATER_SEARCH, rng, (x, y) => isWater(world.terrain[world.idx(x, y)]));
-    if (!found) this.searchCd[i] = 24;
-    if (found) {
-      this.state[i] = STATE.SEEK_WATER;
-      this.tx[i] = found[0] + 0.5;
-      this.ty[i] = found[1] + 0.5;
-    } else {
+    this.clearPath(i);
+    if (this.water.distanceAt(world, sp.move, tx, ty) === UNREACHABLE) {
       this.state[i] = STATE.WANDER;
+      this.searchCd[i] = 24;
+      return;
     }
+    this.state[i] = STATE.SEEK_WATER;
   }
 
-  private seekPrey(i: number): void {
+  /**
+   * Predators: hunt the nearest visible prey; if none is in sight, prowl toward the
+   * nearby area with the most prey (from the spatial hash's per-cell counts).
+   */
+  private seekPrey(world: World, i: number): void {
     const sp = SPECIES[this.species[i]];
     const current = this.indexOf(this.targetId[i]);
     if (this.state[i] === STATE.HUNT && current >= 0) return;
-    const p = this.nearestOf(sp.prey, this.x[i], this.y[i], sp.sight, i);
+    const p = this.nearestOf(sp.prey, this.x[i], this.y[i], sp.sight, i, this.ignoreId[i], true);
     if (p >= 0) {
+      this.clearPath(i);
       this.state[i] = STATE.HUNT;
       this.targetId[i] = this.id[p];
-    } else {
-      this.state[i] = STATE.WANDER;
-      this.targetId[i] = 0;
+      this.timer[i] = 0;
+      this.huntTicks[i] = 0;
+      return;
     }
+    if (this.state[i] === STATE.SEEK_FOOD && this.pathPos[i] < this.pathLen[i]) return; // still prowling
+    if (this.searchCd[i] > 0) {
+      this.state[i] = STATE.WANDER;
+      return;
+    }
+    const prey = this.densestPrey(i);
+    if (prey >= 0) {
+      const r = this.planTo(world, i, Math.floor(this.x[prey]), Math.floor(this.y[prey]), 6000);
+      if (r > 0) {
+        this.state[i] = STATE.SEEK_FOOD;
+        return;
+      }
+      if (r === NO_BUDGET) return;
+    }
+    this.searchCd[i] = 30;
+    this.state[i] = STATE.WANDER;
   }
 
-  /** Drinking is possible on or next to water, or in a swamp. */
-  private nearWater(world: World, tx: number, ty: number): boolean {
-    if (world.inBounds(tx, ty) && world.terrain[world.idx(tx, ty)] === T.SWAMP) return true;
-    for (let oy = -1; oy <= 1; oy++) {
-      for (let ox = -1; ox <= 1; ox++) {
-        const x = tx + ox;
-        const y = ty + oy;
-        if (world.inBounds(x, y) && isWater(world.terrain[world.idx(x, y)])) return true;
+  /**
+   * A catchable prey animal in the most prey-rich cell nearby (nearer cells
+   * preferred), looking within PROWL_CELLS first and further out if that is empty.
+   */
+  private densestPrey(i: number): number {
+    const near = this.densestPreyWithin(i, PROWL_CELLS);
+    return near >= 0 ? near : this.densestPreyWithin(i, PROWL_CELLS * 2 + 2);
+  }
+
+  private densestPreyWithin(i: number, radius: number): number {
+    const sp = SPECIES[this.species[i]];
+    const gx = Math.min(this.gridW - 1, Math.max(0, Math.floor(this.x[i] / GRID)));
+    const gy = Math.min(this.gridH - 1, Math.max(0, Math.floor(this.y[i] / GRID)));
+    let bestCell = -1;
+    let bestScore = 0;
+    for (let cy = Math.max(0, gy - radius); cy <= Math.min(this.gridH - 1, gy + radius); cy++) {
+      for (let cx = Math.max(0, gx - radius); cx <= Math.min(this.gridW - 1, gx + radius); cx++) {
+        const cell = cy * this.gridW + cx;
+        let n = 0;
+        for (const s of sp.prey) n += this.crowd[s][cell];
+        if (!n) continue;
+        const score = n / (1 + 0.5 * Math.max(Math.abs(cx - gx), Math.abs(cy - gy)));
+        if (score > bestScore) {
+          bestScore = score;
+          bestCell = cell;
+        }
       }
     }
-    return false;
+    if (bestCell < 0) return -1;
+    for (let j = this.gridHead[bestCell]; j !== -1; j = this.gridNext[j]) {
+      if (!this.dead[j] && sp.prey.includes(this.species[j]) && this.id[j] !== this.ignoreId[i] && this.canCatch(i, j)) return j;
+    }
+    return -1;
   }
 
   private hasMate(i: number): boolean {
@@ -706,7 +938,163 @@ export class Creatures {
     return best;
   }
 
-  // ---- movement --------------------------------------------------------
+  // ---- paths & movement --------------------------------------------------
+
+  private clearPath(i: number): void {
+    this.pathLen[i] = 0;
+    this.pathPos[i] = 0;
+    this.pathGoal[i] = -1;
+  }
+
+  /** A* to a tile; stores the route. Returns path length or NOT_FOUND / NO_BUDGET. */
+  private planTo(world: World, i: number, gx: number, gy: number, maxNodes: number): number {
+    const sp = SPECIES[this.species[i]];
+    const r = this.pathfinder.astar(
+      world, sp.move, Math.floor(this.x[i]), Math.floor(this.y[i]), gx, gy, maxNodes,
+      this.path, i * PATH_MAX, PATH_MAX,
+    );
+    if (r >= 0) {
+      this.pathLen[i] = r;
+      this.pathPos[i] = 0;
+      this.pathGoal[i] = gy * world.width + gx;
+    } else if (r === NOT_FOUND) {
+      this.clearPath(i);
+    }
+    return r;
+  }
+
+  /**
+   * Walks the stored route. Each waypoint is re-validated before use, so terrain
+   * edits (flooding, new mountains) invalidate the path instead of letting the
+   * animal walk into it. Returns 'moving', 'done' (route used up) or 'blocked'.
+   */
+  private followPath(world: World, i: number, speed: number): 'moving' | 'done' | 'blocked' {
+    const cls = SPECIES[this.species[i]].move;
+    const w = world.width;
+    let budget = speed;
+    while (budget > 1e-6) {
+      if (this.pathPos[i] >= this.pathLen[i]) return 'done';
+      const t = this.path[i * PATH_MAX + this.pathPos[i]];
+      const cx = (t % w) + 0.5;
+      const cy = Math.floor(t / w) + 0.5;
+      if (!passable(world, cls, t % w, Math.floor(t / w))) return 'blocked';
+      const ddx = cx - this.x[i];
+      const ddy = cy - this.y[i];
+      const d = Math.hypot(ddx, ddy);
+      if (d <= budget) {
+        this.x[i] = cx;
+        this.y[i] = cy;
+        if (d > 1e-6) this.setDir(i, ddx, ddy);
+        budget -= d;
+        this.pathPos[i]++;
+        continue;
+      }
+      if (!this.moveToPoint(world, i, cx, cy, budget)) return 'blocked';
+      return 'moving';
+    }
+    return this.pathPos[i] >= this.pathLen[i] ? 'done' : 'moving';
+  }
+
+  /** Moves straight toward a point (normally an adjacent tile centre). Returns false if blocked. */
+  private moveToPoint(world: World, i: number, x: number, y: number, speed: number): boolean {
+    const ddx = x - this.x[i];
+    const ddy = y - this.y[i];
+    const d = Math.hypot(ddx, ddy);
+    if (d < 1e-6) return true;
+    this.setDir(i, ddx, ddy);
+    const k = Math.min(1, speed / d);
+    const nx = this.x[i] + ddx * k;
+    const ny = this.y[i] + ddy * k;
+    if (this.canMove(world, i, nx, ny)) {
+      this.x[i] = nx;
+      this.y[i] = ny;
+      return true;
+    }
+    // Off-centre start clipped a corner: re-centre on the current tile first.
+    const ox = Math.floor(this.x[i]) + 0.5;
+    const oy = Math.floor(this.y[i]) + 0.5;
+    const cd = Math.hypot(ox - this.x[i], oy - this.y[i]);
+    if (cd < 1e-6) return false;
+    const c = Math.min(1, speed / cd);
+    this.x[i] += (ox - this.x[i]) * c;
+    this.y[i] += (oy - this.y[i]) * c;
+    return true;
+  }
+
+  /** Whether creature i may move to (nx, ny). Animals stranded on blocked ground may walk off it. */
+  private canMove(world: World, i: number, nx: number, ny: number): boolean {
+    const sp = SPECIES[this.species[i]];
+    const tx = Math.floor(nx);
+    const ty = Math.floor(ny);
+    if (passable(world, sp.move, tx, ty)) return true;
+    const here = passable(world, sp.move, Math.floor(this.x[i]), Math.floor(this.y[i]));
+    return !here && habitatOk(world, sp, tx, ty);
+  }
+
+  /** Moves along the current heading. Returns false (without moving) if blocked. */
+  private stepHeading(world: World, i: number, speed: number): boolean {
+    const nx = this.x[i] + this.dx[i] * speed;
+    const ny = this.y[i] + this.dy[i] * speed;
+    if (!this.canMove(world, i, nx, ny)) return false;
+    this.x[i] = nx;
+    this.y[i] = ny;
+    return true;
+  }
+
+  /** Free run (in tiles, up to 4) along a heading before hitting impassable ground. */
+  private openRun(world: World, cls: number, x: number, y: number, dx: number, dy: number): number {
+    let run = 0;
+    for (let k = 1; k <= 4; k++) {
+      if (!passable(world, cls, Math.floor(x + dx * k), Math.floor(y + dy * k))) break;
+      run = k;
+    }
+    return run;
+  }
+
+  /**
+   * Picks a new heading among 16 directions, scored by open ground ahead, keeping
+   * close to the current heading, and (when fleeing) moving away from (awayX, awayY).
+   */
+  private chooseHeading(world: World, rng: Rng, i: number, awayX?: number, awayY?: number): void {
+    const cls = SPECIES[this.species[i]].move;
+    let ax = 0;
+    let ay = 0;
+    if (awayX !== undefined && awayY !== undefined) {
+      const d = Math.hypot(this.x[i] - awayX, this.y[i] - awayY) || 1;
+      ax = (this.x[i] - awayX) / d;
+      ay = (this.y[i] - awayY) / d;
+    }
+    let best = -Infinity;
+    let bx = this.dx[i];
+    let by = this.dy[i];
+    const offset = rng.next() * (Math.PI / 8);
+    for (let k = 0; k < 16; k++) {
+      const a = offset + (k * Math.PI) / 8;
+      const dx = Math.cos(a);
+      const dy = Math.sin(a);
+      const run = this.openRun(world, cls, this.x[i], this.y[i], dx, dy);
+      if (run === 0) continue;
+      const score = run + 3 * (dx * ax + dy * ay) + 0.5 * (dx * this.dx[i] + dy * this.dy[i]) + rng.next() * 0.5;
+      if (score > best) {
+        best = score;
+        bx = dx;
+        by = dy;
+      }
+    }
+    this.dx[i] = bx;
+    this.dy[i] = by;
+  }
+
+  /** Whether a straight line between two points stays on passable tiles. */
+  private rayClear(world: World, cls: number, x0: number, y0: number, x1: number, y1: number): boolean {
+    const d = Math.hypot(x1 - x0, y1 - y0);
+    const steps = Math.ceil(d / 0.4);
+    for (let k = 1; k <= steps; k++) {
+      const t = k / steps;
+      if (!passable(world, cls, Math.floor(x0 + (x1 - x0) * t), Math.floor(y0 + (y1 - y0) * t))) return false;
+    }
+    return true;
+  }
 
   private setDir(i: number, vx: number, vy: number): void {
     const d = Math.hypot(vx, vy);
@@ -721,46 +1109,12 @@ export class Creatures {
     this.dy[i] = Math.sin(a);
   }
 
-  private moveToward(world: World, rng: Rng, i: number, x: number, y: number, speed: number): void {
-    if (this.timer[i] > 0) {
-      // Committed to a detour around an obstacle.
-      this.timer[i]--;
-      this.step(world, rng, i, speed);
-      return;
-    }
-    this.setDir(i, x - this.x[i], y - this.y[i]);
-    if (!this.step(world, rng, i, speed)) this.timer[i] = 6;
-  }
-
-  /** Moves along the current heading, turning away from impassable tiles. Returns false if blocked. */
-  private step(world: World, rng: Rng, i: number, speed: number): boolean {
-    const sp = this.species[i];
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const nx = this.x[i] + this.dx[i] * speed;
-      const ny = this.y[i] + this.dy[i] * speed;
-      if (Creatures.canEnter(world, sp, Math.floor(nx), Math.floor(ny))) {
-        this.x[i] = nx;
-        this.y[i] = ny;
-        return attempt === 0;
-      }
-      // Try a side-step: rotate ±90° (random side), then a random heading.
-      if (attempt < 2) {
-        const side = rng.chance(0.5) ? 1 : -1;
-        const ox = this.dx[i];
-        this.dx[i] = -this.dy[i] * side;
-        this.dy[i] = ox * side;
-      } else {
-        this.turn(rng, i);
-      }
-    }
-    return false;
-  }
-
   // ---- bookkeeping -----------------------------------------------------
 
   private kill(i: number, cause: number): void {
     if (this.dead[i]) return;
     this.dead[i] = 1;
+    this.byId.delete(this.id[i]);
     this.deaths++;
     this.deathStats[this.species[i] * CAUSE_COUNT + cause]++;
     this.recentDeaths.push({ id: this.id[i], species: this.species[i], cause });
@@ -784,7 +1138,6 @@ export class Creatures {
     this.gridHead.fill(-1);
     for (const c of this.crowd) c.fill(0);
     this.speciesCount.fill(0);
-    this.byId.clear();
     for (let i = 0; i < this.count; i++) {
       const cell = this.cellOf(this.x[i], this.y[i]);
       const sp = this.species[i];
@@ -792,7 +1145,6 @@ export class Creatures {
       this.speciesCount[sp]++;
       this.gridNext[i] = this.gridHead[cell];
       this.gridHead[cell] = i;
-      this.byId.set(this.id[i], i);
     }
   }
 
@@ -817,11 +1169,14 @@ export class Creatures {
     }
   }
 
-  private nearestOf(species: readonly number[], x: number, y: number, r: number, self: number): number {
+  private nearestOf(
+    species: readonly number[], x: number, y: number, r: number, self: number, skipId: number, catchable = false,
+  ): number {
     let best = -1;
     let bestD = Infinity;
     this.forEachNear(x, y, r, (j) => {
-      if (j === self || !species.includes(this.species[j])) return false;
+      if (j === self || !species.includes(this.species[j]) || (skipId && this.id[j] === skipId)) return false;
+      if (catchable && !this.canCatch(self, j)) return false;
       const d = (this.x[j] - x) ** 2 + (this.y[j] - y) ** 2;
       if (d < bestD) {
         bestD = d;
@@ -843,6 +1198,7 @@ export class Creatures {
       const last = --this.count;
       if (i !== last) {
         for (const f of this.fields) f[i] = f[last];
+        this.path.copyWithin(i * PATH_MAX, last * PATH_MAX, last * PATH_MAX + PATH_MAX);
         this.byId.set(this.id[i], i);
       }
       this.dead[last] = 0;
@@ -851,10 +1207,9 @@ export class Creatures {
 }
 
 /**
- * Finds the nearest tile matching a predicate, scanning square rings outward. Within
- * the first ring that has matches it returns the closest one by straight-line
- * distance; ties are broken by a random start offset so creatures don't all pick
- * the same tile.
+ * Finds the nearest tile matching a predicate by straight-line distance (ignoring
+ * obstacles), scanning square rings outward. Kept for tools and tests; creatures
+ * use reachability-aware searches from pathfinding.ts instead.
  */
 export function findTile(
   world: World,

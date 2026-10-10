@@ -379,3 +379,220 @@ describe('Creatures.canEnter', () => {
     expect(Creatures.canEnter(world, GRAZER, 9, 0)).toBe(false);
   });
 });
+
+describe('navigation (pathfinding, rivers and lakes)', () => {
+  it('drinks from rivers (standing in them) and from lakes', () => {
+    const world = testWorld(40, 20, T.GRASS, [[30, 0, 31, 20, T.RIVER], [2, 2, 6, 6, T.LAKE]]);
+    const sim = new Simulation(world);
+    const a = sim.creatures.spawn(GRAZER, 20.5, 10.5, sim.rng, { hunger: 0, thirst: 70 });
+    const b = sim.creatures.spawn(GRAZER, 10.5, 4.5, sim.rng, { hunger: 0, thirst: 70 });
+    const drank = new Set<number>();
+    for (let t = 0; t < 400 && drank.size < 2; t++) {
+      sim.step();
+      for (const id of [a, b]) {
+        const i = sim.creatures.indexOf(id);
+        if (i >= 0 && sim.creatures.state[i] === STATE.DRINK) drank.add(id);
+      }
+    }
+    expect(drank.size).toBe(2);
+    expect(sim.creatures.deathsBy(GRAZER, CAUSE.DROWNED)).toBe(0);
+  });
+
+  it('wades across a river to reach food on the far side', () => {
+    // Desert on this side, grass beyond a river that spans the map.
+    const world = testWorld(40, 20, T.DESERT, [[20, 0, 21, 20, T.RIVER], [21, 0, 40, 20, T.GRASS]]);
+    const sim = new Simulation(world);
+    const id = sim.creatures.spawn(GRAZER, 16.5, 10.5, sim.rng, { hunger: 70, thirst: 0 });
+    let ate = false;
+    for (let t = 0; t < 300 && !ate; t++) {
+      sim.step();
+      if (sim.creatures.state[sim.creatures.indexOf(id)] === STATE.EAT) ate = true;
+    }
+    expect(ate).toBe(true);
+    expect(sim.creatures.x[sim.creatures.indexOf(id)]).toBeGreaterThan(21);
+  });
+
+  it('walks around a mountain ridge to food it cannot reach in a straight line', () => {
+    // Hadrosaur (no mountains) in a desert pocket; forest behind a ridge with a gap at the bottom.
+    const world = testWorld(40, 30, T.DESERT, [[20, 0, 22, 24, T.MOUNTAIN], [24, 8, 30, 14, T.FOREST], [0, 28, 40, 30, T.SHALLOW_WATER]]);
+    const sim = new Simulation(world);
+    const id = sim.creatures.spawn(HADROSAUR, 15.5, 10.5, sim.rng, { hunger: 70, thirst: 0 });
+    let ate = false;
+    for (let t = 0; t < 900 && !ate; t++) {
+      sim.step();
+      const i = sim.creatures.indexOf(id);
+      expect(world.terrainAt(Math.floor(sim.creatures.x[i]), Math.floor(sim.creatures.y[i]))).not.toBe(T.MOUNTAIN);
+      if (sim.creatures.state[i] === STATE.EAT) ate = true;
+    }
+    expect(ate).toBe(true);
+  });
+
+  it('gives up on unreachable food instead of pushing against the obstacle', () => {
+    // Forest fully enclosed by a lake ring: visible but unreachable for land animals.
+    const world = testWorld(40, 40, T.DESERT, [[18, 18, 30, 30, T.LAKE], [21, 21, 27, 27, T.FOREST], [0, 0, 40, 2, T.SHALLOW_WATER]]);
+    const sim = new Simulation(world);
+    const id = sim.creatures.spawn(HADROSAUR, 16.5, 23.5, sim.rng, { hunger: 70, thirst: 0 });
+    let cooled = false;
+    for (let t = 0; t < 200; t++) {
+      sim.step();
+      const i = sim.creatures.indexOf(id);
+      if (i < 0) break;
+      expect(sim.creatures.state[i]).not.toBe(STATE.EAT);
+      if (sim.creatures.searchCd[i] > 0) cooled = true;
+    }
+    expect(cooled).toBe(true); // the failed search put it on cooldown
+    expect(sim.creatures.deathsBy(HADROSAUR, CAUSE.DROWNED)).toBe(0);
+  });
+
+  it('a predator follows a path around a lake to reach its prey', () => {
+    // Lake between them; the way round is open below.
+    const world = testWorld(48, 40, T.GRASS, [[20, 0, 26, 30, T.LAKE]]);
+    const sim = new Simulation(world);
+    const prey = sim.creatures.spawn(GRAZER, 32.5, 10.5, sim.rng, { hunger: 0, thirst: 0 });
+    const hunter = sim.creatures.spawn(RAPTOR, 14.5, 10.5, sim.rng, { hunger: 70, thirst: 0 });
+    for (let t = 0; t < 800 && sim.creatures.indexOf(prey) >= 0; t++) {
+      sim.step();
+      const h = sim.creatures.indexOf(hunter);
+      expect(world.terrainAt(Math.floor(sim.creatures.x[h]), Math.floor(sim.creatures.y[h]))).not.toBe(T.LAKE);
+    }
+    expect(sim.creatures.deathsBy(GRAZER, CAUSE.PREDATION)).toBe(1);
+  });
+
+  it('a predator does not chase prey it can never reach', () => {
+    // Grazer on a mountain plateau; tyrants cannot climb.
+    const world = testWorld(40, 30, T.GRASS, [[22, 5, 34, 25, T.MOUNTAIN], [26, 9, 30, 21, T.GRASS], [0, 0, 40, 2, T.SHALLOW_WATER]]);
+    const sim = new Simulation(world);
+    const prey = sim.creatures.spawn(GRAZER, 28.5, 15.5, sim.rng, { hunger: 0, thirst: 0 });
+    const hunter = sim.creatures.spawn(TYRANT, 16.5, 15.5, sim.rng, { hunger: 70, thirst: 0 });
+    let gaveUp = false;
+    for (let t = 0; t < 200; t++) {
+      sim.step();
+      const h = sim.creatures.indexOf(hunter);
+      if (sim.creatures.ignoreId[h] === prey) gaveUp = true;
+    }
+    expect(gaveUp).toBe(true);
+    expect(sim.creatures.indexOf(prey)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('fleeing prey keeps a steady heading along a coast instead of dithering', () => {
+    // Prey with its back to the sea, predator approaching from the land side.
+    const world = testWorld(60, 40, T.GRASS, [[0, 30, 60, 40, T.SHALLOW_WATER]]);
+    const sim = new Simulation(world);
+    const prey = sim.creatures.spawn(GRAZER, 30.5, 28.5, sim.rng, { hunger: 0, thirst: 0 });
+    sim.creatures.spawn(TYRANT, 30.5, 24.5, sim.rng, { hunger: 0, thirst: 0 });
+    let reversals = 0;
+    let fleeTicks = 0;
+    let prevDx = 0;
+    let prevDy = 0;
+    const start = [sim.creatures.x[0], sim.creatures.y[0]];
+    for (let t = 0; t < 80; t++) {
+      sim.step();
+      const i = sim.creatures.indexOf(prey);
+      if (sim.creatures.state[i] !== STATE.FLEE) continue;
+      fleeTicks++;
+      const dx = sim.creatures.dx[i];
+      const dy = sim.creatures.dy[i];
+      if (dx * prevDx + dy * prevDy < -0.5) reversals++;
+      prevDx = dx;
+      prevDy = dy;
+      expect(world.isWaterAt(Math.floor(sim.creatures.x[i]), Math.floor(sim.creatures.y[i]))).toBe(false);
+    }
+    const i = sim.creatures.indexOf(prey);
+    expect(fleeTicks).toBeGreaterThan(10);
+    expect(reversals).toBeLessThanOrEqual(2);
+    expect(Math.hypot(sim.creatures.x[i] - start[0], sim.creatures.y[i] - start[1])).toBeGreaterThan(3);
+  });
+
+  it('re-plans when the terrain on its route changes', () => {
+    const world = testWorld(50, 20, T.DESERT, [[22, 0, 50, 20, T.GRASS], [0, 0, 50, 1, T.SHALLOW_WATER]]);
+    const sim = new Simulation(world);
+    const id = sim.creatures.spawn(GRAZER, 15.5, 10.5, sim.rng, { hunger: 70, thirst: 0 });
+    // Wait until it is walking a route east, then flood a band across that route.
+    let i = 0;
+    for (let t = 0; t < 10; t++) {
+      sim.step();
+      i = sim.creatures.indexOf(id);
+      if (sim.creatures.state[i] === STATE.SEEK_FOOD) break;
+    }
+    expect(sim.creatures.state[i]).toBe(STATE.SEEK_FOOD);
+    expect(sim.creatures.pathLen[i]).toBeGreaterThan(0);
+    for (let y = 1; y < 15; y++) for (let x = 18; x < 21; x++) world.setTerrain(x, y, T.LAKE);
+    let ate = false;
+    for (let t = 0; t < 600 && !ate; t++) {
+      sim.step();
+      i = sim.creatures.indexOf(id);
+      if (i < 0) break;
+      expect(world.terrainAt(Math.floor(sim.creatures.x[i]), Math.floor(sim.creatures.y[i]))).not.toBe(T.LAKE);
+      if (sim.creatures.state[i] === STATE.EAT) ate = true;
+    }
+    expect(sim.creatures.deathsBy(GRAZER, CAUSE.DROWNED)).toBe(0);
+    expect(ate).toBe(true); // found the way round the new lake
+  });
+
+  it('save v3 keeps routes, so a loaded world continues identically', () => {
+    const world = testWorld(64, 40, T.DESERT, [[44, 0, 64, 40, T.GRASS], [30, 0, 33, 30, T.MOUNTAIN], [0, 38, 64, 40, T.SHALLOW_WATER]]);
+    const sim = new Simulation(world);
+    sim.spawnInCircle(HADROSAUR, 12, 15, 5, 6);
+    sim.spawnInCircle(GRAZER, 12, 20, 5, 8);
+    sim.spawnInCircle(RAPTOR, 50, 20, 3, 2);
+    for (let i = 0; i < sim.creatures.count; i++) sim.creatures.hunger[i] = 70;
+    run(sim, 60);
+    expect(Array.from(sim.creatures.pathLen.slice(0, sim.creatures.count)).some((n) => n > 0)).toBe(true);
+    const data = serialize(sim);
+    expect(data.version).toBe(3);
+    const other = new Simulation(testWorld(8, 8, T.GRASS));
+    deserializeInto(other, data);
+    run(sim, 200);
+    run(other, 200);
+    expect(other.creatures.count).toBe(sim.creatures.count);
+    expect(Array.from(other.creatures.x.slice(0, other.creatures.count))).toEqual(
+      Array.from(sim.creatures.x.slice(0, sim.creatures.count)),
+    );
+  });
+
+  it('still loads version 2 saves (no routes stored)', () => {
+    const sim = new Simulation(testWorld(32, 32, T.GRASS, [[0, 0, 32, 2, T.SHALLOW_WATER]]));
+    sim.spawnInCircle(GRAZER, 16, 16, 4, 6);
+    run(sim, 30);
+    const data = serialize(sim);
+    data.version = 2;
+    const c = data.creatures as unknown as Record<string, unknown>;
+    for (const k of ['searchCd', 'harm', 'pathLen', 'pathPos', 'pathGoal', 'huntTicks', 'ignoreId', 'path']) delete c[k];
+    const other = new Simulation(testWorld(8, 8, T.GRASS));
+    deserializeInto(other, data);
+    expect(other.creatures.count).toBe(sim.creatures.count);
+    expect(Array.from(other.creatures.pathLen.slice(0, other.creatures.count)).every((n) => n === 0)).toBe(true);
+    run(other, 50);
+  });
+});
+
+describe('performance budget', () => {
+  it('keeps search work per tick bounded with a large population', async () => {
+    const { generateWorld } = await import('../src/world/generator');
+    const { NODE_BUDGET } = await import('../src/sim/creatures');
+    const world = generateWorld(512, 320, 4);
+    const sim = new Simulation(world);
+    const r = new Rng(3);
+    for (let a = 0; a < 40000 && sim.creatures.count < 3000; a++) {
+      const sp = [GRAZER, GRAZER, HADROSAUR, FISH, RAPTOR][a % 5];
+      sim.spawnInCircle(sp, r.next() * 512, r.next() * 320, 2, 1);
+    }
+    for (let i = 0; i < sim.creatures.count; i++) {
+      sim.creatures.hunger[i] = 60; // everyone searching at once: worst case for pathfinding
+      sim.creatures.thirst[i] = 40;
+    }
+    let worstExpansions = 0;
+    const t0 = performance.now();
+    for (let t = 0; t < 200; t++) {
+      const before = sim.creatures.pathfinder.expansions;
+      sim.step();
+      worstExpansions = Math.max(worstExpansions, sim.creatures.pathfinder.expansions - before);
+    }
+    const msPerTick = (performance.now() - t0) / 200;
+    // A single search may finish past the remaining budget, but never by more than its own limit.
+    expect(worstExpansions).toBeLessThanOrEqual(NODE_BUDGET + 6000);
+    expect(sim.creatures.count).toBeGreaterThan(2000);
+    // Generous bound so slow CI machines don't flake; typical desktop result is far lower.
+    expect(msPerTick).toBeLessThan(40);
+  });
+});
