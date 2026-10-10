@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Simplex2 } from '../src/core/noise';
 import { Rng, seedFromString } from '../src/core/rng';
 import { applyHeightBrush, applyPaintBrush, applySmoothBrush } from '../src/world/brush';
-import { generateWorld } from '../src/world/generator';
+import { checkWorldSize, featureScale, generateWorld, WORLD_SIZES } from '../src/world/generator';
 import { SEA_LEVEL, T, TERRAIN, classify, isWater } from '../src/world/terrain';
 
 describe('rng & noise', () => {
@@ -105,5 +105,68 @@ describe('brushes', () => {
     const before = w.terrain.slice();
     applyPaintBrush(w, { x: -50, y: -50, radius: 4 }, T.GRASS);
     expect(w.terrain).toEqual(before);
+  });
+});
+
+describe('world sizes', () => {
+  it('validates presets and custom sizes', () => {
+    for (const s of WORLD_SIZES) expect(checkWorldSize(s.width, s.height)).toBeNull();
+    expect(checkWorldSize(768, 512)).toBeNull();
+    expect(checkWorldSize(2048, 2048)).toBeNull(); // exactly the tile limit
+    expect(checkWorldSize(100, 512)).toMatch(/128/);
+    expect(checkWorldSize(770, 512)).toMatch(/multiple of 32/);
+    expect(checkWorldSize(4096, 4096)).toMatch(/tiles/);
+    expect(checkWorldSize(512.5, 512)).toMatch(/whole/);
+    expect(checkWorldSize(Number.NaN, 512)).toBeTruthy();
+  });
+
+  it('keeps medium and smaller maps on the original feature scale', () => {
+    expect(featureScale(256, 160)).toBe(1);
+    expect(featureScale(512, 320)).toBe(1);
+    expect(featureScale(1024, 640)).toBeCloseTo(2, 5);
+    expect(featureScale(2048, 1280)).toBe(2.5);
+  });
+
+  it('generates large worlds deterministically, with bigger landmasses and two-tile rivers', () => {
+    const a = generateWorld(1024, 640, 4242);
+    const b = generateWorld(1024, 640, 4242);
+    expect(a.terrain).toEqual(b.terrain);
+    expect(a.heights).toEqual(b.heights);
+    // Largest connected landmass (4-neighbour) is much bigger than on a medium map.
+    const biggest = (w: ReturnType<typeof generateWorld>) => {
+      const n = w.width * w.height;
+      const seen = new Uint8Array(n);
+      const q = new Int32Array(n);
+      let best = 0;
+      for (let s = 0; s < n; s++) {
+        if (seen[s] || isWater(w.terrain[s])) continue;
+        let head = 0;
+        let tail = 0;
+        q[tail++] = s;
+        seen[s] = 1;
+        while (head < tail) {
+          const t = q[head++];
+          const x = t % w.width;
+          for (const nb of [x > 0 ? t - 1 : -1, x < w.width - 1 ? t + 1 : -1, t - w.width, t + w.width]) {
+            if (nb < 0 || nb >= n || seen[nb] || isWater(w.terrain[nb])) continue;
+            seen[nb] = 1;
+            q[tail++] = nb;
+          }
+        }
+        best = Math.max(best, tail);
+      }
+      return best;
+    };
+    expect(biggest(a)).toBeGreaterThan(biggest(generateWorld(512, 320, 4242)) * 2);
+    // Some river tiles have a river neighbour on both sides of the flow (wide rivers).
+    let wide = 0;
+    for (let y = 1; y < a.height - 1; y++) {
+      for (let x = 1; x < a.width - 1; x++) {
+        const i = y * a.width + x;
+        if (a.terrain[i] !== T.RIVER) continue;
+        if (a.terrain[i + 1] === T.RIVER && a.terrain[i + a.width] === T.RIVER && a.terrain[i + a.width + 1] === T.RIVER) wide++;
+      }
+    }
+    expect(wide).toBeGreaterThan(20);
   });
 });

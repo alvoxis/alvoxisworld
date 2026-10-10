@@ -7,8 +7,12 @@ export const REGION_CELL = 16;
 export const LEG = 24;
 
 export interface ClassRegions {
-  /** Region id per tile, or -1 if impassable for the class. */
-  tileRegion: Int32Array;
+  /**
+   * Region id + 1 per tile (0 = impassable for the class). Uint16 when the class
+   * has fewer than 65,535 regions (all generated maps so far), else Int32: half
+   * the memory on big maps.
+   */
+  tileRegion: Uint16Array | Int32Array;
   /** Representative tile (passable, near the region's centre) per region. */
   rep: Int32Array;
   /** Connected component (over the region graph) per region: equal ⇔ mutually reachable. */
@@ -82,8 +86,8 @@ export class RegionGraph {
   connected(cls: number, a: number, b: number): boolean {
     const c = this.classes[cls];
     if (!c) return false;
-    const ra = c.tileRegion[a];
-    const rb = c.tileRegion[b];
+    const ra = c.tileRegion[a] - 1;
+    const rb = c.tileRegion[b] - 1;
     return ra >= 0 && rb >= 0 && c.comp[ra] === c.comp[rb];
   }
 
@@ -95,8 +99,8 @@ export class RegionGraph {
   waypoint(world: World, cls: number, s: number, goal: number): number {
     const c = this.classes[cls];
     if (!c) return -1;
-    const rs = c.tileRegion[s];
-    const rg = c.tileRegion[goal];
+    const rs = c.tileRegion[s] - 1;
+    const rg = c.tileRegion[goal] - 1;
     if (rs < 0 || rg < 0 || c.comp[rs] !== c.comp[rg]) return -1;
     const w = world.width;
     const sx = s % w;
@@ -313,5 +317,13 @@ function buildClass(world: NavGrid, cls: number): ClassRegions {
     }
     label++;
   }
-  return { tileRegion, rep: Int32Array.from(reps), comp, adjStart, adj, count };
+  let packed: Uint16Array | Int32Array;
+  if (count < 0xffff) {
+    packed = new Uint16Array(n);
+    for (let i = 0; i < n; i++) packed[i] = tileRegion[i] + 1;
+  } else {
+    packed = tileRegion;
+    for (let i = 0; i < n; i++) packed[i] += 1;
+  }
+  return { tileRegion: packed, rep: Int32Array.from(reps), comp, adjStart, adj, count };
 }

@@ -1,4 +1,4 @@
-import { generateWorld } from './generator';
+import { generateWorld, MAX_WORLD_TILES } from './generator';
 import { World } from './world';
 
 /** Request to generate a world off the main thread. */
@@ -20,7 +20,7 @@ export type GenResult =
 /** Pure: generates a world and packs its layers. Never throws. */
 export function computeWorld(req: GenRequest): GenResult {
   try {
-    if (!(req.width > 0 && req.height > 0 && req.width * req.height <= 4_000_000)) throw new Error('invalid world size');
+    if (!(req.width > 0 && req.height > 0 && req.width * req.height <= MAX_WORLD_TILES)) throw new Error('invalid world size');
     const w = generateWorld(req.width, req.height, req.seed);
     const out = { id: req.id, ok: true as const, width: w.width, height: w.height, seed: w.seed } as Extract<GenResult, { ok: true }>;
     for (const k of LAYERS) out[k] = w[k];

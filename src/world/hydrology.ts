@@ -9,6 +9,8 @@ export interface HydrologyOptions {
   lakeDepth: number;
   /** Lakes smaller than this many tiles are dropped. */
   minLakeSize: number;
+  /** Rivers carrying at least this much flow are two tiles wide (omit: never). */
+  wideRiverFlow?: number;
 }
 
 export const DEFAULT_HYDROLOGY: HydrologyOptions = {
@@ -188,6 +190,22 @@ export function addHydrology(world: World, opts: HydrologyOptions = DEFAULT_HYDR
     const y = (i - x) / w;
     const dx = (d % w) - x;
     const dy = Math.floor(d / w) - y;
+    if (opts.wideRiverFlow !== undefined && acc[i] >= opts.wideRiverFlow) {
+      // Widen sideways (perpendicular to the flow), onto the lower bank.
+      const px = dy !== 0 ? 1 : 0;
+      const py = dx !== 0 ? 1 : 0;
+      const ax = x + px;
+      const ay = y + py;
+      const bx = x - px;
+      const by = y - py;
+      const aOk = ax < w && ay < h;
+      const bOk = bx >= 0 && by >= 0;
+      if (aOk || bOk) {
+        const a = ay * w + ax;
+        const b = by * w + bx;
+        makeRiver(!bOk || (aOk && heights[a] <= heights[b]) ? a : b);
+      }
+    }
     if (dx !== 0 && dy !== 0) {
       const a = y * w + (x + dx);
       const b = (y + dy) * w + x;

@@ -10,7 +10,7 @@ import { EFFECT_DURATIONS } from '../sim/effects';
 import type { WorkerLike } from '../sim/navjobs';
 import { Simulation, type Speed } from '../sim/simulation';
 import { TimeControl } from './timecontrol';
-import { generateWorld, WORLD_SIZES } from '../world/generator';
+import { checkWorldSize, generateWorld, WORLD_SIZES } from '../world/generator';
 import { generateWorldAsync, type GenWorkerLike } from '../world/genjobs';
 import { SEA_LEVEL, TERRAIN } from '../world/terrain';
 import { World } from '../world/world';
@@ -56,6 +56,8 @@ export class Game {
   private stroke: Stroke | null = null;
   private hoverPos: { x: number; y: number } | null = null;
   private lastFrame = 0;
+  /** CPU time spent per frame (simulation + rendering), for performance measurements. */
+  readonly frameStats = new FrameStats();
   private readonly toolCtx: ToolContext;
 
   /** Selected creature id (0 = none) and whether the camera follows it. */
@@ -131,7 +133,9 @@ export class Game {
     const loop = (t: number) => {
       const dt = this.lastFrame ? (t - this.lastFrame) / 1000 : 0;
       this.lastFrame = t;
+      const t0 = performance.now();
       this.frame(t, dt);
+      this.frameStats.record(performance.now() - t0);
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);
@@ -357,8 +361,10 @@ export class Game {
    * responsive). Resolves with the seed; the old world keeps running until the
    * new one is ready.
    */
-  async newWorld(sizeKey: string, seedText: string): Promise<{ seed: number; usedWorker: boolean }> {
-    const size = WORLD_SIZES.find((s) => s.key === sizeKey) ?? WORLD_SIZES[1];
+  async newWorld(width: number, height: number, seedText: string): Promise<{ seed: number; usedWorker: boolean }> {
+    const problem = checkWorldSize(width, height);
+    if (problem) throw new Error(problem);
+    const size = { width, height };
     const seed = seedText.trim() ? seedFromString(seedText) : (Math.random() * 2 ** 32) >>> 0;
     this.generating = true;
     try {
@@ -414,5 +420,27 @@ export class Game {
     this.select(0);
     this.undo.clear();
     this.onWorldChanged();
+  }
+}
+
+/** Ring buffer of the last 240 frame costs (ms). */
+export class FrameStats {
+  private readonly samples = new Float32Array(240);
+  private n = 0;
+
+  record(ms: number): void {
+    this.samples[this.n++ % this.samples.length] = ms;
+  }
+
+  reset(): void {
+    this.n = 0;
+  }
+
+  /** Average, 95th percentile and maximum over the recorded window. */
+  summary(): { frames: number; avg: number; p95: number; max: number } {
+    const k = Math.min(this.n, this.samples.length);
+    if (!k) return { frames: 0, avg: 0, p95: 0, max: 0 };
+    const v = Array.from(this.samples.subarray(0, k)).sort((a, b) => a - b);
+    return { frames: this.n, avg: v.reduce((a, b) => a + b, 0) / k, p95: v[Math.floor(k * 0.95)], max: v[k - 1] };
   }
 }

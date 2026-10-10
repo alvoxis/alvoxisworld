@@ -6,7 +6,7 @@ import { SLOTS, listSlots, deleteSlot, type SlotId } from '../save/storage';
 import { dateFromTick } from '../sim/clock';
 import { CAUSE_NAMES, SPECIES } from '../sim/creatures';
 import { TICKS_PER_DAY, TICKS_PER_YEAR } from '../sim/clock';
-import { WORLD_SIZES } from '../world/generator';
+import { checkWorldSize, WORLD_SIZES } from '../world/generator';
 import { TERRAIN, isWater } from '../world/terrain';
 import { SEVERITY } from '../sim/weather';
 import { EFFECTS, EFFECT_DURATIONS } from '../sim/effects';
@@ -519,7 +519,28 @@ export class Hud {
       o.textContent = s.label;
       size.appendChild(o);
     }
+    const custom = document.createElement('option');
+    custom.value = 'custom';
+    custom.textContent = 'Custom…';
+    size.appendChild(custom);
     size.value = 'medium';
+    const cw = $<HTMLInputElement>('custom-w');
+    const ch = $<HTMLInputElement>('custom-h');
+    const chosen = (): { width: number; height: number } => {
+      const preset = WORLD_SIZES.find((s) => s.key === size.value);
+      return preset ?? { width: Number(cw.value), height: Number(ch.value) };
+    };
+    const syncSize = () => {
+      $('custom-size').hidden = size.value !== 'custom';
+      const { width, height } = chosen();
+      const problem = checkWorldSize(width, height);
+      $<HTMLButtonElement>('generate').disabled = !!problem;
+      $('size-note').textContent = problem ?? sizeNote(width, height);
+    };
+    size.addEventListener('change', syncSize);
+    cw.addEventListener('input', syncSize);
+    ch.addEventListener('input', syncSize);
+    syncSize();
     $('menu-close').addEventListener('click', () => this.menu.close());
     this.bindSaveFiles();
     this.menu.addEventListener('click', (e) => {
@@ -534,7 +555,8 @@ export class Hud {
       gen.disabled = true;
       gen.textContent = 'Generating…';
       try {
-        const { seed } = await this.game.newWorld(size.value, $<HTMLInputElement>('seed').value);
+        const { width, height } = chosen();
+        const { seed } = await this.game.newWorld(width, height, $<HTMLInputElement>('seed').value);
         this.menu.close();
         this.toast(`New world · seed ${seed}`);
       } catch (err) {
@@ -682,4 +704,17 @@ function keptNote(skipped: number): string {
 
 function formatBytes(n: number): string {
   return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+/**
+ * Size guidance from docs/PERFORMANCE.md measurements: about 37 bytes per tile
+ * (simulation, navigation and map canvases) plus ~3 MB for creatures.
+ */
+function sizeNote(width: number, height: number): string {
+  const tiles = width * height;
+  const memMb = Math.round((tiles * 37) / 1048576 + 3);
+  const base = `${(tiles / 1e6).toFixed(2)}M tiles · about ${memMb} MB`;
+  if (tiles > 1_600_000) return `${base}. Very large: takes several seconds to create and may be slow or run out of memory on phones.`;
+  if (tiles > 700_000) return `${base}. Large maps take a few seconds to create on phones.`;
+  return `${base}.`;
 }

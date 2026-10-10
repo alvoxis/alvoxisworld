@@ -84,6 +84,11 @@
             <label>Size <select id="size"></select></label>
             <button class="btn primary" id="generate" type="button">Generate</button>
           </div>
+          <div class="row" id="custom-size" hidden>
+            <label>Width <input id="custom-w" type="number" inputmode="numeric" min="128" max="4096" step="32" value="768" /></label>
+            <label>Height <input id="custom-h" type="number" inputmode="numeric" min="128" max="4096" step="32" value="512" /></label>
+          </div>
+          <p class="hint" id="size-note"></p>
           <p class="hint" id="current-seed"></p>
         </section>
 

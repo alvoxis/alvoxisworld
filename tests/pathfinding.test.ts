@@ -177,7 +177,7 @@ describe('water field', () => {
   });
 });
 
-import { RegionGraph, LEG } from '../src/sim/regions';
+import { RegionGraph, LEG, computeRegions } from '../src/sim/regions';
 import { Creatures } from '../src/sim/creatures';
 import { generateWorld } from '../src/world/generator';
 
@@ -229,6 +229,24 @@ describe('region graph (long routes)', () => {
     expect(g.connected(MOVE.LAND, 1, 10)).toBe(false);
     expect(g.waypoint(w, MOVE.LAND, 1, 10)).toBe(-1);
     expect(g.connected(MOVE.WATER, 5, 6)).toBe(true);
+  });
+
+  it('packs region labels into 16 bits, falling back to 32 bits for very fragmented maps', () => {
+    const normal = computeRegions(generateWorld(256, 160, 3));
+    expect(normal[MOVE.LAND].tileRegion).toBeInstanceOf(Uint16Array);
+    // Checkerboard of grass and lake: every grass tile is its own region (> 65,535 of them).
+    const w = new World(512, 300, 1);
+    for (let y = 0; y < 300; y++) for (let x = 0; x < 512; x++) w.terrain[y * 512 + x] = (x + y) % 2 ? T.LAKE : T.GRASS;
+    const g = new RegionGraph();
+    g.build(w);
+    const frag = computeRegions(w);
+    expect(frag[MOVE.LAND].count).toBeGreaterThan(65535);
+    expect(frag[MOVE.LAND].tileRegion).toBeInstanceOf(Int32Array);
+    expect(g.connected(MOVE.LAND, 0, 0)).toBe(true);
+    expect(g.connected(MOVE.LAND, 0, 2)).toBe(false);
+    expect(g.connected(MOVE.LAND, 1, 1)).toBe(false); // lake tile
+    expect(g.connected(MOVE.WATER, 1, 3)).toBe(false);
+    expect(g.connected(MOVE.LAND, 299 * 512 + 511, 299 * 512 + 511)).toBe(true);
   });
 
   it('plans long routes on a generated large map', () => {

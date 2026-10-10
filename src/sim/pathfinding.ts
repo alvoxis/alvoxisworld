@@ -58,6 +58,8 @@ const SQRT2 = Math.SQRT2;
 
 /** Result codes (non-negative results are path lengths). */
 export const NOT_FOUND = -1;
+/** Initial capacity of the growable search arrays (a 40,000-node search fits after a few doublings). */
+const INITIAL_SCRATCH = 16384;
 export const NO_BUDGET = -2;
 
 /**
@@ -72,9 +74,10 @@ export class Pathfinder {
   private w = 0;
   private h = 0;
   private g = new Float32Array(0);
-  private came = new Int32Array(0);
-  private stamp = new Uint32Array(0);
-  private closed = new Uint32Array(0);
+  /** Direction (0..7, see DX/DY) of the step that reached each tile in the current search. */
+  private dir = new Uint8Array(0);
+  /** Search state per tile: 2·gen = reached in this search, 2·gen+1 = closed; anything else = unseen. */
+  private mark = new Uint32Array(0);
   private gen = 0;
   private heapKey = new Float32Array(0);
   private heapVal = new Int32Array(0);
@@ -95,14 +98,33 @@ export class Pathfinder {
     this.h = world.height;
     const n = this.w * this.h;
     this.g = new Float32Array(n);
-    this.came = new Int32Array(n);
-    this.stamp = new Uint32Array(n);
-    this.closed = new Uint32Array(n);
-    this.heapKey = new Float32Array(n);
-    this.heapVal = new Int32Array(n);
-    this.queue = new Int32Array(n);
-    this.scratch = new Int32Array(n);
+    this.dir = new Uint8Array(n);
+    this.mark = new Uint32Array(n);
+    // Searches are bounded by the node budget, so the heap, queue and path
+    // scratch start small and grow on demand instead of costing 16 bytes per tile.
+    const start = Math.min(n, INITIAL_SCRATCH);
+    this.heapKey = new Float32Array(start);
+    this.heapVal = new Int32Array(start);
+    this.queue = new Int32Array(start);
+    this.scratch = new Int32Array(start);
     this.gen = 0;
+  }
+
+  /** Bytes held by search scratch arrays (for memory reporting). */
+  get scratchBytes(): number {
+    return (
+      this.g.byteLength + this.dir.byteLength + this.mark.byteLength +
+      this.heapKey.byteLength + this.heapVal.byteLength + this.queue.byteLength + this.scratch.byteLength
+    );
+  }
+
+  private growHeap(): void {
+    const k = new Float32Array(this.heapKey.length * 2);
+    const v = new Int32Array(this.heapVal.length * 2);
+    k.set(this.heapKey);
+    v.set(this.heapVal);
+    this.heapKey = k;
+    this.heapVal = v;
   }
 
   beginTick(budget: number): void {
@@ -111,9 +133,8 @@ export class Pathfinder {
 
   private nextGen(): void {
     this.gen++;
-    if (this.gen === 0xffffffff) {
-      this.stamp.fill(0);
-      this.closed.fill(0);
+    if (this.gen >= 0x7fffffff) {
+      this.mark.fill(0);
       this.gen = 1;
     }
   }
@@ -150,18 +171,19 @@ export class Pathfinder {
     const start = sy * w + sx;
     const goal = gy * w + gx;
     if (start === goal) return 0;
-    const gen = this.gen;
+    const open = this.gen * 2;
+    const done = open + 1;
+    const mark = this.mark;
     this.heapSize = 0;
     this.g[start] = 0;
-    this.stamp[start] = gen;
-    this.came[start] = -1;
+    mark[start] = open;
     this.heapPush(octile(sx, sy, gx, gy), start);
     let expanded = 0;
     let found = false;
     while (this.heapSize > 0) {
       const c = this.heapPop();
-      if (this.closed[c] === gen) continue;
-      this.closed[c] = gen;
+      if (mark[c] === done) continue;
+      mark[c] = done;
       if (c === goal) {
         found = true;
         break;
@@ -175,13 +197,14 @@ export class Pathfinder {
         const nx = cx + DX[k];
         const ny = cy + DY[k];
         const nb = ny * w + nx;
-        if (this.closed[nb] === gen) continue;
+        const m = mark[nb];
+        if (m === done) continue;
         const cost = (k >= 4 ? SQRT2 : 1) * tileCost(cls, world.terrain[nb]);
         const ng = gc + cost;
-        if (this.stamp[nb] === gen && this.g[nb] <= ng) continue;
-        this.stamp[nb] = gen;
+        if (m === open && this.g[nb] <= ng) continue;
+        mark[nb] = open;
         this.g[nb] = ng;
-        this.came[nb] = c;
+        this.dir[nb] = k;
         this.heapPush(ng + octile(nx, ny, gx, gy), nb);
       }
     }
@@ -211,13 +234,13 @@ export class Pathfinder {
     const limit = Math.min(maxNodes, this.budget);
     this.searches++;
     this.nextGen();
-    const gen = this.gen;
-    const q = this.queue;
+    const seen = this.gen * 2;
+    const mark = this.mark;
+    let q = this.queue;
     let head = 0;
     let tail = 0;
     q[tail++] = start;
-    this.stamp[start] = gen;
-    this.came[start] = -1;
+    mark[start] = seen;
     let found = -1;
     while (head < tail && head < limit) {
       const c = q[head++];
@@ -226,12 +249,17 @@ export class Pathfinder {
       for (let k = 0; k < 8; k++) {
         if (!this.canStep(world, cls, cx, cy, k)) continue;
         const nb = (cy + DY[k]) * w + cx + DX[k];
-        if (this.stamp[nb] === gen) continue;
-        this.stamp[nb] = gen;
-        this.came[nb] = c;
+        if (mark[nb] === seen) continue;
+        mark[nb] = seen;
+        this.dir[nb] = k;
         if (match(nb)) {
           found = nb;
           break;
+        }
+        if (tail === q.length) {
+          const bigger = new Int32Array(q.length * 2);
+          bigger.set(q);
+          q = this.queue = bigger;
         }
         q[tail++] = nb;
       }
@@ -246,13 +274,22 @@ export class Pathfinder {
   private writePath(start: number, goal: number, out: Int32Array, off: number, outMax: number): number {
     // Walk back from the goal, then copy the first outMax steps from the start side.
     let len = 0;
-    for (let c = goal; c !== start && c >= 0; c = this.came[c]) this.scratch[len++] = c;
+    const w = this.w;
+    for (let c = goal; c !== start; c -= DY[this.dir[c]] * w + DX[this.dir[c]]) {
+      if (len === this.scratch.length) {
+        const bigger = new Int32Array(this.scratch.length * 2);
+        bigger.set(this.scratch);
+        this.scratch = bigger;
+      }
+      this.scratch[len++] = c;
+    }
     const n = Math.min(len, outMax);
     for (let k = 0; k < n; k++) out[off + k] = this.scratch[len - 1 - k];
     return n;
   }
 
   private heapPush(key: number, val: number): void {
+    if (this.heapSize === this.heapKey.length) this.growHeap();
     let i = this.heapSize++;
     const hk = this.heapKey;
     const hv = this.heapVal;

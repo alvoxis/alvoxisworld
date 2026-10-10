@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm run test && vite build",
-    "bench": "vite-node scripts/bench.ts"
+    "bench": "vite-node scripts/bench.ts",
+    "bench:sizes": "vite-node scripts/sizes.ts"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
