@@ -4,13 +4,21 @@ import { WEATHER_KIND, type WeatherSystem } from '../sim/weather';
 import { SEA_LEVEL, T, TERRAIN, isWater } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
 import { Camera } from './camera';
-import { Tileset, TILE_PX, VARIANTS, creatureSprite } from './tileset';
+import { TerrainPainter, type PaintOptions } from './painter';
+import { Tileset, TILE_PX, creatureSprite } from './tileset';
 
-/** Zoom (CSS px per tile) at which 8×8 pixel-art tiles replace the 1px-per-tile map. */
-export const DETAIL_ZOOM = 6;
-const MAX_CACHED_CHUNKS = 80;
-const MAX_CHUNK_BUILDS_PER_FRAME = 8;
+/** Device pixels per tile at which 8-px-per-tile detail chunks are used. */
+export const DETAIL_SCALE = 9;
+/** Device pixels per tile at which 4-px-per-tile chunks replace the 1-px map. */
+export const MID_SCALE = 3;
+const MAX_DETAIL_CHUNKS = 80;
+const MAX_MID_CHUNKS = 160;
+/** Chunk painting budget per frame (ms); at least one visible chunk is painted per frame. */
+const PAINT_BUDGET_MS = 6;
 const FROST_TEMPERATURE = 0.45 * 255;
+const SHALLOW_RGB = [66, 150, 196] as const;
+const MAX_GLINTS = 500;
+const DEEP_RGB = [20, 48, 108] as const;
 
 /** Short-lived visual effect (pure decoration over a real simulation change). */
 export interface VisualEffect {
@@ -36,11 +44,64 @@ export interface BrushCursor {
   radius: number;
 }
 
+interface CachedChunk {
+  canvas: HTMLCanvasElement;
+  /** The world changed under it: still drawn until repainted (no flash of the coarse map). */
+  stale: boolean;
+}
+
+/** One level of painted chunks (8 or 4 px per tile) with an LRU cache. */
+class ChunkLevel {
+  readonly chunks = new Map<number, CachedChunk>();
+  private readonly pool: HTMLCanvasElement[] = [];
+  private image: ImageData | null = null;
+
+  constructor(
+    readonly P: 8 | 4,
+    private readonly max: number,
+  ) {}
+
+  markStale(c: number): void {
+    const e = this.chunks.get(c);
+    if (e) e.stale = true;
+  }
+
+  clear(): void {
+    for (const e of this.chunks.values()) this.pool.push(e.canvas);
+    this.chunks.clear();
+  }
+
+  paint(painter: TerrainPainter, world: World, c: number, opts: PaintOptions, into?: HTMLCanvasElement): HTMLCanvasElement {
+    const size = CHUNK * this.P;
+    const canvas = into ?? this.pool.pop() ?? document.createElement('canvas');
+    if (canvas.width !== size) {
+      canvas.width = size;
+      canvas.height = size;
+    }
+    const ctx = canvas.getContext('2d')!;
+    if (!this.image) this.image = ctx.createImageData(size, size);
+    painter.paintChunk(world, c % world.chunksX, Math.floor(c / world.chunksX), this.P, this.image.data, opts);
+    ctx.putImageData(this.image, 0, 0);
+    return canvas;
+  }
+
+  trim(): void {
+    while (this.chunks.size > this.max) {
+      const oldest = this.chunks.keys().next().value as number;
+      this.pool.push(this.chunks.get(oldest)!.canvas);
+      this.chunks.delete(oldest);
+    }
+  }
+}
+
 /**
- * Two-level map renderer:
- *  - zoomed out: one pixel per tile in an offscreen canvas, scaled up without smoothing;
- *  - zoomed in: lazily built 32×32-tile chunks of 8×8 pixel-art tiles (LRU cached).
- * Only chunks the world marks dirty are rebuilt.
+ * Three-level map renderer:
+ *  - far: one pixel per tile in an offscreen canvas (also the minimap's source);
+ *  - middle: 32×32-tile chunks painted at 4 px per tile;
+ *  - near: the same chunks at 8 px per tile (pixel art).
+ * Chunks are painted lazily by TerrainPainter within a per-frame time budget and
+ * cached (LRU). When the world changes, affected chunks are marked stale and
+ * repainted in place; until then the old image stays on screen.
  */
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
@@ -51,10 +112,16 @@ export class Renderer {
   private baseCtx!: CanvasRenderingContext2D;
   private baseImage!: ImageData;
   private readonly tileset = new Tileset();
-  private readonly chunks = new Map<number, HTMLCanvasElement>();
-  private readonly pool: HTMLCanvasElement[] = [];
+  private readonly painter = new TerrainPainter(this.tileset);
+  private readonly detail = new ChunkLevel(8, MAX_DETAIL_CHUNKS);
+  private readonly mid = new ChunkLevel(4, MAX_MID_CHUNKS);
   private readonly sprites: Array<{ right: HTMLCanvasElement; left: HTMLCanvasElement }>;
+  private readonly flames: HTMLCanvasElement[];
   winter = false;
+  /** Hatch mountains and snow (impassable for lowland animals). */
+  passOverlay = false;
+  /** Chunks painted in the last frame and in total (performance reporting). */
+  readonly paintStats = { lastFrame: 0, total: 0, totalMs: 0 };
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -70,6 +137,7 @@ export class Renderer {
       lctx.drawImage(right, 0, 0);
       return { right, left };
     });
+    this.flames = flameFrames();
   }
 
   get tiles(): Tileset {
@@ -88,14 +156,20 @@ export class Renderer {
     this.base.height = world.height;
     this.baseCtx = this.base.getContext('2d')!;
     this.baseImage = this.baseCtx.createImageData(world.width, world.height);
-    for (const c of this.chunks.values()) this.pool.push(c);
-    this.chunks.clear();
+    this.detail.clear();
+    this.mid.clear();
     world.markAllDirty();
   }
 
   setWinter(winter: boolean): void {
     if (winter === this.winter) return;
     this.winter = winter;
+    this.world.markAllDirty();
+  }
+
+  setPassOverlay(on: boolean): void {
+    if (on === this.passOverlay) return;
+    this.passOverlay = on;
     this.world.markAllDirty();
   }
 
@@ -106,46 +180,51 @@ export class Renderer {
     this.canvas.height = Math.round(cssH * this.dpr);
   }
 
-  /** Brightness multiplier from elevation (hill shading) or water depth. */
-  private tileLight(i: number, x: number, y: number): number {
-    const w = this.world;
-    const h = w.heights[i];
-    if (isWater(w.terrain[i])) return 0.62 + 0.38 * Math.min(1, h / SEA_LEVEL);
-    const nx = x > 0 ? x - 1 : x;
-    const ny = y > 0 ? y - 1 : y;
-    const diff = h - w.heights[w.idx(nx, ny)];
-    return 1 + Math.max(-0.28, Math.min(0.28, diff * 0.035));
-  }
-
-  private frosted(i: number): boolean {
-    const w = this.world;
-    return this.winter && !isWater(w.terrain[i]) && w.terrain[i] !== T.SNOW && w.temperature[i] < FROST_TEMPERATURE;
-  }
-
-  /** Rebuilds the 1px map and drops cached detail chunks for every dirty chunk. */
+  /** Rebuilds the 1px map for every dirty chunk and marks painted chunks stale. */
   private flushDirty(): void {
     const w = this.world;
     if (w.dirtyChunks.size === 0) return;
     const data = this.baseImage.data;
+    const W = w.width;
+    const H = w.height;
+    const hs = w.heights;
     for (const c of w.dirtyChunks) {
       const cx = c % w.chunksX;
       const cy = Math.floor(c / w.chunksX);
       const x0 = cx * CHUNK;
       const y0 = cy * CHUNK;
-      const x1 = Math.min(w.width, x0 + CHUNK);
-      const y1 = Math.min(w.height, y0 + CHUNK);
+      const x1 = Math.min(W, x0 + CHUNK);
+      const y1 = Math.min(H, y0 + CHUNK);
       for (let y = y0; y < y1; y++) {
+        const yu = y > 0 ? y - 1 : y;
+        const yd = y < H - 1 ? y + 1 : y;
         for (let x = x0; x < x1; x++) {
-          const i = y * w.width + x;
-          const col = TERRAIN[w.terrain[i]].color;
-          const f = this.tileLight(i, x, y) * (0.95 + hash2(x, y, w.seed) * 0.1);
-          let r = col[0] * f;
-          let g = col[1] * f;
-          let b = col[2] * f;
-          if (this.frosted(i)) {
-            r = r * 0.45 + 130;
-            g = g * 0.45 + 134;
-            b = b * 0.45 + 140;
+          const i = y * W + x;
+          const id = w.terrain[i];
+          const col = TERRAIN[id].color;
+          const grain = 0.96 + hash2(x, y, w.seed) * 0.08;
+          let r: number;
+          let g: number;
+          let b: number;
+          if (id === T.DEEP_WATER || id === T.SHALLOW_WATER) {
+            const t = Math.sqrt(Math.max(0, Math.min(1, (SEA_LEVEL - hs[i]) / 90)));
+            r = (SHALLOW_RGB[0] + (DEEP_RGB[0] - SHALLOW_RGB[0]) * t) * grain;
+            g = (SHALLOW_RGB[1] + (DEEP_RGB[1] - SHALLOW_RGB[1]) * t) * grain;
+            b = (SHALLOW_RGB[2] + (DEEP_RGB[2] - SHALLOW_RGB[2]) * t) * grain;
+          } else {
+            // Hill shading from the slope toward the north-west light (central differences).
+            const xl = x > 0 ? x - 1 : x;
+            const xr = x < W - 1 ? x + 1 : x;
+            const slope = hs[y * W + xr] - hs[y * W + xl] + hs[yd * W + x] - hs[yu * W + x];
+            const f = grain * (1 + Math.max(-0.3, Math.min(0.3, slope * 0.018)));
+            r = col[0] * f;
+            g = col[1] * f;
+            b = col[2] * f;
+            if (this.winter && !isWater(id) && id !== T.SNOW && w.temperature[i] < FROST_TEMPERATURE) {
+              r = r * 0.45 + 130;
+              g = g * 0.45 + 134;
+              b = b * 0.45 + 140;
+            }
           }
           const o = i * 4;
           data[o] = r;
@@ -155,77 +234,68 @@ export class Renderer {
         }
       }
       this.baseCtx.putImageData(this.baseImage, 0, 0, x0, y0, x1 - x0, y1 - y0);
-      const cached = this.chunks.get(c);
-      if (cached) {
-        this.chunks.delete(c);
-        this.pool.push(cached);
-      }
+      this.detail.markStale(c);
+      this.mid.markStale(c);
     }
     w.dirtyChunks.clear();
   }
 
-  private buildChunk(c: number): HTMLCanvasElement {
+  /** Draws the visible chunks of one level, painting missing or stale ones within the frame budget. */
+  private drawLevel(level: ChunkLevel, camera: Camera, s: number, ox: number, oy: number, budgetEnd: number): void {
     const w = this.world;
-    const size = CHUNK * TILE_PX;
-    const canvas = this.pool.pop() ?? document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d')!;
-    const img = ctx.createImageData(size, size);
-    const out = img.data;
-    const src = this.tileset.pixels;
-    const x0 = (c % w.chunksX) * CHUNK;
-    const y0 = Math.floor(c / w.chunksX) * CHUNK;
-
-    for (let ly = 0; ly < CHUNK; ly++) {
-      const y = y0 + ly;
-      if (y >= w.height) break;
-      for (let lx = 0; lx < CHUNK; lx++) {
-        const x = x0 + lx;
-        if (x >= w.width) break;
-        const i = y * w.width + x;
-        const id = w.terrain[i];
-        const variant = Math.floor(hash2(x, y, w.seed) * VARIANTS);
-        const so = this.tileset.offset(id, variant);
-        const f = this.tileLight(i, x, y);
-        const frost = this.frosted(i);
-        // Foam where shallow water meets land.
-        const foam =
-          id === T.SHALLOW_WATER || id === T.LAKE
-            ? [
-                y > 0 && !isWater(w.terrain[i - w.width]),
-                y < w.height - 1 && !isWater(w.terrain[i + w.width]),
-                x > 0 && !isWater(w.terrain[i - 1]),
-                x < w.width - 1 && !isWater(w.terrain[i + 1]),
-              ]
-            : null;
-        for (let py = 0; py < TILE_PX; py++) {
-          let o = ((ly * TILE_PX + py) * size + lx * TILE_PX) * 4;
-          let s = so + py * TILE_PX * 4;
-          for (let px = 0; px < TILE_PX; px++, o += 4, s += 4) {
-            let r = src[s] * f;
-            let g = src[s + 1] * f;
-            let b = src[s + 2] * f;
-            if (frost && (px + py) % 3 !== 0) {
-              r = r * 0.4 + 140;
-              g = g * 0.4 + 145;
-              b = b * 0.4 + 152;
-            }
-            if (foam && ((foam[0] && py === 0) || (foam[1] && py === 7) || (foam[2] && px === 0) || (foam[3] && px === 7))) {
-              r = 196;
-              g = 222;
-              b = 236;
-            }
-            out[o] = r;
-            out[o + 1] = g;
-            out[o + 2] = b;
-            out[o + 3] = 255;
-          }
+    const ctx = this.ctx;
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
+    const opts: PaintOptions = { winter: this.winter, passOverlay: this.passOverlay };
+    const cx0 = Math.max(0, Math.floor(camera.x / CHUNK));
+    const cy0 = Math.max(0, Math.floor(camera.y / CHUNK));
+    const cx1 = Math.min(w.chunksX - 1, Math.floor((camera.x + cw / s) / CHUNK));
+    const cy1 = Math.min(w.chunksY - 1, Math.floor((camera.y + ch / s) / CHUNK));
+    // Centre-out order, so the middle of the screen sharpens first.
+    const mx = (cx0 + cx1) / 2;
+    const my = (cy0 + cy1) / 2;
+    const list: number[] = [];
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) list.push(cy * w.chunksX + cx);
+    list.sort((a, b) => {
+      const ax = (a % w.chunksX) - mx;
+      const ay = Math.floor(a / w.chunksX) - my;
+      const bx = (b % w.chunksX) - mx;
+      const by = Math.floor(b / w.chunksX) - my;
+      return ax * ax + ay * ay - (bx * bx + by * by);
+    });
+    for (const c of list) {
+      let e = level.chunks.get(c);
+      const canPaint = this.paintStats.lastFrame === 0 || performance.now() < budgetEnd;
+      if (e) {
+        level.chunks.delete(c); // refresh LRU position
+        if (e.stale && canPaint) {
+          const t0 = performance.now();
+          level.paint(this.painter, w, c, opts, e.canvas);
+          this.countPaint(performance.now() - t0);
+          e.stale = false;
         }
+      } else {
+        if (!canPaint) continue; // the coarser map underneath stays visible
+        const t0 = performance.now();
+        e = { canvas: level.paint(this.painter, w, c, opts), stale: false };
+        this.countPaint(performance.now() - t0);
       }
+      level.chunks.set(c, e);
+      const cx = c % w.chunksX;
+      const cy = Math.floor(c / w.chunksX);
+      const sx = Math.round(ox + cx * CHUNK * s);
+      const sy = Math.round(oy + cy * CHUNK * s);
+      const ex = Math.round(ox + (cx + 1) * CHUNK * s);
+      const ey = Math.round(oy + (cy + 1) * CHUNK * s);
+      ctx.drawImage(e.canvas, sx, sy, ex - sx, ey - sy);
     }
-    ctx.putImageData(img, 0, 0);
-    return canvas;
+    level.trim();
+  }
+
+  private countPaint(ms: number): void {
+    this.paintStats.lastFrame++;
+    this.paintStats.total++;
+    this.paintStats.totalMs += ms;
   }
 
   /**
@@ -245,42 +315,18 @@ export class Renderer {
     const ch = this.canvas.height;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = '#0d1f3a';
+    ctx.fillStyle = '#10264a';
     ctx.fillRect(0, 0, cw, ch);
+    // Zoomed far out the 1px map is shrunk: smoothing avoids shimmering speckle.
+    ctx.imageSmoothingEnabled = s < 1;
     ctx.drawImage(this.base, Math.round(ox), Math.round(oy), Math.round(w.width * s), Math.round(w.height * s));
+    ctx.imageSmoothingEnabled = false;
 
-    if (camera.zoom >= DETAIL_ZOOM) {
-      const cx0 = Math.max(0, Math.floor(camera.x / CHUNK));
-      const cy0 = Math.max(0, Math.floor(camera.y / CHUNK));
-      const cx1 = Math.min(w.chunksX - 1, Math.floor((camera.x + cw / s) / CHUNK));
-      const cy1 = Math.min(w.chunksY - 1, Math.floor((camera.y + ch / s) / CHUNK));
-      let builds = 0;
-      for (let cy = cy0; cy <= cy1; cy++) {
-        for (let cx = cx0; cx <= cx1; cx++) {
-          const c = cy * w.chunksX + cx;
-          let canvas = this.chunks.get(c);
-          if (canvas) {
-            this.chunks.delete(c); // refresh LRU position
-          } else {
-            if (builds >= MAX_CHUNK_BUILDS_PER_FRAME) continue; // 1px map stays visible underneath
-            canvas = this.buildChunk(c);
-            builds++;
-          }
-          this.chunks.set(c, canvas);
-          const sx = Math.round(ox + cx * CHUNK * s);
-          const sy = Math.round(oy + cy * CHUNK * s);
-          const ex = Math.round(ox + (cx + 1) * CHUNK * s);
-          const ey = Math.round(oy + (cy + 1) * CHUNK * s);
-          ctx.drawImage(canvas, sx, sy, ex - sx, ey - sy);
-        }
-      }
-      while (this.chunks.size > MAX_CACHED_CHUNKS) {
-        const oldest = this.chunks.keys().next().value as number;
-        this.pool.push(this.chunks.get(oldest)!);
-        this.chunks.delete(oldest);
-      }
-    }
+    this.paintStats.lastFrame = 0;
+    const budgetEnd = performance.now() + PAINT_BUDGET_MS;
+    if (s >= DETAIL_SCALE) this.drawLevel(this.detail, camera, s, ox, oy, budgetEnd);
+    else if (s >= MID_SCALE) this.drawLevel(this.mid, camera, s, ox, oy, budgetEnd);
+    if (s >= MID_SCALE && overlay) this.drawGlints(camera, s, ox, oy, overlay.now);
 
     if (overlay) this.drawFire(overlay, s, ox, oy);
     this.drawCreatures(camera, creatures, s, ox, oy, alpha);
@@ -296,26 +342,68 @@ export class Renderer {
     }
   }
 
-  /** Burning tiles: flickering orange/red squares with a dark core. */
+  /**
+   * Moving glints on open water (decoration only): a sparse grid of slots, each
+   * flashing briefly at its own phase. Cost is bounded by MAX_GLINTS per frame.
+   */
+  private drawGlints(camera: Camera, s: number, ox: number, oy: number, now: number): void {
+    const w = this.world;
+    const ctx = this.ctx;
+    const spacing = s >= DETAIL_SCALE ? 2 : 4;
+    const gx0 = Math.max(0, Math.floor(camera.x / spacing));
+    const gy0 = Math.max(0, Math.floor(camera.y / spacing));
+    const gx1 = Math.min(Math.ceil(w.width / spacing) - 1, Math.floor((camera.x + this.canvas.width / s) / spacing));
+    const gy1 = Math.min(Math.ceil(w.height / spacing) - 1, Math.floor((camera.y + this.canvas.height / s) / spacing));
+    const t = now / 1000;
+    const len = Math.max(2, Math.round(s * 0.35));
+    const thick = Math.max(1, Math.round(s / 10));
+    let drawn = 0;
+    ctx.fillStyle = 'rgba(235,248,255,0.75)';
+    for (let gy = gy0; gy <= gy1 && drawn < MAX_GLINTS; gy++) {
+      for (let gx = gx0; gx <= gx1 && drawn < MAX_GLINTS; gx++) {
+        let h = Math.imul(gx * 374761393 + gy * 668265263, 1274126177) >>> 0;
+        const phase = (t * 0.45 + (h & 1023) / 1024) % 1;
+        if (phase > 0.1) continue;
+        h = Math.imul(h ^ (h >>> 13), 1103515245) >>> 0;
+        const x = gx * spacing + (h & 3) * 0.5;
+        const y = gy * spacing + ((h >>> 2) & 3) * 0.5;
+        const id = w.terrain[Math.min(w.height - 1, y | 0) * w.width + Math.min(w.width - 1, x | 0)];
+        if (id !== T.DEEP_WATER && id !== T.SHALLOW_WATER && id !== T.LAKE) continue;
+        const drift = phase * s * 0.8;
+        ctx.fillRect(Math.round(ox + x * s + drift), Math.round(oy + y * s), len, thick);
+        drawn++;
+      }
+    }
+  }
+
+  /** Burning tiles: animated pixel flames up close, flickering embers from afar. */
   private drawFire(o: Overlay, s: number, ox: number, oy: number): void {
     if (!o.burning.length) return;
     const ctx = this.ctx;
     const w = this.world.width;
     const size = Math.max(1, Math.ceil(s));
-    const phase = Math.floor(o.now / 120);
+    const phase = Math.floor(o.now / 110);
+    const close = s >= 6;
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
     for (const i of o.burning) {
       const x = i % w;
       const y = (i - x) / w;
       const px = Math.round(ox + x * s);
       const py = Math.round(oy + y * s);
-      if (px < -size || py < -size || px > this.canvas.width || py > this.canvas.height) continue;
+      if (px < -2 * size || py < -2 * size || px > cw + size || py > ch + size) continue;
       const flick = (x * 7 + y * 13 + phase) % 3;
-      ctx.fillStyle = flick === 0 ? 'rgba(255,200,60,0.9)' : flick === 1 ? 'rgba(255,120,30,0.9)' : 'rgba(220,60,20,0.9)';
-      ctx.fillRect(px, py, size, size);
-      if (s >= 6) {
-        ctx.fillStyle = 'rgba(60,20,10,0.6)';
-        const q = Math.max(1, Math.round(s / 4));
-        ctx.fillRect(px + q, py + 2 * q, size - 2 * q, size - 2 * q);
+      if (close) {
+        // Scorched ground, then a flame sprite rising a little above the tile.
+        ctx.fillStyle = 'rgba(40,16,8,0.55)';
+        ctx.fillRect(px, py, size, size);
+        const f = this.flames[flick];
+        const fw = Math.round(s);
+        const fh = Math.round(s * 1.25);
+        ctx.drawImage(f, px, py + size - fh, fw, fh);
+      } else {
+        ctx.fillStyle = flick === 0 ? 'rgba(255,200,60,0.9)' : flick === 1 ? 'rgba(255,120,30,0.9)' : 'rgba(220,60,20,0.9)';
+        ctx.fillRect(px, py, size, size);
       }
     }
   }
@@ -428,4 +516,29 @@ export class Renderer {
     ctx.fillStyle = frac > 0.5 ? '#5fd35f' : frac > 0.25 ? '#f2c14e' : '#e0533a';
     ctx.fillRect(bx, by, bw * frac, bh);
   }
+}
+
+/** Three frames of an original 8×10 pixel flame. */
+function flameFrames(): HTMLCanvasElement[] {
+  const frames = [
+    ['...y....', '...yy...', '..yoy...', '..yoo.y.', '.yooo.y.', '.yoroyo.', 'yoorroo.', 'yorrroy.', '.orrrro.', '..rddr..'],
+    ['....y...', '...yy...', '...yoy..', '.y.ooy..', '.yoooy..', '.oyrooy.', '.oorrooy', 'yorrrroy', '.orrrro.', '..rddr..'],
+    ['..y.....', '..yy..y.', '..yoy.y.', '.yooyy..', '.yoooo..', 'yoorooy.', 'yoorroo.', 'yorrrroy', '.orrrro.', '..rddr..'],
+  ];
+  const pal: Record<string, string> = { y: '#ffe27a', o: '#ff9a2e', r: '#e2461f', d: '#5a1c0e' };
+  return frames.map((rows) => {
+    const c = document.createElement('canvas');
+    c.width = 8;
+    c.height = 10;
+    const ctx = c.getContext('2d')!;
+    rows.forEach((row, y) => {
+      for (let x = 0; x < row.length; x++) {
+        const col = pal[row[x]];
+        if (!col) continue;
+        ctx.fillStyle = col;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    });
+    return c;
+  });
 }

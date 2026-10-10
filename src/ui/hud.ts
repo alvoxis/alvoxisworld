@@ -566,6 +566,8 @@ export class Hud {
         gen.textContent = 'Generate';
       }
     });
+    const passOverlay = $<HTMLInputElement>('pass-overlay');
+    passOverlay.addEventListener('change', () => this.game.renderer.setPassOverlay(passOverlay.checked));
     const auto = $<HTMLInputElement>('weather-auto');
     const sev = $<HTMLSelectElement>('weather-severity');
     auto.addEventListener('change', () => (this.game.sim.weather.config.auto = auto.checked));

@@ -14,13 +14,61 @@ const shade = (c: RGB, f: number): RGB => [c[0] * f, c[1] * f, c[2] * f];
  * original and produced in code; there are no external image assets.
  */
 export class Tileset {
-  /** RGBA for every (terrain, variant): index ((id * VARIANTS + v) * 64 + py * 8 + px) * 4. */
+  /** RGBA for every (terrain, variant): index ((id * VARIANTS + v) * 64 + py * 8 + px) * 4. Whole-tile art (toolbar swatches). */
   readonly pixels = new Uint8ClampedArray(TERRAIN_COUNT * VARIANTS * TILE_BYTES);
+  /**
+   * Ground art for the map, same layout. Terrain with features (trees, peaks)
+   * has bare ground here; the features are sprites (see SPRITES) that may
+   * overlap neighbouring tiles, so the map does not look like a grid.
+   */
+  readonly ground = new Uint8ClampedArray(TERRAIN_COUNT * VARIANTS * TILE_BYTES);
 
   constructor(seed = 1337) {
     const rng = new Rng(seed);
     for (let id = 0; id < TERRAIN_COUNT; id++) {
       for (let v = 0; v < VARIANTS; v++) this.draw(id, v, rng);
+    }
+    this.ground.set(this.pixels);
+    const grng = new Rng(seed ^ 0x5bd1e995);
+    for (const id of [T.FOREST, T.JUNGLE, T.SAVANNA, T.MOUNTAIN, T.HILLS]) {
+      for (let v = 0; v < VARIANTS; v++) this.drawGround(id, v, grng);
+    }
+  }
+
+  /** Bare ground under sprite features. */
+  private drawGround(id: number, v: number, rng: Rng): void {
+    const off = this.offset(id, v);
+    const px = this.ground;
+    const set = (x: number, y: number, c: RGB) => {
+      const o = off + (y * TILE_PX + x) * 4;
+      px[o] = c[0];
+      px[o + 1] = c[1];
+      px[o + 2] = c[2];
+      px[o + 3] = 255;
+    };
+    const base: RGB =
+      id === T.FOREST ? shade(TERRAIN[T.GRASS].color, 0.74)
+      : id === T.JUNGLE ? shade(TERRAIN[T.JUNGLE].color, 0.62)
+      : id === T.SAVANNA ? TERRAIN[T.SAVANNA].color
+      : id === T.HILLS ? ([104, 138, 70] as RGB)
+      : shade(TERRAIN[T.MOUNTAIN].color, 0.92);
+    for (let y = 0; y < TILE_PX; y++) {
+      for (let x = 0; x < TILE_PX; x++) {
+        const r = rng.next();
+        let f = 1 + (rng.next() - 0.5) * 0.1;
+        if (r < 0.12) f *= 0.82; // litter / grit
+        else if (r > 0.92) f *= 1.12;
+        set(x, y, shade(base, f));
+      }
+    }
+    if (id === T.HILLS) {
+      // A few stones; the relief itself comes from hill shading.
+      for (let k = 0; k < 1 + (v & 1); k++) {
+        const x = rng.int(0, 6);
+        const y = rng.int(1, 6);
+        set(x, y, [150, 146, 128]);
+        set(x + 1, y, [118, 114, 100]);
+      }
     }
   }
 
@@ -106,13 +154,17 @@ export class Tileset {
         speckle(shade(base, 1.08), 3);
         break;
       case T.GRASS:
-        fill(base, 0.08);
-        for (let k = 0; k < 5; k++) {
+        fill(base, 0.1);
+        // Scattered tufts of varying height and the odd flower, so repeated tiles do not form rows.
+        for (let k = 0; k < 3 + v; k++) {
           const x = rng.int(0, 7);
-          const y = rng.int(1, 7);
-          set(x, y, shade(base, 0.78));
-          set(x, y - 1, shade(base, 1.18));
+          const y = rng.int(2, 7);
+          set(x, y, shade(base, 0.76));
+          set(x, y - 1, shade(base, 1.16));
+          if (rng.next() < 0.5) set(x + (rng.next() < 0.5 ? 1 : -1), y - 1, shade(base, 1.08));
         }
+        if (v === 1) set(rng.int(1, 6), rng.int(1, 6), [236, 220, 120]);
+        if (v === 3) set(rng.int(1, 6), rng.int(1, 6), [230, 236, 240]);
         break;
       case T.FOREST:
         fill(shade(TERRAIN[T.GRASS].color, 0.8), 0.08);
@@ -298,4 +350,158 @@ export function creatureSprite(species: number): HTMLCanvasElement {
     px(5, 6, '#7a2c18');
   }
   return c;
+}
+
+/** A sprite in RGBA (premultiplied-free; alpha 0..255), drawn at 8 px per tile. */
+export interface Sprite {
+  w: number;
+  h: number;
+  /** Anchor: sprite pixel placed at the feature's position (usually the base centre). */
+  ax: number;
+  ay: number;
+  rgba: Uint8ClampedArray;
+}
+
+function makeSprite(w: number, h: number, ax: number, ay: number, draw: (set: (x: number, y: number, c: RGB, a?: number) => void) => void): Sprite {
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  draw((x, y, c, a = 255) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const o = (y * w + x) * 4;
+    rgba[o] = c[0];
+    rgba[o + 1] = c[1];
+    rgba[o + 2] = c[2];
+    rgba[o + 3] = a;
+  });
+  return { w, h, ax, ay, rgba };
+}
+
+/** Round-canopy tree: shadow, trunk, canopy lit from the north-west. */
+function treeSprite(r: number, leaf: RGB, trunk: RGB): Sprite {
+  const d = r * 2 + 1;
+  const w = d + 2;
+  const h = d + 3;
+  return makeSprite(w, h, r, d + 1, (set) => {
+    // Soft shadow to the south-east.
+    for (let y = -r; y <= r; y++)
+      for (let x = -r; x <= r; x++) if (x * x + y * y * 2.2 <= r * r) set(r + 2 + x, d + y * 0.4 + 1 | 0, [10, 30, 10], 70);
+    set(r, d, trunk);
+    set(r, d + 1, shade(trunk, 0.8));
+    for (let y = -r; y <= r; y++)
+      for (let x = -r; x <= r; x++) {
+        const q = x * x + y * y;
+        if (q > r * r + r * 0.6) continue;
+        const edge = q > (r - 1) * (r - 1) + 1;
+        const lit = x + y < -r * 0.5 ? 1.22 : x + y > r * 0.6 ? 0.72 : 1;
+        set(r + x, r + y, shade(leaf, edge ? lit * 0.82 : lit));
+      }
+  });
+}
+
+/** Conifer: narrow layered triangle. */
+function pineSprite(leaf: RGB): Sprite {
+  return makeSprite(7, 9, 3, 8, (set) => {
+    for (let y = 0; y < 7; y++) {
+      const half = Math.floor(y * 0.5) + (y % 3 === 2 ? 1 : 0);
+      for (let x = -half; x <= half; x++) set(3 + x, y, shade(leaf, x < 0 ? 1.15 : 0.8));
+    }
+    set(3, 7, [80, 54, 32]);
+    set(3, 8, [64, 42, 26]);
+    set(4, 8, [10, 30, 10], 70);
+    set(5, 8, [10, 30, 10], 50);
+  });
+}
+
+/** Acacia: flat crown on a thin trunk. */
+function acaciaSprite(): Sprite {
+  const leaf: RGB = [96, 128, 52];
+  return makeSprite(9, 7, 4, 6, (set) => {
+    for (let x = 0; x < 9; x++) set(x, 1, shade(leaf, x < 4 ? 1.1 : 0.88));
+    for (let x = 1; x < 8; x++) set(x, 0, shade(leaf, 1.2));
+    for (let x = 2; x < 7; x++) set(x, 2, shade(leaf, 0.75));
+    set(4, 3, [92, 64, 36]);
+    set(4, 4, [92, 64, 36]);
+    set(4, 5, [80, 54, 30]);
+    set(5, 6, [10, 30, 10], 60);
+    set(6, 6, [10, 30, 10], 40);
+  });
+}
+
+/** Mountain peak: lit west face, shaded east face, optional snow cap. */
+function peakSprite(w: number, h: number, snow: boolean, seed: number): Sprite {
+  const rock: RGB = [128, 122, 116];
+  const rng = new Rng(seed);
+  const cx = Math.floor(w / 2);
+  return makeSprite(w + 2, h + 1, cx, h - 1, (set) => {
+    for (let y = 0; y < h; y++) {
+      const half = Math.round((y + 1) * (w / 2) / h);
+      for (let x = -half; x <= half; x++) {
+        const westFace = x < (y % 4 === 0 ? 1 : 0);
+        let c = shade(rock, westFace ? 1.24 : 0.7);
+        if (rng.next() < 0.12) c = shade(c, 0.9);
+        if (snow && y < h * 0.38 + (x & 1)) c = westFace ? [240, 244, 248] : [196, 206, 220];
+        set(cx + x, y, c);
+      }
+    }
+    // Shadow cast to the south-east.
+    for (let x = 1; x <= Math.floor(w / 2) + 1; x++) set(cx + x, h, [20, 20, 30], 80);
+  });
+}
+
+/** Reeds for swamps. */
+function reedSprite(): Sprite {
+  return makeSprite(5, 5, 2, 4, (set) => {
+    for (const [x, top] of [[0, 1], [2, 0], [4, 2]] as const) {
+      for (let y = top; y < 5; y++) set(x, y, y === top ? [150, 120, 70] : [70, 104, 50]);
+    }
+  });
+}
+
+/** Sprite catalogue (drawn at 8 px per tile; halved copies are used at 4 px per tile). */
+export const SPRITES = {
+  oak: [treeSprite(3, [52, 118, 52], [92, 60, 34]), treeSprite(2, [64, 132, 58], [92, 60, 34]), treeSprite(3, [44, 106, 50], [84, 56, 32])],
+  jungle: [treeSprite(4, [36, 128, 60], [70, 50, 30]), treeSprite(3, [48, 146, 66], [70, 50, 30])],
+  pine: [pineSprite([40, 92, 60]), pineSprite([52, 104, 68])],
+  acacia: [acaciaSprite()],
+  /** Ridge-crest peaks (about two tiles wide) and smaller side peaks; snow-capped copies for high or cold ground. */
+  peak: [peakSprite(18, 12, false, 1), peakSprite(16, 11, false, 2)],
+  smallPeak: [peakSprite(10, 8, false, 5), peakSprite(8, 7, false, 6)],
+  snowPeak: [peakSprite(18, 12, true, 3), peakSprite(16, 11, true, 4)],
+  smallSnowPeak: [peakSprite(10, 8, true, 7), peakSprite(8, 7, true, 8)],
+  reed: [reedSprite()],
+};
+
+/** Half-resolution copy (2×2 box filter with alpha weighting) for 4-px-per-tile chunks. */
+export function halfSprite(sp: Sprite): Sprite {
+  const w = Math.ceil(sp.w / 2);
+  const h = Math.ceil(sp.h / 2);
+  const out = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < 2; dx++) {
+          const sx = x * 2 + dx;
+          const sy = y * 2 + dy;
+          if (sx >= sp.w || sy >= sp.h) continue;
+          const o = (sy * sp.w + sx) * 4;
+          const al = sp.rgba[o + 3];
+          r += sp.rgba[o] * al;
+          g += sp.rgba[o + 1] * al;
+          b += sp.rgba[o + 2] * al;
+          a += al;
+        }
+      }
+      const o = (y * w + x) * 4;
+      if (a > 0) {
+        out[o] = r / a;
+        out[o + 1] = g / a;
+        out[o + 2] = b / a;
+        out[o + 3] = a / 4;
+      }
+    }
+  }
+  return { w, h, ax: Math.floor(sp.ax / 2), ay: Math.floor(sp.ay / 2), rgba: out };
 }

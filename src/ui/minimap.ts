@@ -3,6 +3,8 @@ import type { Game } from '../game/game';
 
 /** How often the minimap's map image is refreshed (ms). The viewport box updates every frame it changes. */
 const REFRESH_MS = 250;
+/** How often the averaged (shrunk) map image is rebuilt from the 1px map (ms). */
+const SHRINK_MS = 1000;
 
 /**
  * Minimap: the renderer's 1-pixel-per-tile map scaled down (no extra map
@@ -13,6 +15,9 @@ export class Minimap {
   private lastDraw = 0;
   private lastKey = '';
   private dragging = false;
+  private readonly mips: HTMLCanvasElement[] = [];
+  private small: HTMLCanvasElement | null = null;
+  private lastShrink = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -53,6 +58,32 @@ export class Minimap {
     this.canvas.width = Math.round(cssW * dpr);
     this.canvas.height = Math.round(cssH * dpr);
     this.lastKey = '';
+    this.small = null; // world may have changed size
+  }
+
+  /**
+   * Halves the 1px map repeatedly until it is close to the minimap size, so the
+   * scaled map is averaged rather than point-sampled (no speckle on huge maps).
+   */
+  private shrink(W: number, now: number): void {
+    this.lastShrink = now;
+    let src: HTMLCanvasElement = this.game.renderer.baseCanvas;
+    let level = 0;
+    while (src.width >= W * 2 && src.width >= 4) {
+      const dst = (this.mips[level] ??= document.createElement('canvas'));
+      const w = Math.max(1, src.width >> 1);
+      const h = Math.max(1, src.height >> 1);
+      if (dst.width !== w || dst.height !== h) {
+        dst.width = w;
+        dst.height = h;
+      }
+      const c = dst.getContext('2d')!;
+      c.imageSmoothingEnabled = true;
+      c.drawImage(src, 0, 0, w, h);
+      src = dst;
+      level++;
+    }
+    this.small = src;
   }
 
   private jump(e: PointerEvent): void {
@@ -73,8 +104,9 @@ export class Minimap {
     const ctx = this.ctx;
     const W = this.canvas.width;
     const H = this.canvas.height;
+    if (!this.small || now - this.lastShrink > SHRINK_MS || this.small.width < W) this.shrink(W, now);
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(this.game.renderer.baseCanvas, 0, 0, W, H);
+    ctx.drawImage(this.small!, 0, 0, W, H);
     const v = viewportOnMinimap(cam, W, H);
     ctx.lineWidth = Math.max(1.5, W / 120);
     ctx.strokeStyle = '#f2c14e';

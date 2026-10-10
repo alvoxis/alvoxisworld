@@ -88,12 +88,15 @@ export class World {
     return isWater(this.terrain[this.idx(x, y)]);
   }
 
-  /** Marks the tile and its neighbours' chunks dirty (shading depends on neighbours). */
+  /**
+   * Marks every chunk within two tiles of the tile dirty: map painting reads a
+   * one-tile margin, and decoration on margin tiles depends on their neighbours.
+   */
   markDirty(x: number, y: number): void {
-    const cx0 = Math.max(0, Math.floor((x - 1) / CHUNK));
-    const cy0 = Math.max(0, Math.floor((y - 1) / CHUNK));
-    const cx1 = Math.min(this.chunksX - 1, Math.floor((x + 1) / CHUNK));
-    const cy1 = Math.min(this.chunksY - 1, Math.floor((y + 1) / CHUNK));
+    const cx0 = Math.max(0, Math.floor((x - 2) / CHUNK));
+    const cy0 = Math.max(0, Math.floor((y - 2) / CHUNK));
+    const cx1 = Math.min(this.chunksX - 1, Math.floor((x + 2) / CHUNK));
+    const cy1 = Math.min(this.chunksY - 1, Math.floor((y + 2) / CHUNK));
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) this.dirtyChunks.add(cy * this.chunksX + cx);
     }
