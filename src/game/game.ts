@@ -4,7 +4,7 @@ import { Camera } from '../render/camera';
 import { Renderer, type BrushCursor } from '../render/renderer';
 import { deserializeInto, serialize } from '../save/serialize';
 import { loadFromSlot, saveToSlot, type SlotId } from '../save/storage';
-import { SPECIES } from '../sim/creatures';
+import { CAUSE, CAUSE_NAMES, SPECIES, type CreatureInfo } from '../sim/creatures';
 import { Simulation, type Speed } from '../sim/simulation';
 import { generateWorld, WORLD_SIZES } from '../world/generator';
 import { SEA_LEVEL, TERRAIN } from '../world/terrain';
@@ -40,8 +40,15 @@ export class Game {
   private lastFrame = 0;
   private readonly toolCtx: ToolContext;
 
+  /** Selected creature id (0 = none) and whether the camera follows it. */
+  selectedId = 0;
+  follow = false;
+  /** Cause of death of the selected creature once it has died (null while alive). */
+  selectedFate: string | null = null;
+
   /** UI hooks. */
   onInspect: (report: TileReport) => void = () => {};
+  onSelect: () => void = () => {};
   onWorldChanged: () => void = () => {};
   onSpeedChanged: () => void = () => {};
 
@@ -57,6 +64,13 @@ export class Game {
     this.toolCtx = {
       sim: this.sim,
       inspect: (x, y) => {
+        // Tap near a creature selects it; otherwise report the tile.
+        const i = this.sim.creatures.nearestAt(x, y, Math.max(1, 22 / this.camera.zoom));
+        if (i >= 0) {
+          this.select(this.sim.creatures.id[i]);
+          return;
+        }
+        this.select(0);
         const r = this.report(x, y);
         if (r) this.onInspect(r);
       },
@@ -98,10 +112,11 @@ export class Game {
       }
     }
     this.sim.advance(dt);
+    this.trackSelection();
     let cursor: BrushCursor | null = null;
     const pos = this.stroke ?? this.hoverPos;
     if (pos && this.tool.usesBrush) cursor = { x: pos.x, y: pos.y, radius: this.brushRadius };
-    this.renderer.render(this.camera, this.sim.creatures, cursor);
+    this.renderer.render(this.camera, this.sim.creatures, cursor, this.sim.speed === 0 ? 1 : this.sim.alpha, this.selectedId);
   }
 
   private resize(): void {
@@ -164,7 +179,7 @@ export class Game {
     for (let k = 0; k < c.count; k++) {
       if (Math.abs(c.x[k] - wx) <= 6 && Math.abs(c.y[k] - wy) <= 6) counts[c.species[k]]++;
     }
-    const life = SPECIES.map((s, k) => (counts[k] ? `${counts[k]} ${s.name.toLowerCase()}${counts[k] > 1 ? 's' : ''}` : ''))
+    const life = SPECIES.map((s, k) => (counts[k] ? `${counts[k]} ${(counts[k] > 1 ? s.plural : s.name).toLowerCase()}` : ''))
       .filter(Boolean)
       .join(', ');
     return {
@@ -176,6 +191,46 @@ export class Game {
       moisturePct: Math.round((w.moisture[i] / 255) * 100),
       nearbyLife: life || 'none',
     };
+  }
+
+  // ---- creature selection ----------------------------------------------
+
+  select(id: number): void {
+    this.selectedId = id;
+    this.selectedFate = null;
+    if (!id) this.follow = false;
+    this.onSelect();
+  }
+
+  selectedInfo(): CreatureInfo | null {
+    const i = this.sim.creatures.indexOf(this.selectedId);
+    return i < 0 ? null : this.sim.creatures.info(i);
+  }
+
+  /** Detects the selected creature's death and keeps the camera on it when following. */
+  private trackSelection(): void {
+    const deaths = this.sim.creatures.drainDeaths();
+    if (!this.selectedId) return;
+    if (this.selectedFate === null) {
+      const d = deaths.find((r) => r.id === this.selectedId);
+      if (d) {
+        this.selectedFate = CAUSE_NAMES[d.cause];
+        this.follow = false;
+      }
+    }
+    if (this.follow) {
+      const i = this.sim.creatures.indexOf(this.selectedId);
+      if (i >= 0) this.camera.centerOn(this.sim.creatures.x[i], this.sim.creatures.y[i]);
+    }
+  }
+
+  removeSelected(): boolean {
+    const ok = this.sim.creatures.removeById(this.selectedId);
+    if (ok) {
+      this.selectedFate = CAUSE_NAMES[CAUSE.REMOVED];
+      this.follow = false;
+    }
+    return ok;
   }
 
   // ---- time --------------------------------------------------------------
@@ -195,6 +250,7 @@ export class Game {
     this.sim.log(`World ${seed} was formed.`);
     this.attachWorld(world);
     this.camera.fit();
+    this.select(0);
     this.onWorldChanged();
     return seed;
   }
@@ -209,6 +265,7 @@ export class Game {
     const world = deserializeInto(this.sim, data);
     this.attachWorld(world);
     this.camera.fit();
+    this.select(0);
     this.onWorldChanged();
     return true;
   }

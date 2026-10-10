@@ -3,7 +3,8 @@ import type { Game, TileReport } from '../game/game';
 import { creatureSprite } from '../render/tileset';
 import { SLOTS, listSlots, deleteSlot, type SlotId } from '../save/storage';
 import { dateFromTick } from '../sim/clock';
-import { SPECIES } from '../sim/creatures';
+import { CAUSE_NAMES, SPECIES } from '../sim/creatures';
+import { TICKS_PER_DAY, TICKS_PER_YEAR } from '../sim/clock';
 import { SPEEDS, type Speed } from '../sim/simulation';
 import { WORLD_SIZES } from '../world/generator';
 import { TERRAIN, isWater } from '../world/terrain';
@@ -25,6 +26,7 @@ export class Hud {
     this.bindMenu();
 
     game.onInspect = (r) => this.showInfo(r);
+    game.onSelect = () => this.renderCreature();
     game.onSpeedChanged = () => this.syncSpeed();
     game.onWorldChanged = () => {
       $('info').hidden = true;
@@ -129,7 +131,10 @@ export class Hud {
     $('zoom-in').addEventListener('click', () => this.game.input.zoomCenter(1.4));
     $('zoom-out').addEventListener('click', () => this.game.input.zoomCenter(1 / 1.4));
     $('zoom-fit').addEventListener('click', () => this.game.camera.fit());
-    $('info-close').addEventListener('click', () => ($('info').hidden = true));
+    $('info-close').addEventListener('click', () => {
+      $('info').hidden = true;
+      if (this.game.selectedId) this.game.select(0);
+    });
   }
 
   // ---- top bar -----------------------------------------------------------
@@ -154,12 +159,141 @@ export class Hud {
     const sim = this.game.sim;
     const d = sim.date;
     $('date').textContent = `Year ${d.year} · ${d.season} · Day ${d.day}${sim.speed === 0 ? ' · Paused' : ''}`;
-    $('pop').textContent = SPECIES.map((s) => `${s.name}s ${sim.creatures.countSpecies(s.id)}`).join(' · ');
+    let herb = 0;
+    let pred = 0;
+    for (const s of SPECIES) {
+      const n = sim.creatures.countSpecies(s.id);
+      if (s.diet === 'carnivore') pred += n;
+      else herb += n;
+    }
+    $('pop').textContent = `Animals ${herb + pred} · Herbivores ${herb} · Predators ${pred}`;
+    if (this.game.selectedId) this.renderCreature();
+  }
+
+  /**
+   * Live panel for the selected creature. The DOM is built once per selection (or
+   * when it dies) and only values are updated 4× per second, so taps on the
+   * buttons are never lost to a re-render.
+   */
+  private creaturePanel: {
+    id: number;
+    alive: boolean;
+    update: () => void;
+  } | null = null;
+
+  private renderCreature(): void {
+    const el = $('info');
+    const body = $('info-body');
+    const game = this.game;
+    if (!game.selectedId) {
+      if (body.dataset.mode === 'creature') el.hidden = true;
+      this.creaturePanel = null;
+      return;
+    }
+    const info = game.selectedInfo();
+    const p = this.creaturePanel;
+    if (p && p.id === game.selectedId && p.alive === !!info && body.dataset.mode === 'creature') {
+      p.update();
+      return;
+    }
+
+    body.dataset.mode = 'creature';
+    body.replaceChildren();
+    const title = document.createElement('div');
+    title.className = 'title';
+    body.appendChild(title);
+    const line = (k: string) => {
+      const div = document.createElement('div');
+      const b = document.createElement('b');
+      b.textContent = `${k}: `;
+      const v = document.createElement('span');
+      div.append(b, v);
+      body.appendChild(div);
+      return v;
+    };
+
+    if (!info) {
+      title.textContent = `Creature #${game.selectedId}`;
+      const status = line('Status');
+      const update = () => {
+        status.textContent = game.selectedFate ? `Died (${game.selectedFate})` : 'Gone';
+      };
+      update();
+      this.creaturePanel = { id: game.selectedId, alive: false, update };
+      el.hidden = false;
+      return;
+    }
+
+    title.textContent = `${info.species.name} #${info.id}`;
+    const stage = line('Stage');
+    const doing = line('Doing');
+    const diet = line('Diet');
+    diet.textContent = `${info.species.diet}, ${info.species.habitat === 'water' ? 'lives in water' : 'lives on land'}`;
+    const meter = (label: string) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'meter';
+      const name = document.createElement('span');
+      name.textContent = label;
+      const track = document.createElement('span');
+      track.className = 'track';
+      const fill = document.createElement('span');
+      track.appendChild(fill);
+      const num = document.createElement('span');
+      wrap.append(name, track, num);
+      body.appendChild(wrap);
+      return (value: number, max: number, good: 'high' | 'low') => {
+        const frac = Math.max(0, Math.min(1, value / max));
+        const ok = good === 'high' ? frac : 1 - frac;
+        fill.style.width = `${Math.round(frac * 100)}%`;
+        fill.style.background = ok > 0.5 ? '#5fd35f' : ok > 0.25 ? '#f2c14e' : '#e0533a';
+        num.textContent = `${Math.round(value)}`;
+      };
+    };
+    const health = meter('Health');
+    const hunger = meter('Hunger');
+    const thirst = info.species.thirstRate > 0 ? meter('Thirst') : null;
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const follow = document.createElement('button');
+    follow.className = 'btn';
+    follow.addEventListener('click', () => {
+      game.follow = !game.follow;
+      update();
+    });
+    const remove = document.createElement('button');
+    remove.className = 'btn';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      const name = `${info.species.name} #${info.id}`;
+      if (game.removeSelected()) this.toast(`${name} removed`);
+      this.renderCreature();
+    });
+    actions.append(follow, remove);
+    body.appendChild(actions);
+
+    const update = () => {
+      const now = game.selectedInfo();
+      if (!now) return;
+      const years = Math.floor(now.ageTicks / TICKS_PER_YEAR);
+      const days = Math.floor((now.ageTicks % TICKS_PER_YEAR) / TICKS_PER_DAY);
+      stage.textContent = `${now.stage}, ${years > 0 ? `${years} y ` : ''}${days} d`;
+      doing.textContent = now.state;
+      health(now.health, now.maxHealth, 'high');
+      hunger(now.hunger, 100, 'low');
+      thirst?.(now.thirst, 100, 'low');
+      follow.textContent = game.follow ? 'Following' : 'Follow';
+      follow.classList.toggle('primary', game.follow);
+    };
+    update();
+    this.creaturePanel = { id: info.id, alive: true, update };
+    el.hidden = false;
   }
 
   private showInfo(r: TileReport): void {
     const el = $('info');
     const body = $('info-body');
+    body.dataset.mode = 'tile';
     body.replaceChildren();
     const lines: Array<[string, string]> = [
       ['Tile', `${r.x}, ${r.y}`],
@@ -226,8 +360,18 @@ export class Hud {
       ...TERRAIN.filter((t) => !t.water && counts[t.id] > 0)
         .sort((a, b) => counts[b.id] - counts[a.id])
         .map((t): [string, string] => [`  ${t.name}`, `${((counts[t.id] / land) * 100).toFixed(1)}% of land`]),
-      ...SPECIES.map((s): [string, string] => [s.name + 's', String(sim.creatures.countSpecies(s.id))]),
       ['Births / deaths', `${sim.creatures.births} / ${sim.creatures.deaths}`],
+      ...SPECIES.flatMap((s): Array<[string, string]> => {
+        const c = sim.creatures;
+        const causes = CAUSE_NAMES.map((name, k) => [name, c.deathsBy(s.id, k)] as const)
+          .filter(([, n]) => n > 0)
+          .map(([name, n]) => `${name} ${n}`)
+          .join(', ');
+        return [
+          [s.plural, `${c.countSpecies(s.id)} alive · ${c.birthStats[s.id]} born`],
+          ...(causes ? ([[`  deaths`, causes]] as Array<[string, string]>) : []),
+        ];
+      }),
     ];
     const el = $('stats');
     el.replaceChildren();

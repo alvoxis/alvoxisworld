@@ -1,4 +1,4 @@
-import { GRAZER, RAPTOR, SPECIES } from '../sim/creatures';
+import { FISH, GRAZER, HADROSAUR, RAPTOR, SPECIES, TYRANT } from '../sim/creatures';
 import { Simulation } from '../sim/simulation';
 import { applyHeightBrush, applyPaintBrush, applySmoothBrush } from '../world/brush';
 import { T, TERRAIN } from '../world/terrain';
@@ -90,8 +90,16 @@ export const TOOLS: readonly Tool[] = [
   paintTool(T.SNOW),
   paintTool(T.HILLS),
   paintTool(T.MOUNTAIN),
+  {
+    // Same action as Inspect, placed with the life tools: tap a creature to select it.
+    id: 'select', label: 'Select', category: 'life', icon: { emoji: '👆' }, usesBrush: false, repeatMs: Infinity,
+    apply: (ctx, x, y) => ctx.inspect(x, y),
+  },
   spawnTool(GRAZER, 3),
+  spawnTool(HADROSAUR, 2),
+  spawnTool(FISH, 3),
   spawnTool(RAPTOR, 1),
+  spawnTool(TYRANT, 1),
   {
     id: 'smite', label: 'Remove life', category: 'life', icon: { emoji: '⚡' }, usesBrush: true, repeatMs: 0,
     apply: ({ sim }, x, y, r) => {
