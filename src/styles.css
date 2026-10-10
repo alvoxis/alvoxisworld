@@ -160,7 +160,7 @@ button {
 #toast {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--safe-bottom) + 150px);
+  bottom: calc(var(--toolbar-h, 150px) + 8px);
   transform: translateX(-50%);
   padding: 8px 14px;
   border-radius: 999px;
@@ -463,4 +463,75 @@ ul.hint {
 #stats span:nth-child(4n + 4) {
   /* keep rows readable when deaths lines wrap */
   overflow-wrap: anywhere;
+}
+
+#weather-status {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#zoom .chip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+#minimap {
+  position: absolute;
+  right: calc(var(--safe-right) + 8px);
+  bottom: calc(var(--toolbar-h, 148px) + 8px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+  touch-action: none;
+  cursor: crosshair;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+#minimap[hidden] {
+  display: none;
+}
+
+#intensity {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+label.check input {
+  height: 20px;
+  width: 20px;
+}
+
+/* Phones: categories get their own full-width row; brush and power controls below. */
+@media (max-width: 560px) {
+  #toolbar-bottom {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  #cats {
+    flex: 1 1 100%;
+    overflow: visible;
+  }
+  #cats .chip {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 4px;
+    font-size: 13px;
+  }
+  #intensity .lbl {
+    display: none;
+  }
+  #brush {
+    margin-left: auto;
+  }
 }

@@ -22,6 +22,7 @@
         <div id="status">
           <div id="date">Year 1 · Spring · Day 1</div>
           <div id="pop"></div>
+          <div id="weather-status"></div>
         </div>
         <div id="speed" role="group" aria-label="Time speed">
           <button class="chip" data-speed="0" aria-label="Pause">⏸</button>
@@ -35,7 +36,11 @@
         <button class="chip" id="zoom-in" aria-label="Zoom in">＋</button>
         <button class="chip" id="zoom-out" aria-label="Zoom out">－</button>
         <button class="chip" id="zoom-fit" aria-label="Show whole world">⤢</button>
+        <button class="chip" id="undo" aria-label="Undo last terrain change" disabled>↶</button>
+        <button class="chip" id="minimap-toggle" aria-label="Show or hide the minimap" aria-pressed="true">🗺</button>
       </div>
+
+      <canvas id="minimap" aria-label="Minimap: tap to move the camera"></canvas>
 
       <section id="info" hidden>
         <button class="chip close" id="info-close" aria-label="Close">✕</button>
@@ -48,6 +53,7 @@
         <div id="tools" role="toolbar" aria-label="Tools"></div>
         <div id="toolbar-bottom">
           <nav id="cats" aria-label="Tool categories"></nav>
+          <button class="chip" id="intensity" aria-label="Power level" hidden>Power ●●○</button>
           <div id="brush" aria-label="Brush size">
             <button class="chip" id="brush-minus" aria-label="Smaller brush">－</button>
             <span id="brush-size">4</span>
@@ -76,6 +82,21 @@
         </section>
 
         <section>
+          <h2>Weather</h2>
+          <div class="row">
+            <label class="check"><input type="checkbox" id="weather-auto" checked /> Weather changes by itself</label>
+          </div>
+          <div class="row">
+            <label>Severity <select id="weather-severity">
+              <option value="0">Mild</option>
+              <option value="1" selected>Normal</option>
+              <option value="2">Extreme</option>
+            </select></label>
+          </div>
+          <p class="hint">Rain and drought move across the map, change moisture and temperature, fill or dry lakes and rivers, flood low land and wither plants. Pausing stops the weather.</p>
+        </section>
+
+        <section>
           <h2>Save &amp; load</h2>
           <p class="hint">Saved in this browser (IndexedDB).</p>
           <div id="slots"></div>
@@ -98,6 +119,8 @@
             <li>Two fingers: pan and pinch-zoom. Mouse: right-drag to pan, wheel to zoom.</li>
             <li>Keyboard: arrows/WASD pan, +/− zoom, Space pause.</li>
             <li>✋ Move tool: one-finger drag pans the map.</li>
+            <li>↶ Undo: reverts the last terrain change (brushes, painting, meteor and earthquake terrain). Ctrl/Cmd+Z on a keyboard.</li>
+            <li>🗺 Minimap: tap or drag on it to move the camera.</li>
           </ul>
         </section>
       </dialog>

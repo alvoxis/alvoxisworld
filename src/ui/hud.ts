@@ -8,6 +8,8 @@ import { TICKS_PER_DAY, TICKS_PER_YEAR } from '../sim/clock';
 import { SPEEDS, type Speed } from '../sim/simulation';
 import { WORLD_SIZES } from '../world/generator';
 import { TERRAIN, isWater } from '../world/terrain';
+import { SEVERITY } from '../sim/weather';
+import { Minimap } from './minimap';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -16,8 +18,17 @@ export class Hud {
   private category: ToolCategory = 'terrain';
   private toastTimer = 0;
   private readonly menu = $<HTMLDialogElement>('menu');
+  private readonly minimap: Minimap;
 
   constructor(private readonly game: Game) {
+    this.minimap = new Minimap($<HTMLCanvasElement>('minimap'), game);
+    // Keep the minimap and toasts just above the toolbar, whatever its height.
+    const tb = $('toolbar');
+    const setToolbarH = () => document.documentElement.style.setProperty('--toolbar-h', `${tb.getBoundingClientRect().height}px`);
+    new ResizeObserver(setToolbarH).observe(tb);
+    setToolbarH();
+    this.layoutMinimap();
+    window.addEventListener('resize', () => this.layoutMinimap());
     this.buildCategories();
     this.renderTools();
     this.bindTopbar();
@@ -30,8 +41,12 @@ export class Hud {
     game.onSpeedChanged = () => this.syncSpeed();
     game.onWorldChanged = () => {
       $('info').hidden = true;
+      this.layoutMinimap();
+      this.syncUndo();
       this.refreshStatus();
     };
+    game.undo.onChange = () => this.syncUndo();
+    this.syncUndo();
     this.syncSpeed();
     this.syncBrush();
     this.refreshStatus();
@@ -42,6 +57,10 @@ export class Hud {
       if (e.key === ' ') {
         e.preventDefault();
         this.game.setSpeed(this.game.sim.speed === 0 ? 1 : 0);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        this.doUndo();
       }
     });
   }
@@ -108,7 +127,27 @@ export class Hud {
     }
   }
 
+  private layoutMinimap(): void {
+    const small = window.innerWidth < 600;
+    this.minimap.layout(small ? 120 : 190, small ? 90 : 140);
+  }
+
+  private syncUndo(): void {
+    const b = $<HTMLButtonElement>('undo');
+    b.disabled = !this.game.undo.canUndo;
+    b.title = this.game.undo.nextLabel ? `Undo ${this.game.undo.nextLabel}` : 'Nothing to undo';
+  }
+
+  private doUndo(): void {
+    const label = this.game.undoLast();
+    this.toast(label ? `Undid: ${label}` : 'Nothing to undo');
+  }
+
   private bindBrush(): void {
+    $('intensity').addEventListener('click', () => {
+      this.game.setIntensity((this.game.intensity % 3) + 1);
+      this.syncBrush();
+    });
     $('brush-minus').addEventListener('click', () => {
       this.game.setBrushIndex(this.game.brushIndex - 1);
       this.syncBrush();
@@ -125,12 +164,28 @@ export class Hud {
     $('brush').classList.toggle('disabled', !enabled);
     $<HTMLButtonElement>('brush-minus').disabled = !enabled || this.game.brushIndex === 0;
     $<HTMLButtonElement>('brush-plus').disabled = !enabled || this.game.brushIndex === BRUSH_SIZES.length - 1;
+    const pw = $<HTMLButtonElement>('intensity');
+    pw.hidden = !this.game.tool.usesIntensity;
+    pw.replaceChildren();
+    const lbl = document.createElement('span');
+    lbl.className = 'lbl';
+    lbl.textContent = 'Power ';
+    pw.append(lbl, `${'●'.repeat(this.game.intensity)}${'○'.repeat(3 - this.game.intensity)}`);
+    pw.setAttribute('aria-label', `Power level ${this.game.intensity} of 3`);
   }
 
   private bindZoom(): void {
     $('zoom-in').addEventListener('click', () => this.game.input.zoomCenter(1.4));
     $('zoom-out').addEventListener('click', () => this.game.input.zoomCenter(1 / 1.4));
     $('zoom-fit').addEventListener('click', () => this.game.camera.fit());
+    $('undo').addEventListener('click', () => this.doUndo());
+    $('minimap-toggle').addEventListener('click', () => {
+      const mm = $('minimap');
+      mm.hidden = !mm.hidden;
+      $('minimap-toggle').setAttribute('aria-pressed', String(!mm.hidden));
+      $('minimap-toggle').classList.toggle('active', !mm.hidden);
+    });
+    $('minimap-toggle').classList.add('active');
     $('info-close').addEventListener('click', () => {
       $('info').hidden = true;
       if (this.game.selectedId) this.game.select(0);
@@ -167,6 +222,13 @@ export class Hud {
       else herb += n;
     }
     $('pop').textContent = `Animals ${herb + pred} · Herbivores ${herb} · Predators ${pred}`;
+    const wx = sim.weather.summary();
+    const parts = [
+      wx.rain ? `🌧 ${wx.rain} rain` : '',
+      wx.drought ? `☀️ ${wx.drought} drought` : '',
+      sim.fire.burning ? `🔥 ${sim.fire.burning} burning` : '',
+    ].filter(Boolean);
+    $('weather-status').textContent = parts.length ? parts.join(' · ') : sim.weather.config.auto ? 'Clear skies' : 'Weather off';
     if (this.game.selectedId) this.renderCreature();
   }
 
@@ -331,14 +393,32 @@ export class Hud {
     $('seed-random').addEventListener('click', () => {
       $<HTMLInputElement>('seed').value = String((Math.random() * 1e9) >>> 0);
     });
-    $('generate').addEventListener('click', () => {
-      const seed = this.game.newWorld(size.value, $<HTMLInputElement>('seed').value);
-      this.menu.close();
-      this.toast(`New world · seed ${seed}`);
+    const gen = $<HTMLButtonElement>('generate');
+    gen.addEventListener('click', async () => {
+      if (this.game.generating) return;
+      gen.disabled = true;
+      gen.textContent = 'Generating…';
+      try {
+        const { seed } = await this.game.newWorld(size.value, $<HTMLInputElement>('seed').value);
+        this.menu.close();
+        this.toast(`New world · seed ${seed}`);
+      } catch (err) {
+        this.toast(`Could not create world: ${(err as Error).message}`);
+      } finally {
+        gen.disabled = false;
+        gen.textContent = 'Generate';
+      }
     });
+    const auto = $<HTMLInputElement>('weather-auto');
+    const sev = $<HTMLSelectElement>('weather-severity');
+    auto.addEventListener('change', () => (this.game.sim.weather.config.auto = auto.checked));
+    sev.addEventListener('change', () => (this.game.sim.weather.config.severity = Number(sev.value)));
   }
 
   private openMenu(): void {
+    $<HTMLInputElement>('weather-auto').checked = this.game.sim.weather.config.auto;
+    $<HTMLSelectElement>('weather-severity').value = String(this.game.sim.weather.config.severity);
+    $('weather-severity').title = SEVERITY.join(' / ');
     this.renderStats();
     this.renderHistory();
     $('current-seed').textContent = `Current world: seed ${this.game.sim.world.seed}, ${this.game.sim.world.width}×${this.game.sim.world.height}`;

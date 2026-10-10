@@ -1,15 +1,18 @@
 import { seedFromString } from '../core/rng';
 import { InputController } from '../input/input';
 import { Camera } from '../render/camera';
-import { Renderer, type BrushCursor } from '../render/renderer';
+import { Renderer, type BrushCursor, type VisualEffect } from '../render/renderer';
 import { deserializeInto, serialize } from '../save/serialize';
 import { loadFromSlot, saveToSlot, type SlotId } from '../save/storage';
 import { CAUSE, CAUSE_NAMES, SPECIES, type CreatureInfo } from '../sim/creatures';
+import type { WorkerLike } from '../sim/navjobs';
 import { Simulation, type Speed } from '../sim/simulation';
 import { generateWorld, WORLD_SIZES } from '../world/generator';
+import { generateWorldAsync, type GenWorkerLike } from '../world/genjobs';
 import { SEA_LEVEL, TERRAIN } from '../world/terrain';
 import { World } from '../world/world';
 import { BRUSH_SIZES, toolById, type Tool, type ToolContext } from './tools';
+import { UndoHistory } from './undo';
 
 export interface TileReport {
   x: number;
@@ -35,6 +38,14 @@ export class Game {
   readonly input: InputController;
   tool: Tool = toolById('raise');
   brushIndex = 2;
+  /** Power level 1..3 for god powers. */
+  intensity = 2;
+  readonly undo = new UndoHistory();
+  /** Short visual effects (meteor flash, quake ripple). */
+  private effects: VisualEffect[] = [];
+  /** True while a new world is being generated. */
+  generating = false;
+  private genWorkerFactory: (() => GenWorkerLike) | null = null;
   private stroke: Stroke | null = null;
   private hoverPos: { x: number; y: number } | null = null;
   private lastFrame = 0;
@@ -53,6 +64,7 @@ export class Game {
   onSpeedChanged: () => void = () => {};
 
   constructor(private readonly canvas: HTMLCanvasElement) {
+    const game = this;
     this.renderer = new Renderer(canvas);
     const size = WORLD_SIZES[1];
     const seed = (Math.random() * 2 ** 32) >>> 0;
@@ -60,9 +72,17 @@ export class Game {
     this.sim.log(`World ${seed} was formed.`);
     this.sim.onSeasonChange = (s) => this.renderer.setWinter(s === 3);
     this.attachWorld(this.sim.world);
+    this.setupWorkers();
 
     this.toolCtx = {
       sim: this.sim,
+      get intensity() {
+        return game.intensity;
+      },
+      effect: (kind, x, y, radius) => {
+        this.effects.push({ kind, x, y, radius, start: performance.now() });
+        if (this.effects.length > 8) this.effects.shift();
+      },
       inspect: (x, y) => {
         // Tap near a creature selects it; otherwise report the tile.
         const i = this.sim.creatures.nearestAt(x, y, Math.max(1, 22 / this.camera.zoom));
@@ -80,7 +100,10 @@ export class Game {
       isPanMode: () => this.tool.id === 'move',
       beginStroke: (x, y) => this.beginStroke(x, y),
       moveStroke: (x, y) => this.moveStroke(x, y),
-      endStroke: () => (this.stroke = null),
+      endStroke: () => {
+        this.stroke = null;
+        this.undo.end();
+      },
       hover: (p) => (this.hoverPos = p),
     });
 
@@ -116,7 +139,27 @@ export class Game {
     let cursor: BrushCursor | null = null;
     const pos = this.stroke ?? this.hoverPos;
     if (pos && this.tool.usesBrush) cursor = { x: pos.x, y: pos.y, radius: this.brushRadius };
-    this.renderer.render(this.camera, this.sim.creatures, cursor, this.sim.speed === 0 ? 1 : this.sim.alpha, this.selectedId);
+    if (this.effects.length && now - this.effects[0].start > 1000) this.effects = this.effects.filter((e) => now - e.start <= 1000);
+    this.renderer.render(this.camera, this.sim.creatures, cursor, this.sim.speed === 0 ? 1 : this.sim.alpha, this.selectedId, {
+      burning: this.sim.fire.active,
+      weather: this.sim.weather.systems,
+      effects: this.effects,
+      now,
+    });
+  }
+
+  /**
+   * Web Workers: navigation rebuilds and world generation run off the main thread
+   * when the browser supports module workers; otherwise (or if a worker fails)
+   * the same code runs on the main thread with identical results.
+   */
+  private setupWorkers(): void {
+    if (typeof Worker === 'undefined') return;
+    const navFactory = () =>
+      new Worker(new URL('../sim/nav.worker.ts', import.meta.url), { type: 'module' }) as unknown as WorkerLike;
+    this.sim.creatures.nav.setWorkerFactory(navFactory);
+    this.genWorkerFactory = () =>
+      new Worker(new URL('../world/gen.worker.ts', import.meta.url), { type: 'module' }) as unknown as GenWorkerLike;
   }
 
   private resize(): void {
@@ -138,6 +181,16 @@ export class Game {
   setTool(id: string): void {
     this.tool = toolById(id);
     this.stroke = null;
+    this.undo.end();
+  }
+
+  setIntensity(level: number): void {
+    this.intensity = Math.max(1, Math.min(3, Math.round(level)));
+  }
+
+  /** Reverts the last undoable action. Returns its label, or null if nothing to undo. */
+  undoLast(): string | null {
+    return this.undo.undo(this.sim.world);
   }
 
   setBrushIndex(i: number): void {
@@ -145,12 +198,18 @@ export class Game {
   }
 
   private applyAt(x: number, y: number): void {
-    this.tool.apply(this.toolCtx, x, y, this.brushRadius);
+    if (this.tool.undoable) {
+      // One undo step per stroke: only tiles changed by the tool itself are recorded.
+      this.undo.record(this.sim.world, this.tool.label, () => this.tool.apply(this.toolCtx, x, y, this.brushRadius));
+    } else {
+      this.tool.apply(this.toolCtx, x, y, this.brushRadius);
+    }
   }
 
   private beginStroke(x: number, y: number): void {
-    if (this.tool.id === 'move') return;
+    if (this.tool.id === 'move' || this.generating) return;
     this.stroke = { x, y, lastApply: performance.now() };
+    if (this.tool.undoable) this.undo.begin(this.sim.world, this.tool.label);
     this.applyAt(x, y);
   }
 
@@ -242,17 +301,30 @@ export class Game {
 
   // ---- world lifecycle ---------------------------------------------------
 
-  newWorld(sizeKey: string, seedText: string): number {
+  /**
+   * Generates a new world (in a worker when available, so the page stays
+   * responsive). Resolves with the seed; the old world keeps running until the
+   * new one is ready.
+   */
+  async newWorld(sizeKey: string, seedText: string): Promise<{ seed: number; usedWorker: boolean }> {
     const size = WORLD_SIZES.find((s) => s.key === sizeKey) ?? WORLD_SIZES[1];
     const seed = seedText.trim() ? seedFromString(seedText) : (Math.random() * 2 ** 32) >>> 0;
-    const world = generateWorld(size.width, size.height, seed);
-    this.sim.reset(world);
-    this.sim.log(`World ${seed} was formed.`);
-    this.attachWorld(world);
-    this.camera.fit();
-    this.select(0);
-    this.onWorldChanged();
-    return seed;
+    this.generating = true;
+    try {
+      const { world, usedWorker } = await generateWorldAsync(size.width, size.height, seed, this.genWorkerFactory);
+      const keep = { ...this.sim.weather.config };
+      this.sim.reset(world);
+      this.sim.weather.config = keep;
+      this.sim.log(`World ${seed} was formed.`);
+      this.attachWorld(world);
+      this.camera.fit();
+      this.select(0);
+      this.undo.clear();
+      this.onWorldChanged();
+      return { seed, usedWorker };
+    } finally {
+      this.generating = false;
+    }
   }
 
   async save(slot: SlotId): Promise<void> {
@@ -266,6 +338,7 @@ export class Game {
     this.attachWorld(world);
     this.camera.fit();
     this.select(0);
+    this.undo.clear();
     this.onWorldChanged();
     return true;
   }
