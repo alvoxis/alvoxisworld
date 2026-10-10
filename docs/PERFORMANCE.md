@@ -1,15 +1,92 @@
-# Performance (Milestone 4)
+# Performance
 
-All numbers below come from repeatable runs. Re-run them yourself and compare on the same machine:
-
-```sh
-npm run bench            # all scenarios
-npm run bench -- capped  # one scenario: mixed | capped | long
-```
+All numbers below come from repeatable runs. Re-run them yourself and compare on the same machine.
 
 The benchmarks run in Node 22, single-threaded, in this repository's cloud container. Node has no Web Worker here, so navigation rebuilds run on the main thread in these numbers: the worst case. Browser numbers were measured in headless desktop Chromium (Playwright) against the production build. **Nothing has been measured on a physical iPhone.**
 
-## Simulation benchmarks (Node, medians of 3 runs)
+Commands:
+
+```sh
+npm run bench                 # simulation scenarios: mixed | capped | long | undo
+npm run bench:sizes           # every world size: generation, memory, tick cost, save size (or e.g. `-- giant`)
+```
+
+## Milestone 5 measurements
+
+Conditions:
+- **Node:** Node 22.22, single thread, this repository's cloud container (shared CPU, so expect ±10–30% between runs). Since Milestone 5 the scripts run under vite-node 6 (Vite 8).
+- **Browser:** headless Chromium (Playwright) with iPhone 13 emulation (390×664 CSS px, device pixel ratio 3, capped to 2 by the game), production build served by `vite preview`, software rendering (no GPU).
+- Frame cost is the CPU time spent inside each animation frame (simulation and drawing), recorded by `Game.frameStats` over 2.5–3 s windows.
+- **Nothing in this section was measured on a physical iPhone.**
+
+### World sizes (`npm run bench:sizes`, seed 12345)
+
+Population: herds of 8 grazers, plus 2 raptors with every third herd, one herd per about 6,000 grassland/savanna tiles. Weather on. Ticks measured after 200 warm-up ticks.
+
+| Size | Tiles | Generate | World layers | Whole simulation (incl. navigation) | First tick (builds navigation) | Tick avg / p95 | Save file (gzip) | 1 px map + image |
+|---|---|---|---|---|---|---|---|---|
+| Small 256×160 | 0.04 M | 99 ms | 0.4 MB | 2.8 MB | 60 ms | 0.22 / 0.44 ms (82 animals) | 0.2 MB, 35 ms | ≈0.3 MB |
+| Medium 512×320 | 0.16 M | 261 ms | 1.4 MB | 6.3 MB | 94 ms | 0.83 / 0.62 ms (90) | 0.6 MB, 104 ms | ≈1.3 MB |
+| Large 1024×640 | 0.66 M | 955 ms | 5.6 MB | 20.9 MB | 228 ms | 1.74 / 1.94 ms (305) | 2.1 MB, 407 ms | ≈5.0 MB |
+| Huge 1536×960 | 1.47 M | 1,948 ms | 12.7 MB | 45.0 MB | 423 ms | 3.77 / 4.18 ms (765) | 4.5 MB, 939 ms | ≈11.3 MB |
+| Giant 2048×1280 | 2.62 M | 3,452 ms | 22.5 MB | 78.8 MB | 718 ms | 7.18 / 9.60 ms (1,285) | 8.1 MB, 2,068 ms | ≈20.0 MB |
+
+- "Whole simulation" is the exact total of distinct typed-array buffers reachable from the `Simulation` object (world, creatures at their fixed 6,000-slot capacity, pathfinding, water map, region graph, food map), with no navigation rebuild in flight. A rebuild in flight briefly adds a terrain snapshot plus a second water map and region graph.
+- **Memory reduction for big maps.** Before this milestone's changes the Giant figure was **108.9 MB**. Pathfinder search state went from 32 to 9 bytes per tile (40.3 → 22.8 MB on Giant), and region labels from 4 to 2 bytes per tile per movement class. The browser additionally holds the 1 px map canvas and its `ImageData` (8 bytes per tile, last column) and the painted-chunk caches (at most 80 × 256 KB + 160 × 64 KB ≈ 30 MB, independent of map size).
+- Tick cost grows with map area mainly through weather and vegetation sampling and the larger populations.
+- **Default size.** Medium stays the default: it generates in about 0.26 s here and keeps the whole simulation under 7 MB. Phones are slower than this container, and the first world is generated before the page is interactive. Large and above are offered with a note in the menu (memory estimate, slower on phones).
+
+### Browser frame cost by size and zoom (60 animals spawned, 5×)
+
+| Size | Generate via menu (worker, includes UI) | Fit zoom | Zoom 4 | Zoom 16 |
+|---|---|---|---|---|
+| Medium | 405 ms | avg 0.3, p95 0.6 ms | avg 0.9, p95 7.0 ms | avg 0.7, p95 1.5 ms |
+| Large | 980 ms | — | — | — |
+| Giant | 3,737 ms | avg 2.2, p95 7.1 ms | avg 2.3, p95 8.3 ms | avg 2.5, p95 9.2 ms |
+
+Worst single frames were 33 ms (Medium) and 74 ms (Giant): chunk repaints after weather changes plus simulation ticks. In every size, a tap at 25%/50% of the minimap centred the camera at 25%/50% of the world.
+
+### Map painting
+
+| | 8 px per tile (256×256) | 4 px per tile (128×128) |
+|---|---|---|
+| Node, warm, all 160 chunks of a Medium map | 5.7 ms per chunk | 2.1 ms per chunk |
+| Chromium, average over a session (mixed levels) | about 4 ms | 1.35 ms |
+
+At most 6 ms of painting happens per frame (at least one chunk), centre first. Stale chunks stay visible until repainted, so painting never blanks the screen.
+
+### Speed and population (Medium, zoom 4)
+
+| Animals | 1× | 5× | 10× | 20× |
+|---|---|---|---|---|
+| 425 → 1,901 (grows while measuring) | 10 ticks/s, avg 0.7 / p95 1.7 ms | 50 ticks/s, 1.0 / 2.2 ms | — | 201 ticks/s, 4.9 / 12.6 ms |
+| 3,596 → 5,995 | 10 ticks/s, 1.1 / 2.7 ms | — | 100 ticks/s, 9.0 / 20.9 ms | 201 ticks/s, 13.7 / 33.3 ms |
+| Large map, 5,200 → 6,000 | 10 ticks/s, 0.7 / 3.4 ms | — | 100 ticks/s, 7.1 / 12.4 ms | 200 ticks/s, 13.3 / 28.0 ms |
+
+The simulation always kept up with the requested speed (100 or 200 ticks per second). At 20× with about 6,000 animals, p95 frames of 28–33 ms mean roughly 30–35 fps in this container.
+
+### Minimap
+
+On a Giant map, scaling the 1 px map to the minimap with `imageSmoothingQuality = 'high'` costs a median **2 ms** (10 runs). It is done at most once per second; other frames copy the cached image. A step-down mip chain tried first cost 18 ms and was dropped.
+
+### Undo history (`npm run bench -- undo`, Giant map)
+
+40 strokes of 20 dabs each at brush radius 24, plus a meteor: 40 actions kept (the oldest dropped), 286,760 tiles ≈ 5.5 MB. Undoing all 40 took 74–81 ms and redoing all 40 55–62 ms, a few milliseconds per step. The cap of 400,000 tiles bounds history at about 8 MB.
+
+### Simulation benchmarks compared with Milestone 4
+
+| Scenario | Milestone 4 commit, same machine and session | Milestone 5 |
+|---|---|---|
+| Capped herbivores (5,163 animals) | 3.03–3.34 ms avg (median 3.05) | 3.21–3.43 ms (median 3.30) |
+| Long routes, 40 pairs on 1024×640 | 6.9–9.5 ms per route (Vite 8 toolchain) | 6.5–8.4 ms per route |
+
+- The capped scenario may be up to about 8% slower, within this container's run-to-run spread. The likely cost is the per-creature effect check.
+- Long-route times rose from 4.9 ms (measured earlier the same day) after the toolchain upgrade. The Milestone 4 code measured the same way is just as slow, so that is the toolchain or machine, not this milestone's code.
+- Large maps now generate differently, so expansions per route changed (1,426 → 1,540).
+
+## Earlier milestones
+
+### Milestone 4: simulation benchmarks (Node, medians of 3 runs)
 
 | Scenario | Before (Milestone 3) | After (Milestone 4) |
 |---|---|---|
@@ -35,7 +112,7 @@ Without weather, cost per animal is unchanged; the small differences are run-to-
   - The region graph only scans cell borders for links: about 19 ms medium, about 77 ms large.
   - Rebuilds happen at most every 60 ticks.
 
-## Browser measurements (headless Chromium, production build)
+### Milestone 4: browser measurements (headless Chromium, production build)
 
 | Measurement | Main thread | Web Worker |
 |---|---|---|
@@ -43,7 +120,7 @@ Without weather, cost per animal is unchanged; the small differences are run-to-
 | Navigation rebuilds during play with weather | about 37 ms (medium) / about 275 ms (large, in Chromium) per rebuild on the main thread | Medium: 6 of 6 rebuilds served by the worker. Large at 10×: 9 of 9 after scaling the delivery delay with map size (it was 5 of 9 with a fixed 20-tick delay, the rest falling back to the main thread). 0 errors. |
 | 5,476 animals, 4 weather systems, 10× speed | n/a | 60 fps, p95 frame 16.7 ms, worst 33 ms, 100 ticks/s |
 
-## Web Worker investigation
+## Web Worker investigation (Milestone 4, still current)
 
 **What the simulation depends on.**
 - The renderer reads the world's typed arrays and the creature arrays directly every frame, with no copying.
@@ -68,5 +145,7 @@ It's possible, but a large rewrite that would collide with the planned UI milest
 
 ## Known limits
 
+- **Chunk painting** runs on the main thread. A single 8 px chunk costs a few milliseconds in desktop Chromium, so a fast zoom or a large weather change can cost a few frames while chunks catch up. It could move to a worker with OffscreenCanvas if phone measurements show stalls.
+- **Giant maps** take about 3.5 s to generate here (in a worker, so the page stays responsive) and keep about 80 MB in the simulation plus 20 MB for the map image. Older iPhones may run out of memory; this is untested.
 - The creature tick itself (about 0.5 µs per animal per tick in Node) still runs on the main thread. At 10× with about 5,500 animals that's an *estimated* 25–30% of a 60 fps frame, derived from the Node per-tick cost rather than measured in the browser. Phones will be slower.
 - Navigation rebuilds still cost main-thread time when workers are unavailable (Node, or older browsers without module workers).

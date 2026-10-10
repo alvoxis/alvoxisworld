@@ -1,6 +1,6 @@
 # Roadmap
 
-Each milestone ends with something playable, plus tests for the new rules. Milestones 1–4 are done.
+Each milestone ends with something playable, plus tests for the new rules. Milestones 1–5 are done.
 
 ## ✅ Milestone 1: Living map foundation (done)
 Seeded world generation with biomes and climate. Two-level pixel-art renderer. Touch and mouse camera. Terrain, biome and life brushes. Seasons and time controls. Vegetation succession. Grazer/raptor food chain. IndexedDB save slots. Stats and history. CI and GitHub Pages deploy.
@@ -14,12 +14,10 @@ Priority-flood hydrology (rivers that drain to the sea or lakes, fordable by lan
 ## ✅ Milestone 4: Weather, god powers and performance (done)
 Moving rain and drought systems that change moisture and temperature, fill and dry lakes and rivers, flood low land and wither plants. God powers: Rain, Drought, Fire (spreading by fuel and dryness), Meteor (craters, crater lakes), Earthquake (rifts). Minimap. Change-based undo for terrain actions. Brushes keep rivers and lakes. World generation and navigation rebuilds in Web Workers, deterministically. Region-graph long routes, food map and herbivore migration. Save format v4. Measured in docs/PERFORMANCE.md.
 
-## Milestone 5: Coordinated UI pass (next)
-- Larger map and improved graphics, redesigned time controls.
-- Dedicated Creatures, Biomes, God Powers and Buffs/Debuffs tabs.
-- Redo, save export/import as a file (share worlds between devices).
+## ✅ Milestone 5: Expanded world, visuals and god-game UI (done)
+World presets up to Giant (2048×1280) and custom sizes, with continents, ranges and rivers scaled to the map. Lighter navigation memory. Painted map chunks at two resolutions: organic biome edges, slope shading, depth-shaded sea with foam, smooth rivers, tree and peak sprites, water glints, flame sprites, a passability overlay. Creatures / Biomes / God Powers / Buffs & Debuffs tabs. Flood, Drain, Extinguish. Eight buffs and debuffs with duration and strength (save format v5). Arrow time controls. Redo with conflict-aware undo. Save export/import as files. Measured in docs/PERFORMANCE.md.
 
-## Milestone 6: Richer nature
+## Milestone 6: Richer nature (next)
 - More fauna as data: sauropods, pterosaurs, crocodiles (amphibious habitat), small mammals. Herds, nesting and eggs, sexes, seasonal migration.
 - Seasonal snow cover that spreads and melts, erosion and rivers carving new courses.
 - Consider moving the whole simulation tick into a worker (see PERFORMANCE.md).
@@ -50,7 +48,8 @@ Moving rain and drought systems that change moisture and temperature, fill and d
 - Optional spherical or wrap-around planet projection.
 
 ## Technical backlog
-- Upgrade to Vite 6+ (fixes the dev-server audit advisory).
 - PWA manifest and service worker for offline play.
 - Performance budget tests: tick time on Large worlds with 5,000 creatures.
-- Animated water and a day/night tint in the renderer.
+- A day/night tint in the renderer.
+- Paint chunks in a worker (OffscreenCanvas) if phone measurements show chunk painting stalls.
+- Undo for creature actions and buffs.

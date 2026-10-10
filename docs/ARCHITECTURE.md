@@ -30,11 +30,12 @@ src/
   render/      Camera (pan/zoom maths), procedural pixel-art tileset & sprites, Renderer
   input/       Unified pointer (touch/mouse/pen), pinch, wheel and keyboard handling
   game/        Game controller (loop, strokes, actions), tool catalogue, undo history
-  save/        Serialisation (pure, tested) and IndexedDB slot storage
+  save/        Serialisation (pure, tested), save files (export/import, validation) and IndexedDB slot storage
   ui/          DOM HUD (toolbar, categories, top bar, menu: new world, weather, save/load, stats,
                history) and the minimap
   main.ts      Boot
-tests/         Vitest suites (world, brushes, simulation, save/load, camera)
+tests/         Vitest suites (world and sizes, brushes, simulation, creatures, effects, weather, hydrology,
+               pathfinding, workers, undo/redo, save files, time control, map painting, camera)
 ```
 
 Dependencies only point downward: `ui → game → (render, input, save) → sim → world → core`. `world`, `sim` and `save/serialize` never touch the DOM.
@@ -94,12 +95,33 @@ Rivers and lakes are ordinary terrain ids (`T.RIVER`, `T.LAKE`, both `isWater`),
 - **Fire** keeps a list of burning tiles plus `world.fire`. Each tick a burning tile can ignite its four neighbours (probability is fuel × dryness², higher in drought) and burns down. Burned land becomes soil. An exact counter enforces `MAX_BURNING` (3,000).
 - **Disasters** are plain functions that edit terrain through the world setters (so undo covers them) and hurt creatures through `Creatures.hurtInCircle` with their own causes of death.
 
-### Undo (`src/game/undo.ts`)
+### Undo and redo (`src/game/undo.ts`)
 
 - One action is one stroke (or one tap of a one-shot power).
 - `UndoHistory.record()` installs `world.recorder` only while the tool itself runs, so simulation changes between applications are never captured.
-- The first time a tile is touched, its 8 per-tile values are saved. Undo writes them back in reverse, bumps `passVersion` when movement classes change, and puts out fires on restored tiles.
-- History is bounded: 40 actions and 400,000 tiles.
+- The first time a tile is touched, its 8 per-tile values are saved ("before"); when the action ends, the same tiles' values are saved again ("after"). Actions that changed nothing are dropped.
+- **Conflict check.** Undo restores a tile only if its height, terrain, long-term climate, water memory and flood terrain still equal "after". Redo re-applies only if they still equal "before". A tile the simulation changed in between (lake dried, grass grazed, forest burned, flood drained) keeps its newer state, and the result reports how many tiles were skipped. Current temperature and moisture are passing weather: they never block, and are only changed where the action itself changed them.
+- Undo bumps `passVersion` when movement classes change (through `writeTile`) and puts out fires on reverted tiles. Redo does not re-ignite.
+- A new action clears the redo stack. History is bounded across both stacks: 40 actions and 400,000 tiles (about 20 bytes each, so at most about 8 MB).
+- Not undoable: creatures (spawn, remove, deaths), buffs and debuffs, weather systems (Rain, Drought), fire spreading, Extinguish, and every natural change.
+
+### Save files (`src/save/file.ts`)
+
+- The file is the same `SaveData` the IndexedDB slots store, as JSON `{ format: "alvoxis-world-save", fileVersion: 1, save }`. Typed arrays are written as `{ "$t": "Float32Array", "b64": … }`. The JSON is gzip-compressed with `CompressionStream` where available, and import accepts gzip or plain JSON.
+- Import never touches the running world until the file has passed every check: size limits, format tag, file and save versions, map size (≤ 4096 per side, ≤ 4M tiles), allowed array types, then a dry-run `deserializeInto` on a scratch simulation. Errors are `SaveFileError` with a message for the player.
+- The loader itself also checks creature array types and counters, the burning-tile list and the food map, so damaged slots fail cleanly too.
+
+### Buffs and debuffs (`src/sim/effects.ts`)
+
+- Eight effects in opposite pairs (Haste/Slowness, Regeneration/Poison, Well fed/Famished, Fertility/Sterility), stored per creature as remaining ticks and strength (1–3) plus a bit mask (`Creatures.effTicks`, `effPower`, `effMask`).
+- Applying an effect removes its opposite; reapplying keeps the longer duration and the new strength. Effects count down every tick and are saved (format v5).
+- Each effect hooks one rule: speed, needs, health per tick, breeding readiness or chance. Creatures without effects skip the code path (mask check).
+
+### World sizes (`src/world/generator.ts`)
+
+- Presets from Small (256×160) to Giant (2048×1280), plus custom sizes validated by `checkWorldSize` (multiples of 32, 128–4096 per side, at most 4M tiles).
+- `featureScale(w, h)` = √(area / medium area), clamped to 1–2.5. Continents, mountain ranges, hills and climate zones scale with it, so big maps have big continents rather than more noise. Lakes need deeper and larger basins there, and rivers carrying 14× the river threshold are widened to two tiles. Medium and smaller maps have scale 1 and generate exactly as before.
+- Per-tile memory was reduced for big maps: Pathfinder state is 9 bytes per tile (float cost, a 3-bit direction byte instead of a parent index, one stamp word for open/closed) and its heap, queue and path buffers grow on demand. Region labels are `Uint16Array` unless a class has 65,535 or more regions.
 
 ### Workers (`src/world/genjobs.ts`, `src/sim/navjobs.ts`)
 
@@ -148,10 +170,19 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
 
 ## Rendering
 
-- **1 px per tile** (`base` canvas, an `ImageData` updated per dirty chunk) is always drawn, scaled up with smoothing disabled.
-- **8 px per tile** detail chunks (256×256 canvases) are composed on the CPU from the procedural tileset when zoom ≥ 6 CSS px per tile. At most 8 are built per frame, the 1 px map shows underneath until they're ready, and an 80-chunk LRU with canvas pooling bounds memory on iOS.
+- **Three levels**, chosen by device pixels per tile `s`:
+  - `s < 3`: the **1 px per tile** `base` canvas (an `ImageData` updated per dirty chunk). Land is slope-shaded and the sea is coloured by depth. It is drawn with smoothing when shrunk (`s < 1`) and also feeds the minimap.
+  - `3 ≤ s < 9`: **4 px per tile** chunks (128×128 canvases, LRU of 160).
+  - `s ≥ 9`: **8 px per tile** chunks (256×256, LRU of 80).
+- Chunks are painted by **`TerrainPainter`** (`src/render/painter.ts`), a pure function over the world arrays, so it is deterministic and unit-tested without a DOM:
+  - Each pixel samples terrain at a slightly **warped** position (a tileable smooth offset field, ±0.34 tile), so biome borders and coasts are organic instead of square. Rivers are never warped, so their tiles stay exact; their staircase corners are cut and filled diagonally.
+  - Light comes from tile-corner slopes, interpolated bilinearly per pixel, plus a fine grain table and mirrored art variants so tiles don't repeat visibly.
+  - The sea's colour depends only on interpolated depth (no deep/shallow tile edge), with foam and wet shallows where land is near the warped sample.
+  - Trees, conifers, acacias, mountain peaks (big ones on ridge crests, snow-capped when high or cold) and reeds are **sprites** that may overlap neighbouring tiles. Chunks read a one-tile margin, and decoration checks its neighbours, so `World.markDirty` invalidates chunks within two tiles of a change.
+  - The optional overlay hatches mountains and snow, the terrain lowland animals cannot cross.
+- Dirty chunks are marked **stale**, not dropped: the old image stays on screen until it is repainted in place. Painting runs centre-first within a 6 ms budget per frame, with at least one chunk per frame.
+- Overlays: water glints (at most 500 per frame), pixel flame sprites up close, rain and drought systems, impact effects, creatures (culled to the viewport; dots far away, sprites close up) and the selection ring.
 - Chunk edges are snapped to whole device pixels to avoid seams.
-- Creatures are culled to the viewport. They're drawn as dots when zoomed out and as 8×8 sprites (mirrored by heading) when zoomed in.
 
 ## Input
 
@@ -159,6 +190,7 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
 
 ## Adding things
 
-- **New terrain:** add an id to `T` and a `TERRAIN` entry, handle it in `classify` and `Tileset.draw`, then (optionally) add `paintTool(id)` in `game/tools.ts`.
+- **New terrain:** add an id to `T` and a `TERRAIN` entry, handle it in `classify` and `Tileset.draw` (plus `drawGround` and `TerrainPainter.paintFeatures` if it has trees or other sprites), then (optionally) add `paintTool(id)` in `game/tools.ts`.
+- **New buff or debuff:** add an id and an `EFFECTS` entry (with its opposite) in `sim/effects.ts`, raise `EFFECT_COUNT`, and add its rule in `Creatures` (`tickEffects`, `speedOf`, needs or breeding). The Buffs & Debuffs tab lists it automatically.
 - **New species:** add a `SPECIES` entry (plus a constant for its id) and a pixel-art entry in `PIXEL_ART` (`render/tileset.ts`, one character per pixel, 1/8 tile per pixel), then a `spawnTool` line in `game/tools.ts`. Shared behaviour comes from the species data. Truly new movement (flying, amphibious) needs a new movement class in `pathfinding.ts` (`MOVE`, `passableId`, and a `WaterField` entry if it drinks).
 - **New tool:** add an object to `TOOLS`. The UI picks it up automatically.

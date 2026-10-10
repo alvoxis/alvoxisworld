@@ -9,6 +9,8 @@ import { FISH, GRAZER, HADROSAUR, MAX_CREATURES, RAPTOR, SPECIES, TYRANT } from 
 import { Simulation } from '../src/sim/simulation';
 import { generateWorld } from '../src/world/generator';
 import { T } from '../src/world/terrain';
+import { MAX_UNDO_ACTIONS, UndoHistory } from '../src/game/undo';
+import { applyHeightBrush } from '../src/world/brush';
 
 function timeTicks(sim: Simulation, ticks: number): { avg: number; p95: number } {
   const samples: number[] = [];
@@ -148,9 +150,41 @@ function planLong(sim: Simulation, sx: number, sy: number, gx: number, gy: numbe
   return sim.creatures.pathfinder.astar(sim.world, MOVE.LOWLAND, sx, sy, gx, gy, 6000, out, 0, 32) >= 0;
 }
 
+/**
+ * Undo history at its limits on a giant map: 40 strokes of the largest brush,
+ * then a meteor; reports memory held and undo/redo time.
+ */
+function undoHistory(): string {
+  const world = generateWorld(2048, 1280, 5);
+  const sim = new Simulation(world);
+  const u = new UndoHistory();
+  const r = new Rng(3);
+  for (let k = 0; k < MAX_UNDO_ACTIONS; k++) {
+    u.begin(world, 'Raise');
+    const x = 100 + r.next() * 1800;
+    const y = 100 + r.next() * 1000;
+    for (let a = 0; a < 20; a++) u.record(world, 'Raise', () => applyHeightBrush(world, { x: x + a * 6, y, radius: 24 }, 1));
+    u.end();
+  }
+  u.record(world, 'Meteor', () => sim.meteor(1024, 640, 20, 3));
+  const tiles = u.storedTiles;
+  let t = performance.now();
+  let undone = 0;
+  while (u.canUndo) {
+    u.undo(world);
+    undone++;
+  }
+  const undoMs = performance.now() - t;
+  t = performance.now();
+  while (u.canRedo) u.redo(world);
+  const redoMs = performance.now() - t;
+  return `undo (2048×1280): ${u.size} actions kept, ${tiles} tiles ≈ ${((tiles * 20) / 1048576).toFixed(1)} MB; undo all ${undone} in ${undoMs.toFixed(0)} ms, redo all in ${redoMs.toFixed(0)} ms`;
+}
+
 const which = ((globalThis as unknown as { process?: { argv: string[] } }).process?.argv[2]) ?? 'all';
 const t0 = performance.now();
 if (which === 'all' || which === 'mixed') for (const s of [4, 11]) for (const wx of [false, true]) console.log(mixed(s, wx));
 if (which === 'all' || which === 'capped') console.log(capped());
 if (which === 'all' || which === 'long') console.log(longRoutes());
+if (which === 'all' || which === 'undo') console.log(undoHistory());
 console.log(`total ${(performance.now() - t0) / 1000 | 0}s`);

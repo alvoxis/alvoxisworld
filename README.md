@@ -2,7 +2,7 @@
 
 An original, browser-based sandbox god game with top-down pixel-art graphics: shape a procedurally generated world, paint biomes, release life and watch the world evolve over seasons and years.
 
-> **Status: Milestone 4 (weather, god powers, minimap, undo, performance).** Read [What works](#what-works) and [Not implemented yet](#not-implemented-yet) before assuming a feature exists.
+> **Status: Milestone 5 (bigger worlds, new map graphics, tool tabs, buffs and debuffs, redo, save files).** Read [What works](#what-works) and [Not implemented yet](#not-implemented-yet) before assuming a feature exists.
 
 All code and art are original. Terrain tiles and creature sprites are drawn in code (`src/render/tileset.ts`), and there are no external image assets.
 
@@ -19,7 +19,8 @@ All code and art are original. Terrain tiles and creature sprites are drawn in c
 | Pan | Two-finger drag, or the ✋ Move tool | Right/middle drag, arrows / WASD |
 | Zoom | Pinch, or the ＋ / － buttons | Wheel, trackpad pinch, `+` / `-` |
 | Show the whole world | ⤢ button | ⤢ button |
-| Pause / speed | ⏸ 1× 3× 10× | Same buttons, `Space` toggles pause |
+| Pause / speed | ⏸ / ▶ and the ‹ › arrows (1×, 2×, 3×, 5×, 10×, 20×) | Same buttons, `Space` toggles pause |
+| Undo / redo | ↶ / ↷ | Ctrl/Cmd+Z; Ctrl/Cmd+Shift+Z or Ctrl+Y |
 
 ## Scripts
 
@@ -29,11 +30,12 @@ All code and art are original. Terrain tiles and creature sprites are drawn in c
 | `npm run build` | Type-check, then build the production site into `dist/` |
 | `npm run preview` | Serve the built `dist/` |
 | `npm run typecheck` | `tsc --noEmit` (strict) |
-| `npm test` | Vitest unit tests (generation, brushes, simulation, weather, fire, disasters, undo, workers, save/load, camera) |
+| `npm test` | Vitest unit tests (generation and sizes, brushes, simulation, effects, weather, fire, disasters, undo/redo, workers, save/load and save files, time controls, map painting, camera) |
 | `npm run check` | Typecheck, tests and build: what CI runs |
-| `npm run bench` | Repeatable simulation benchmarks (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
+| `npm run bench` | Repeatable simulation benchmarks: ecosystem, capped herbivores, long routes, undo history (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
+| `npm run bench:sizes` | Generation time, memory, tick cost and save size for every world size |
 
-You need Node.js 20 or newer (CI uses 22).
+You need Node.js 22.12 or newer (Vite 8 and Vitest 5; CI uses 22).
 
 ## What works
 
@@ -45,7 +47,9 @@ You need Node.js 20 or newer (CI uses 22).
   - Tiles that collect enough rain from upstream (more where it is wet) become rivers, kept 4-connected so fish can swim along them.
   - Rivers cover about 2% of land, lakes about 3–9%, depending on the seed. Same seed, same rivers.
   - **Rivers are fordable:** land animals wade across them, slowly. So rivers never cut the land into separate regions; a test checks this. Lakes are not fordable.
-- Three world sizes: 256×160, 512×320 (default) and 1024×640. New worlds are generated in a Web Worker, so the page stays responsive. If workers aren't available or fail, the same generator runs on the main thread with the same result.
+- **World sizes** (Milestone 5): Small 256×160, Medium 512×320 (default), Large 1024×640, Huge 1536×960, Giant 2048×1280, or a **custom** size (each side 128–4096 tiles in steps of 32, at most about 4.2 million tiles). The menu shows each size's estimated memory and warns about the big ones on phones.
+  - Maps larger than Medium scale their continents, mountain ranges and climate zones with the map, so they have bigger landmasses and oceans rather than more noise. Their main rivers are two tiles wide, and lakes need deeper basins so they don't crowd the land. Medium and smaller maps generate exactly as before.
+  - New worlds are generated in a Web Worker, so the page stays responsive. If workers aren't available or fail, the same generator runs on the main thread with the same result.
 
 **Weather** (Milestone 4). Weather is simulated, not just drawn. It runs on the simulation clock, so pausing stops it and speed controls speed it up.
 - **Moving systems.** Rain systems and droughts form by themselves according to season and severity, drift with a slowly turning wind, and fade. Their effects apply to a sample of the tiles under each system every 10 ticks, so cost doesn't grow with the size of the map. There are at most 4 automatic systems plus 6 from god powers.
@@ -63,33 +67,52 @@ You need Node.js 20 or newer (CI uses 22).
 - **Animals.** Drought makes animals thirstier and rain less thirsty. Shrinking water and floods change where they can walk and drink; routes adapt automatically.
 - **Settings** (menu → Weather): turn automatic weather on or off, and choose Mild, Normal or Extreme. The top bar shows active rain, drought and fire.
 
-**Rendering**
-- Zoomed out, the map draws one shaded pixel per tile, with hill shading and water depth.
-- Fire is drawn as flickering tiles, rain systems as tinted areas with falling streaks, and droughts as a warm haze. Meteor and earthquake impacts show a short flash or ripple; the terrain change itself is real.
-- **Minimap** (bottom right; 🗺 shows or hides it): the whole world, with the camera's view as a yellow frame. Tap or drag on it to move the camera. It reuses the map image the renderer already keeps and redraws at most 4× per second.
-- Zoomed in, 8×8 pixel-art tiles appear: trees, acacias, dunes, peaks, waves, flowing rivers, calm lakes and shoreline foam. They are built lazily in 32×32-tile chunks and cached (LRU).
-- Only changed chunks are redrawn. The display is crisp on Retina screens (device pixel ratio capped at 2).
-- In winter, cold regions are shown frosted.
+**Rendering** (redone in Milestone 5)
+- **Three zoom levels.** Far out, one shaded pixel per tile (slope shading, sea coloured by depth). In the middle range, map chunks painted at 4 px per tile. Up close, 8 px per tile pixel art.
+- **Natural-looking map.**
+  - Biome borders and coasts are drawn organically instead of as square tiles; the tiles themselves are unchanged.
+  - Hills and mountains get smooth slope lighting.
+  - The sea shades from turquoise shallows to deep blue, with foam along the shore.
+  - Rivers run as smooth channels with clear banks.
+  - Forests, jungles, tundra conifers, savanna acacias, swamp reeds and mountain peaks (big ones along ridge crests, snow-capped when high or cold) are drawn as sprites that overlap tile edges.
+- **Passable or not.** Water is always clearly water. Menu → View → *Mark terrain lowland animals cannot cross* hatches mountains and snow.
+- **Effects.** Glints drift across open water. Fires show animated flames up close and glowing tiles from afar. Rain systems show falling streaks and droughts a warm haze. Meteor and earthquake impacts show a flash or ripple, and the terrain change itself is real. In winter, cold land is frosted.
+- **Minimap** (bottom right; 🗺 shows or hides it): the whole world, scaled with high-quality smoothing, with the camera's view as a yellow frame. Tap or drag on it to move the camera.
+- Map chunks are painted lazily within a small per-frame time budget, centre of the screen first, and cached. After a change, the old image stays visible until it is repainted, so nothing flashes. The display is crisp on Retina screens (device pixel ratio capped at 2).
 
-**Tools** (every button performs a real action)
-- View: Move (one-finger pan) and Inspect (terrain, elevation or depth, temperature, moisture, nearby life).
-- Terrain: Raise, Lower and Smooth. They use a soft circular brush, and biomes are recalculated from height and climate, so raising the seabed makes islands with beaches.
-- Biomes: paint any of 15 terrain types, including Lake and River. Painting also sets height and climate so the result stays consistent: painted forest can spread, and painted water floods the land. Painted rivers and lakes are real water that animals drink from, wade through or swim in.
-- Life: Select, spawn Grazers, Hadrosaurs, Fish, Raptors and Tyrants, and Remove life.
-- **Powers** (Milestone 4). The brush size sets the radius, and **Power ●○○ / ●●○ / ●●●** sets the intensity where it applies.
+**Tools** (every button performs a real action). Four tabs along the bottom: **Creatures** (*Life* on phones), **Biomes**, **God Powers** (*Powers*) and **Buffs & Debuffs** (*Effects*). ✋ Move and 🔍 Inspect stay available on every tab, and so do the time controls in the top bar. Tapping a tool shows a one-line hint.
+- **Creatures:** Select, spawn any species (the list comes from the species data, so new species and races appear automatically), and Remove life.
+- **Biomes:** paint any of 15 terrain types, including Lake and River, with an adjustable brush. Painting also sets height and climate so the result stays consistent: painted forest can spread, and painted water floods the land. Painted rivers and lakes are real water that animals drink from, wade through or swim in. Navigation updates automatically.
+- **God Powers.** The brush size sets the radius, and **Power ●○○ / ●●○ / ●●●** sets the intensity where it applies.
+  - **Raise / Lower / Smooth:** soft circular terrain brushes. Biomes are recalculated from height and climate, so raising the seabed makes islands with beaches.
+  - **Flood:** turns dry land into temporary flood water, which drains back to the original terrain over time; rain keeps it, drought dries it. Mountains and snow don't flood.
+  - **Drain:** removes flood water, empties lakes to a bare lake bed and dries rivers to a sandy bed. Beds remember they were water, so rain can refill them. The sea is never drained.
   - **Rain / Drought:** place a rain system or a drought there (radius about 4× brush size, lasts about 100 game days).
   - **Fire:** sets burnable ground alight. Fire spreads by fuel (forest and savanna burn best; swamp barely; desert, rock, snow and water never) and by dryness. Rain puts it out, and water and bare ground are firebreaks. Burned land becomes bare soil, which regrows. Animals in flames take damage and flee nearby fire. At most 3,000 tiles burn at once.
+  - **Extinguish:** puts out every fire under the brush.
   - **Meteor:** digs a bowl crater with a raised rim and scorches the floor. A crater below sea level becomes a crater lake. Animals inside are killed and those nearby injured, and up to 60 fires start around the rim.
   - **Earthquake:** a fault line drops into a rift, the ground around it buckles (fading with distance), and animals are hurt by the shaking.
-- **Undo** (↶ beside the zoom buttons, or Ctrl/Cmd+Z): reverts the last terrain-changing action. One brush stroke is one step, and up to 40 steps are kept. Each step stores only the previous values of the tiles it changed, not a world snapshot. The button is disabled when there is nothing to undo.
-  - **Can be undone:** Raise, Lower and Smooth; painting any biome, lake or river; the terrain part of Meteor and Earthquake (fires on restored tiles are put out).
-  - **Cannot be undone:** creatures spawned, removed or killed (by disasters too); Rain and Drought (they change the weather over time); Fire (it spreads on its own); natural changes (grazing, weather, fire spreading). Undo also restores the tiles' climate and water memory. If weather or grazing has since changed a tile that undo restores, the undo wins for that tile.
-  - History is cleared when you create or load a world.
+- **Buffs & Debuffs** (Milestone 5). Tap creatures to apply an effect to every creature under the brush, or to the nearest one within 2 tiles. **Power** sets the strength (1–3) and **⏳ Short / Medium / Long** the duration (30, 120 or 360 days). A toast says how many creatures were affected.
+
+  | Buff | Effect | Opposite debuff | Effect |
+  |---|---|---|---|
+  | 💨 Haste | moves 25% faster per level | 🐌 Slowness | 20% slower per level |
+  | 💚 Regeneration | heals 0.4% of max health per tick per level | ☠️ Poison | loses 0.2% per tick per level; can kill (cause: poison) |
+  | 🍖 Well fed | hunger and thirst don't grow | 🦴 Famished | hunger and thirst grow 50% faster per level |
+  | 🥚 Fertility | shorter breeding cooldown, higher chance | 🚫 Sterility | cannot breed |
+
+  - **Rules:** applying an effect removes its opposite. Reapplying an active effect keeps the longer remaining time and takes the new strength. Effects count down with the simulation, pause with it, and are saved.
+  - **Removing:** the creature panel lists active effects with strength and days left; ✕ removes one. ✨ Cleanse removes all effects from creatures under the brush.
+- **Undo / redo** (↶ ↷ beside the zoom buttons; Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or Ctrl+Y). One brush stroke is one step. Up to 40 steps (and 400,000 changed tiles, about 8 MB) are kept, and a new action clears redo. Each step stores the before and after values of the tiles it changed, not a world snapshot.
+  - **Conflict-aware.** Undo only reverts tiles that still look exactly as the action left them. If the world has changed a tile since (rain refilled a lake, grazing turned grass to soil, fire burned a forest, a flood drained), that tile keeps its newer state and the toast says how many tiles were kept. Redo works the same way in reverse. So undo never restores stale terrain over later simulation changes.
+  - **Can be undone:** Raise, Lower, Smooth, Flood, Drain; painting any biome, lake or river; the terrain part of Meteor and Earthquake (fires on reverted tiles are put out).
+  - **Cannot be undone:** creatures spawned, removed or killed (by disasters too); buffs and debuffs; Rain and Drought (they change the weather over time); Fire and Extinguish; natural changes (grazing, weather, fire spreading). Redo does not relight fires.
+  - History is cleared when you create, load or import a world.
 - **Water rule for terrain brushes:** Raise, Lower and Smooth keep rivers, lakes and flood water while the tile stays at or above sea level. Lowering fresh water below sea level turns it into sea. Painting any other biome over water replaces it, including its bed memory. Undo can bring it back.
-- Brush size: 1–16 tiles.
+- Brush size: 1–24 tiles (1, 2, 4, 7, 11, 16, 24).
 
 **Simulation**
-- Fixed-timestep clock: day, season and year. Speeds are pause, 1×, 3× and 10×.
+- Fixed-timestep clock: day, season and year (10 ticks per second at 1×). **Time controls** (Milestone 5): ⏸/▶ pauses and resumes, keeping the chosen speed; ‹ and › step through 1×, 2×, 3×, 5×, 10× and 20×, and are disabled at the ends. The current speed shows next to them. They change the real simulation rate, measured at 100 ticks per second at 10× and 200 at 20×.
 - Vegetation uses random ticks, so cost grows with map area rather than with full scans. Bare soil regrows. Forest and jungle spread into neighbouring grass where the climate is wet enough, and grass colonises inland sand. Growth is fastest in spring and nearly stops in winter.
 - **Creatures** (Milestone 2): every animal has a unique ID, health, hunger, thirst, age, a life stage (juvenile, adult, elder) and a behaviour state. They are updated on simulation ticks, never per rendered frame.
 
@@ -108,19 +131,22 @@ You need Node.js 20 or newer (CI uses 22).
   - **Population limits.** Breeding stops when an area is crowded (carrying capacity per 8×8 tiles), when a species reaches its share of the 6,000-creature cap, or when the cap itself is reached.
   - **Movement and pathfinding.** Animals follow routes found by A* (and by breadth-first search for "nearest reachable food") on the tile grid. Routes respect each species' terrain rules and never cut corners. Routes are re-checked step by step, so editing the terrain under a route makes the animal re-plan instead of walking into water. Searches are capped per animal and per tick (a shared budget of 40,000 tile expansions); an animal that runs out of budget simply tries again on a later tick. The water-distance map is shared by all animals and rebuilt only after edits that change where animals can go (at most every 10 ticks). Movement is drawn smoothly between ticks.
   - **Determinism.** The same world, actions and seed always produce the same simulation, and this is covered by tests.
-- **Selecting a creature:** with Select (Life) or Inspect (View), tap a creature to see its live panel: species, ID, stage and age, what it's doing, and health, hunger and thirst bars. **Follow** keeps the camera on it; **Remove** deletes it. The panel shows how it died if it dies while selected.
+- **Selecting a creature:** with Select (Creatures tab) or 🔍 Inspect, tap a creature to see its live panel: species, ID, stage and age, what it's doing, health, hunger and thirst bars, and active buffs and debuffs. **Follow** keeps the camera on it; **Remove** deletes it. The panel shows how it died if it dies while selected.
 - History log: first appearance of each species, extinctions, world creation.
 - World statistics: land share, biome mix, and per species the number alive, born, and deaths by cause.
 
 **Persistence**
-- Three save slots in IndexedDB, with Save, Load and Delete. A save (format v4) holds everything needed for the world to continue exactly as it would have:
+- Three save slots in IndexedDB, with Save, Load and Delete. A save (format v5) holds everything needed for the world to continue exactly as it would have:
   - the full map, including rivers and lakes;
   - current and long-term climate, water memory (dried beds, floods), and burning tiles;
   - weather systems and settings;
-  - creatures (IDs, needs, health, states, current routes);
+  - creatures (IDs, needs, health, states, current routes, buffs and debuffs);
   - the navigation snapshot, clock, history and RNG state.
-- Older saves still load. v3 and v2 worlds take today's climate as long-term climate, and their lakes and rivers remember their beds. v2 animals simply plan new routes, and v1 animals get full health and new IDs.
-- New world from a seed (text or number) or a random seed, in any of the three sizes.
+- Older saves still load. v4 creatures start without effects. v3 and v2 worlds take today's climate as long-term climate, and their lakes and rivers remember their beds. v2 animals simply plan new routes, and v1 animals get full health and new IDs.
+- **Save files** (Milestone 5, menu → Save & load): **⬇ Export to file** downloads the current world as a `.alvoxis` file (gzip-compressed JSON, about 0.6 MB for a Medium world). **⬆ Import file** loads one on any device.
+  - Imports are checked completely before anything changes: file size, format, versions, map size, data types, and a trial load. A damaged, foreign or too-new file shows a clear error and leaves your world untouched.
+  - Files from older versions (v1–v4 inside) are upgraded on import, and the message says so.
+- New world from a seed (text or number) or a random seed, in any size.
 
 **Mobile**
 - Built for mobile Safari: safe-area insets, `100dvh`, no page zoom or bounce while interacting with the map, 40–64 px touch targets, and 16 px inputs so iOS doesn't auto-zoom.
@@ -134,10 +160,10 @@ These are planned (see [docs/ROADMAP.md](docs/ROADMAP.md)) but **do not exist in
 - Humanoid races (humans, elves, dwarves, orcs, demons, demigods), hybrids and genetics.
 - Settlements, buildings, civilizations, diplomacy, alliances and war.
 - Player currency and progression.
-- Further god powers (blessings, curses, plagues, lightning, volcanoes) and buffs/debuffs.
+- Further god powers (plagues, lightning, volcanoes) and buffs/debuffs beyond the eight above.
 - Erosion, new rivers carving their own course, snow cover that spreads and melts, and long-term climate change.
 - Technological eras (industrial, modern, space).
-- Redo, undo for creature actions, exporting and importing save files, sound, and an offline/PWA cache.
+- Undo for creature actions and buffs, sound, and an offline/PWA cache.
 
 Known limitations:
 - **Simulation thread.** The simulation tick itself still runs on the main thread; only world generation and navigation rebuilds use workers. Moving the whole tick is not done yet; see [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for why and what it would take.
@@ -145,13 +171,15 @@ Known limitations:
 - **Long routes.** Routes are planned in legs of about 24 tiles over a coarse region graph, so routes of any length work, but they're not perfectly shortest. Food is found within sight, or by migrating to the nearest reachable food within about 128 tiles.
 - **Weather and water levels** are tile-based: lakes shrink and grow from the shore, rivers dry and refill tile by tile, and floods cover low land beside rivers and lakes. There is no water volume or depth simulation.
 - Populations still rise and fall, and a species can die out; that's a valid outcome (see [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md)). Tyrants are a small population and the most likely to die out (in 1 of 3 test worlds after about 10 years). Herbivores with plenty of food reach their population caps.
-- **Performance on phones.** It was measured in headless desktop Chromium (about 5,500 animals with weather at 10×: 60 fps, 100 ticks/s) and in iPhone-sized emulation, not on a physical iPhone.
+- **Performance on phones.** Everything was measured in headless desktop Chromium with iPhone-sized emulation and in Node, **not on a physical iPhone**. Huge and Giant maps (about 55 and 100 MB) may be slow or run out of memory on phones. At 20× with about 6,000 animals, frames took up to about 30 ms here (about 30 fps). See [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **Map painting** runs on the main thread. After a fast zoom or a big weather change, chunks sharpen over a few frames (the coarser map shows meanwhile).
+- **Organic borders are visual.** Coasts and biome edges are drawn up to about a third of a tile away from the true tile border; the simulation still uses tiles. Turn on the passability overlay for a precise view of mountains and snow.
 - Saves stay in the browser where they were made. Clearing Safari website data deletes them.
-- `npm audit` reports a moderate advisory in the Vite 5 / esbuild **dev server**. It does not affect the built game; we'll upgrade to Vite 6+ in a later milestone.
+- `npm audit` reports **0 vulnerabilities** after the Milestone 5 toolchain upgrade (Vite 8.2.2, Vitest 5.0.1, vite-node 6.0.0, pinned). `.npmrc` sets `legacy-peer-deps` because npm 10 fails to resolve Vitest 5's unused optional browser peers.
 
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): technology choices, module layout, data model and performance strategy.
 - [docs/ROADMAP.md](docs/ROADMAP.md): milestones from this foundation to civilizations and the space age.
 - [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md): the population-stability investigation: method, measurements and the balance changes they justified.
-- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): benchmarks before and after Milestone 4, the Web Worker investigation, and how to reproduce the measurements.
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): Milestone 5 measurements (world sizes, memory, zoom levels, speeds, populations, minimap, undo), Milestone 4 benchmarks, the Web Worker investigation, and how to reproduce them.
