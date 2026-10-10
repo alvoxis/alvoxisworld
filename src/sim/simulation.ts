@@ -79,6 +79,7 @@ export class Simulation {
       this.groups.onDeath(id);
     };
     this.creatures.groupGoal = (id) => this.groups.goalOf(id);
+    this.creatures.workGoal = (id) => this.settlements.workGoal(id);
     this.settlements.onEmigrate = (ids, st, tick) => this.groups.createGroup(this.world, this.creatures, ids, tick, st.id, tick + EMIGRATE_BAN_TICKS);
     this.creatures.breedBlock = (id) => this.settlements.breedBlocked(id);
     this.settlements.onEvent = (text, code, p) => this.log(text, code, p);

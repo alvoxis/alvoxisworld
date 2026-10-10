@@ -6,6 +6,7 @@ import { MAX_FILE_BYTES } from '../save/file';
 import { SLOTS, listSlots, deleteSlot, type SlotId } from '../save/storage';
 import { dateFromTick } from '../sim/clock';
 import { CAUSE_NAMES, SPECIES, STATE_NAMES } from '../sim/creatures';
+import { jobOf } from '../sim/civ';
 import { TICKS_PER_DAY, TICKS_PER_YEAR } from '../sim/clock';
 import { checkWorldSize, WORLD_SIZES } from '../world/generator';
 import { TERRAIN, isWater } from '../world/terrain';
@@ -313,9 +314,45 @@ export class Hud {
     el.title = slow ? t('top.throttled') : '';
   }
 
+  /** Settlement events worth a notification (everything still goes to the history). */
+  private static readonly NOTIFY = new Set([
+    'settlement_built', 'settlement_destroyed_fire', 'settlement_destroyed_flood', 'settlement_famine', 'settlement_stage',
+    'settlement_exhausted', 'settlement_farm_stopped',
+  ]);
+  private seenEvent: object | null = null;
+  private lastEventToast = 0;
+  private eventsPrimed = false;
+
+  /** Shows new important settlement events as a toast: at most one every few seconds, the newest one, with a count of the rest. */
+  private notifyEvents(): void {
+    const h = this.game.sim.history;
+    const last = h[h.length - 1] ?? null;
+    if (!this.eventsPrimed) {
+      this.eventsPrimed = true; // events from before the page opened are not announced
+      this.seenEvent = last;
+      return;
+    }
+    if (last === this.seenEvent) return;
+    const from = this.seenEvent ? h.lastIndexOf(this.seenEvent as (typeof h)[number]) : -1;
+    if (from < 0 && this.seenEvent !== null && h.length) {
+      // A new or loaded world: start from its end, nothing old is announced.
+      this.seenEvent = last;
+      return;
+    }
+    const now = performance.now();
+    if (now - this.lastEventToast < 3000) return; // wait; the events stay pending until then
+    const fresh = h.slice(from + 1).filter((e) => e.code && Hud.NOTIFY.has(e.code));
+    this.seenEvent = last;
+    if (!fresh.length) return;
+    this.lastEventToast = now;
+    const more = fresh.length - 1;
+    this.toast(messageText(fresh[fresh.length - 1]) + (more > 0 ? ` (+${more})` : ''));
+  }
+
   private refreshStatus(): void {
     const sim = this.game.sim;
     const d = sim.date;
+    this.notifyEvents();
     this.syncSpeedLabel();
     $('date').textContent =
       t('status.date', { year: d.year, season: seasonName(d.seasonIndex), day: d.day }) + (sim.speed === 0 ? t('status.paused') : '');
@@ -421,6 +458,7 @@ export class Hud {
     });
     body.appendChild(homeBtn);
     const groupLine = line(t('info.group'));
+    const jobLine = line(t('info.job'));
     const meter = (label: string) => {
       const wrap = document.createElement('div');
       wrap.className = 'meter';
@@ -508,12 +546,25 @@ export class Hud {
       const years = Math.floor(now.ageTicks / TICKS_PER_YEAR);
       const days = Math.floor((now.ageTicks % TICKS_PER_YEAR) / TICKS_PER_DAY);
       stage.textContent = `${stageName(now.stage)}, ${years > 0 ? `${years} ${t('unit.year')} ` : ''}${days} ${t('unit.day')}`;
-      doing.textContent = stateName(now.state, STATE_NAMES);
+      const st = game.sim.settlements.settlementOf(now.id);
+      const job = st?.civ ? jobOf(st.civ, now.id) : null;
+      // What a resident is doing, from the real state and job.
+      doing.textContent =
+        job && now.state === 'Working'
+          ? td(`doing.work.${job.kind}`, { type: td(`build.${job.building.type}`).toLowerCase() })
+          : job && now.state === 'Traveling'
+            ? t('doing.to_work')
+            : st?.civ && now.state === 'Wandering'
+              ? t('doing.rest')
+              : stateName(now.state, STATE_NAMES);
+      jobLine.parentElement!.hidden = !st?.civ;
+      jobLine.textContent = job
+        ? t('info.job_value', { task: td(`job.${job.kind}`), place: td(`build.${job.building.type}`), x: job.building.x, y: job.building.y })
+        : t('info.job_none');
       health(now.health, now.maxHealth, 'high');
       hunger(now.hunger, 100, 'low');
       thirst?.(now.thirst, 100, 'low');
       renderEffects(now);
-      const st = game.sim.settlements.settlementOf(now.id);
       home.textContent = st ? st.name : t('info.home_none');
       homeBtn.hidden = !st;
       const grp = game.sim.groups.groupOfCreature(now.id);

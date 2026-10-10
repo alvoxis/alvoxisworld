@@ -1,5 +1,5 @@
 import { hash2 } from '../core/rng';
-import { Creatures, SPECIES } from '../sim/creatures';
+import { Creatures, SPECIES, STATE } from '../sim/creatures';
 import type { WeatherSystem } from '../sim/weather';
 import { SEA_LEVEL, T, TERRAIN, isWater } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
@@ -8,7 +8,7 @@ import { TerrainPainter, type PaintOptions } from './painter';
 import { SkyRenderer, type Bolt, type Dust, type VisualEffect } from './skyfx';
 import type { MeteorInFlight } from '../sim/sky';
 import { COLORS, type Settlement } from '../sim/settlements';
-import type { Building, BuildingType } from '../sim/civ';
+import type { Building, BuildingType, JobKind } from '../sim/civ';
 import { Tileset, TILE_PX, creatureSprite } from './tileset';
 
 /** Device pixels per tile at which 8-px-per-tile detail chunks are used. */
@@ -53,6 +53,8 @@ export interface Overlay {
   /** Settlements and whether to draw their borders (the player's choice). */
   settlements: readonly Settlement[];
   settlementBorders: boolean;
+  /** Kind of work of a settlement worker (drawn as a small tool over people at work). */
+  workKind?: (id: number) => JobKind | undefined;
   now: number;
 }
 
@@ -398,7 +400,7 @@ export class Renderer {
     if (overlay) this.drawFire(overlay, s, ox, oy);
     // Settlements (borders, buildings, centre marker) are drawn first so that people are never hidden behind them.
     if (overlay?.settlementBorders && overlay.settlements.length) this.drawSettlements(overlay.settlements, camera, s, ox, oy);
-    this.drawCreatures(camera, creatures, s, ox, oy, alpha);
+    this.drawCreatures(camera, creatures, s, ox, oy, alpha, overlay);
     if (overlay?.settlementBorders && overlay.settlements.length && s >= 3 * this.dpr) this.drawSettlementLabels(overlay.settlements, s, ox, oy);
     if (overlay) {
       this.skyfx.draw(ctx, camera, s, ox, oy, this.dpr, {
@@ -652,7 +654,9 @@ export class Renderer {
     }
   }
 
-  private drawCreatures(camera: Camera, cr: Creatures, s: number, ox: number, oy: number, alpha: number): void {
+  private drawCreatures(camera: Camera, cr: Creatures, s: number, ox: number, oy: number, alpha: number, overlay?: Overlay): void {
+    const workKind = overlay?.workKind;
+    const frame = overlay ? Math.floor(overlay.now / 300) & 1 : 0;
     const ctx = this.ctx;
     const minX = camera.x - 2;
     const minY = camera.y - 2;
@@ -678,6 +682,11 @@ export class Renderer {
         const w = Math.max(2, Math.round(sprite.width * scale));
         const h = Math.max(2, Math.round(sprite.height * scale));
         ctx.drawImage(sprite, px - (w >> 1), py - h + Math.round(h * 0.25), w, h);
+        if (workKind && cr.state[i] === STATE.WORK) {
+          const kind = workKind(cr.id[i]);
+          // A tiny tool beside the head, swinging in two frames (cheap: only people at work).
+          if (kind) drawWorkMark(ctx, kind, px + (w >> 1) - Math.round(w * 0.1), py - h + Math.round(h * 0.25) - frame * Math.max(1, Math.round(scale)), Math.max(1, Math.round(scale)), frame);
+        }
       } else {
         // Far out: a dot with a dark rim, large enough to see (people brighter and bigger).
         const d = Math.max(2, Math.round(this.dpr * (def.sentient ? 4 : def.size > 1.2 ? 3.5 : 3)));
@@ -712,6 +721,29 @@ export class Renderer {
     ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
     ctx.fillStyle = frac > 0.5 ? '#5fd35f' : frac > 0.25 ? '#f2c14e' : '#e0533a';
     ctx.fillRect(bx, by, bw * frac, bh);
+  }
+}
+
+const WORK_MARKS: Record<JobKind, readonly string[][]> = {
+  // h: metal, w: wooden handle, g: green shoot, s: stone. Two frames each.
+  wood: [['hh.', 'hw.', '..w'], ['.hh', '.wh', 'w..']],
+  stone: [['hhh', '.w.', '.w.'], ['h..', '.wh', '..w']],
+  build: [['hh.', 'hw.', '..w'], ['hh.', 'hw.', '.w.']],
+  farm: [['.g.', 'gwg', '.w.'], ['g.g', '.w.', '.w.']],
+};
+const MARK_COLORS: Record<string, string> = { h: '#d6dbe2', w: '#9a6a34', g: '#7bd65a', s: '#9aa3ad' };
+
+function drawWorkMark(ctx: CanvasRenderingContext2D, kind: JobKind, x: number, y: number, u: number, frame: number): void {
+  const rows = WORK_MARKS[kind][frame];
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(x - 1, y - 1, 3 * u + 2, 3 * u + 2);
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      const col = MARK_COLORS[rows[r][c]];
+      if (!col) continue;
+      ctx.fillStyle = col;
+      ctx.fillRect(x + c * u, y + r * u, u, u);
+    }
   }
 }
 

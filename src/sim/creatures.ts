@@ -154,9 +154,11 @@ export const STATE = {
   SEEK_MATE: 7,
   /** Walking to a place chosen by the creature's group (or to a settlement). */
   TRAVEL: 8,
+  /** At its workplace in a settlement (field, forest, quarry, building site). */
+  WORK: 9,
 } as const;
 export const STATE_NAMES = [
-  'Wandering', 'Looking for food', 'Eating', 'Looking for water', 'Drinking', 'Hunting', 'Fleeing', 'Looking for a mate', 'Traveling',
+  'Wandering', 'Looking for food', 'Eating', 'Looking for water', 'Drinking', 'Hunting', 'Fleeing', 'Looking for a mate', 'Traveling', 'Working',
 ];
 
 export const CAUSE = {
@@ -326,6 +328,8 @@ export class Creatures {
   breedBlock: ((id: number) => boolean) | null = null;
   /** The tile (index) a creature's group wants it to walk to, or -1. Asked when a creature has no pressing need. */
   groupGoal: ((id: number) => number) | null = null;
+  /** Workplace tile of a settlement worker (-1 = no job); it wins over the group goal. */
+  workGoal: ((id: number) => number) | null = null;
   /** Told when a creature dies or is removed (its id). */
   onDeath: ((id: number) => void) | null = null;
   /** Deaths since the last call to drainDeaths() (for UI/history). */
@@ -917,12 +921,21 @@ export class Creatures {
       }
     }
     // 5. Nothing pressing: follow the group's wish (a place to go to, or back to the others).
-    if (this.groupGoal) {
-      const goal = this.groupGoal(this.id[i]);
+    //    A settlement job comes first: walk to the workplace, then work there.
+    if (this.groupGoal || this.workGoal) {
+      const work = this.workGoal ? this.workGoal(this.id[i]) : -1;
+      const goal = work >= 0 ? work : this.groupGoal ? this.groupGoal(this.id[i]) : -1;
       if (goal >= 0) {
         const gx = goal % world.width;
         const gy = Math.floor(goal / world.width);
         if (Math.hypot(this.x[i] - gx - 0.5, this.y[i] - gy - 0.5) <= ARRIVED) {
+          if (work >= 0) {
+            if (s !== STATE.WORK) {
+              this.state[i] = STATE.WORK;
+              this.clearPath(i);
+            }
+            return;
+          }
           if (s === STATE.TRAVEL) {
             this.state[i] = STATE.WANDER;
             this.clearPath(i);
@@ -1023,6 +1036,8 @@ export class Creatures {
         }
         break;
       }
+      case STATE.WORK:
+        break; // stays at the workplace; the settlement counts the work
       case STATE.SEEK_MATE:
         // With no route left the pair is together (courtship): wait for the breeding roll.
         if (this.pathPos[i] >= this.pathLen[i]) {

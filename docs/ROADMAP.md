@@ -38,6 +38,9 @@ Human settlements, food/wood/stone, five buildings, housing-limited growth with 
 ## ✅ Autonomous Living World 0.14 (done)
 Creatures that are easy to see and pick; groups; people that find homes, found settlements, join, leave and move on by themselves; species civilization profiles. Save format 11. Next logical step: people that work (jobs, walking to buildings), roads, a second people with its own profile, tuning of the site scoring on real worlds.
 
+## ✅ Living Settlements 0.15 (done)
+Residents take jobs (construction, field work, woodcutting, quarrying), walk to the buildings and produce there; production is tied to workers without double counting; visible work, worker and problem lines in the cards, settlement event toasts. Save format still 11. Next logical step: hauling and roads, more buildings and resources, tuning the places per building on real worlds.
+
 ## Milestone 6: Richer nature (next)
 - More fauna as data: sauropods, pterosaurs, crocodiles (amphibious habitat), small mammals. Herds, nesting and eggs, sexes, seasonal migration.
 - Snow cover beyond tundra, erosion and rivers carving new courses.

@@ -7,11 +7,17 @@
  * (farm soil, forest, hills, people). No random numbers are used.
  *
  * Time unit: one *step* is STEP_TICKS ticks (2 s at 1×). A game year is 24 steps.
+ *
+ * Work (0.15): farms, lumber camps, quarries and building sites produce only through workers. Every step
+ * adult residents get jobs (`assignJobs`); a worker walks to the building with the creatures' own
+ * pathfinding (`Creatures.workGoal`) and, standing there in the WORK state, adds a share of the building's
+ * yield (or of the construction work). Foraging and knowledge stay settlement-wide: they come from all
+ * people and their land and are not tied to a building.
  */
 import { T, isWater } from '../world/terrain';
 import type { World } from '../world/world';
 import type { Creatures } from './creatures';
-import { SPECIES } from './creatures';
+import { SPECIES, STATE } from './creatures';
 import { passable } from './pathfinding';
 import type { Settlement } from './settlements';
 
@@ -80,6 +86,36 @@ export const FARM_TERRAIN: readonly number[] = [T.GRASS, T.SAVANNA, T.SOIL];
 export const FOREST_TERRAIN: readonly number[] = [T.FOREST, T.JUNGLE];
 export const STONE_TERRAIN: readonly number[] = [T.HILLS, T.MOUNTAIN];
 
+/** Workers a finished building can use; the full yield needs all of them. */
+export const WORK_SLOTS: Readonly<Record<BuildingType, number>> = { house: 0, storehouse: 0, farm: 2, lumber: 2, quarry: 2 };
+/** Builders a site can use, and construction steps done per builder per step. */
+export const BUILDERS = 3;
+export const BUILD_PER_WORKER = 0.5;
+/** A worker counts as at work within this many tiles of the building. */
+export const WORK_RANGE = 3;
+/** A worker that gets no closer for this many steps gives the job up, and does not take that building again for SKIP_TICKS. */
+export const STUCK_STEPS = 15;
+export const SKIP_TICKS = 600;
+/** Least time in a job before a worker may be moved to a more urgent one. */
+export const MIN_JOB_TICKS = 200;
+/** A farm that produced nothing for this many steps has stopped. */
+export const FARM_IDLE_STEPS = 15;
+/** An exhausted lumber camp looks for regrown forest every this many steps. */
+export const RECHECK_STEPS = 10;
+
+export type JobKind = 'build' | 'farm' | 'wood' | 'stone';
+export interface Job {
+  /** Creature id of the worker. */
+  id: number;
+  /** Building id. */
+  b: number;
+  /** Tick the job was given. */
+  since: number;
+  /** Closest distance to the workplace so far, and steps without getting closer. */
+  best: number;
+  stuck: number;
+}
+
 /** Stage requirements: people, finished buildings, and what must exist. */
 export const STAGE_REQ = {
   village: { people: 12, buildings: 3 },
@@ -101,6 +137,13 @@ export interface Building {
   /** Quarry: stone left. Lumber camp: wood still on the tree being cut. */
   reserve: number;
   acc: number;
+  /** Producing (farm), and steps without work. */
+  active: boolean;
+  idle: number;
+  /** Nothing left to take (no forest in reach, quarry empty). */
+  empty: boolean;
+  /** Workers that were at work here in the last step. */
+  here: number;
 }
 
 export interface Civ {
@@ -117,12 +160,17 @@ export interface Civ {
   famine: boolean;
   /** Rates of the last step (derived; shown as per-year numbers). */
   rate: { food: number; foodUse: number; wood: number; stone: number; knowledge: number };
+  /** Jobs of the residents (one per worker). */
+  jobs: Job[];
+  /** Workers that could not reach a building: [creature id, building id, tick until]. */
+  skip: Array<[number, number, number]>;
 }
 
 export function newCiv(): Civ {
   return {
     food: START_KIT.food, wood: START_KIT.wood, stone: START_KIT.stone, knowledge: 0, stage: 'camp', buildings: [], techs: [],
     research: null, nextBuildingId: 1, famine: false, rate: { food: 0, foodUse: 0, wood: 0, stone: 0, knowledge: 0 },
+    jobs: [], skip: [],
   };
 }
 
@@ -225,7 +273,7 @@ export function startBuilding(world: World, s: Settlement, owner: Uint16Array | 
   const steps = stepsOf(c, type);
   const b: Building = {
     id: c.nextBuildingId++, type, x: i % world.width, y: Math.floor(i / world.width), started: tick, progress: 0, needed: steps,
-    done: false, reserve: 0, acc: 0,
+    done: false, reserve: 0, acc: 0, active: false, idle: 0, empty: false, here: 0,
   };
   c.buildings.push(b);
   return b;
@@ -276,20 +324,31 @@ export function civStep(host: CivHost, s: Settlement): number {
     }
   }
 
-  // 2. Construction: needs at least two people to work.
-  if (pop >= 2) {
-    for (const b of c.buildings) {
-      if (b.done) continue;
-      b.progress++;
-      if (b.progress >= b.needed) {
-        b.done = true;
-        if (b.type === 'quarry') b.reserve = Math.min(STONE_RESERVE_CAP, countNear(world, b.x, b.y, QUARRY_RADIUS, STONE_TERRAIN) * STONE_PER_TILE);
-        host.event(s, `${s.name}: a ${b.type} was built.`, 'settlement_built', { name: s.name, type: b.type });
-      }
+  // 2. Jobs: who works where. Then each building works with the workers standing at it.
+  const adults: number[] = [];
+  for (const id of s.members) {
+    const i = creatures.indexOf(id);
+    if (i >= 0 && creatures.stage(i) !== 'Juvenile') adults.push(id);
+  }
+  assignJobs(host, s, adults);
+  const here = workersHere(c, creatures);
+  for (const b of c.buildings) b.here = here.get(b.id) ?? 0;
+
+  // 3. Construction: builders at the site do the work.
+  for (const b of c.buildings) {
+    if (b.done) continue;
+    const n = here.get(b.id) ?? 0;
+    if (!n) continue;
+    b.progress = Math.min(b.needed, b.progress + BUILD_PER_WORKER * n);
+    if (b.progress >= b.needed - 1e-9) {
+      b.progress = b.needed;
+      b.done = true;
+      if (b.type === 'quarry') b.reserve = Math.min(STONE_RESERVE_CAP, countNear(world, b.x, b.y, QUARRY_RADIUS, STONE_TERRAIN) * STONE_PER_TILE);
+      host.event(s, `${s.name}: a ${b.type} was built.`, 'settlement_built', { name: s.name, type: b.type });
     }
   }
 
-  // 3. Production.
+  // 4. Production.
   const cap = storage(c);
   const harvest = hasTech(c, 'harvesting') ? 1.5 : 1;
   const farming = hasTech(c, 'farming') ? 1.5 : 1;
@@ -300,17 +359,36 @@ export function civStep(host: CivHost, s: Settlement): number {
   for (const i of s.tiles) if (food.includes(world.terrain[i])) edible++;
   rate.food += Math.min(FORAGE_PER_PERSON * pop, FORAGE_PER_TILE * edible);
   for (const b of done(c, 'farm')) {
-    const i = b.y * W + b.x;
-    if (!FARM_TERRAIN.includes(world.terrain[i])) continue; // the field turned to desert, forest or similar: it yields nothing
-    const fertility = Math.max(0.4, Math.min(1.4, 0.4 + world.moisture[i] / 200));
-    rate.food += FARM_YIELD * farming * fertility;
+    const out = farmOutput(world, b, farming);
+    if (out > 0) {
+      rate.food += out;
+      b.idle = 0;
+      if (!b.active) {
+        b.active = true;
+        host.event(s, `${s.name}: a farm started working.`, 'settlement_farm_started', { name: s.name });
+      }
+    } else if (b.active && ++b.idle >= FARM_IDLE_STEPS) {
+      b.active = false;
+      host.event(s, `${s.name}: a farm stopped working.`, 'settlement_farm_stopped', { name: s.name });
+    }
   }
+  const step = Math.floor(host.tick / STEP);
   for (const b of done(c, 'lumber')) {
+    if (b.empty) {
+      if (step % RECHECK_STEPS === 0 && nearestTree(world, b) >= 0) b.empty = false;
+      continue;
+    }
+    if (c.wood >= cap) continue; // the store is full: no trees are cut for nothing
     // `acc` is the wood still on the tree being cut; a new tree is felled (the forest thins) when it is used up.
-    let left = LUMBER_YIELD * harvest;
+    let left = LUMBER_YIELD * harvest * Math.min(1, (here.get(b.id) ?? 0) / WORK_SLOTS.lumber);
     while (left > 1e-9) {
       if (b.acc <= 1e-9) {
-        if (!fellTree(world, b)) break; // no forest within reach: nothing to cut
+        if (!fellTree(world, b)) {
+          // No forest within reach: nothing to cut.
+          b.empty = true;
+          host.event(s, `${s.name}: the forest near a lumber camp is gone.`, 'settlement_exhausted', { name: s.name, type: b.type });
+          break;
+        }
         b.acc = WOOD_PER_TREE;
       }
       const take = Math.min(left, b.acc);
@@ -320,18 +398,19 @@ export function civStep(host: CivHost, s: Settlement): number {
     }
   }
   for (const b of done(c, 'quarry')) {
-    const take = Math.min(b.reserve, QUARRY_YIELD * harvest);
+    if (b.empty || c.stone >= cap) continue;
+    const take = Math.min(b.reserve, QUARRY_YIELD * harvest * Math.min(1, (here.get(b.id) ?? 0) / WORK_SLOTS.quarry));
     b.reserve -= take;
     rate.stone += take;
+    if (b.reserve <= 1e-9) {
+      b.reserve = 0;
+      b.empty = true;
+      host.event(s, `${s.name}: a quarry ran out of stone.`, 'settlement_exhausted', { name: s.name, type: b.type });
+    }
   }
-  let adults = 0;
-  for (const id of s.members) {
-    const i = creatures.indexOf(id);
-    if (i >= 0 && creatures.stage(i) !== 'Juvenile') adults++;
-  }
-  rate.knowledge = KNOWLEDGE_PER_ADULT * adults;
+  rate.knowledge = KNOWLEDGE_PER_ADULT * adults.length;
 
-  // 4. Meals from the stock: hungry people eat, which really lowers their hunger.
+  // 5. Meals from the stock: hungry people eat, which really lowers their hunger.
   let used = 0;
   for (const id of s.members) {
     if (c.food + rate.food - used < 1) break;
@@ -354,7 +433,7 @@ export function civStep(host: CivHost, s: Settlement): number {
     }
   } else if (c.food >= 5) c.famine = false;
 
-  // 5. Research.
+  // 6. Research.
   if (c.research && ++c.research.steps >= TECHS[c.research.id].steps) {
     const id = c.research.id;
     c.techs.push(id);
@@ -362,17 +441,17 @@ export function civStep(host: CivHost, s: Settlement): number {
     host.event(s, `${s.name} learned ${id}.`, 'settlement_tech', { name: s.name, tech: id });
   }
 
-  // 6. Stage.
+  // 7. Stage.
   const stage = stageFor(s, c);
   if (stage !== c.stage) {
     c.stage = stage;
     host.event(s, `${s.name} became a ${stage}.`, 'settlement_stage', { name: s.name, stage });
   }
 
-  // 7. Settlements that run themselves.
+  // 8. Settlements that run themselves.
   if (host.auto) autoManage(host, s);
 
-  // 8. Pressure to leave: famine, fire on the territory, full housing with no way to build, too little land to eat from.
+  // 9. Pressure to leave: famine, fire on the territory, full housing with no way to build, too little land to eat from.
   let pressure = 0;
   if (c.famine) pressure += 2;
   let burning = false;
@@ -386,6 +465,138 @@ export function civStep(host: CivHost, s: Settlement): number {
   if (pop >= housing(c) && c.wood < 10 && done(c, 'lumber').length === 0) pressure += 1;
   if (edible < 2 * pop) pressure += 1;
   return pressure;
+}
+
+/** Food a farm gives in one step with the workers now at it (a field that turned to desert, forest or similar yields nothing). */
+export function farmOutput(world: World, b: Building, farming: number): number {
+  const i = b.y * world.width + b.x;
+  if (!b.here || !FARM_TERRAIN.includes(world.terrain[i])) return 0;
+  const fertility = Math.max(0.4, Math.min(1.4, 0.4 + world.moisture[i] / 200));
+  return FARM_YIELD * farming * fertility * Math.min(1, b.here / WORK_SLOTS.farm);
+}
+
+const STEP = 20; // settlement step in ticks (STEP_TICKS in settlements.ts)
+
+/** Kind of work a building gives (null: it needs no workers now). */
+export function jobKind(b: Building): JobKind | null {
+  if (!b.done) return 'build';
+  if (b.empty) return null;
+  return b.type === 'farm' ? 'farm' : b.type === 'lumber' ? 'wood' : b.type === 'quarry' ? 'stone' : null;
+}
+
+/** Workers a building wants now. */
+export function slotsOf(b: Building): number {
+  if (!b.done) return BUILDERS;
+  return jobKind(b) ? WORK_SLOTS[b.type] : 0;
+}
+
+/** Workers standing at their workplace, per building id. */
+export function workersHere(c: Civ, creatures: Creatures): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const j of c.jobs) {
+    const i = creatures.indexOf(j.id);
+    if (i < 0 || creatures.state[i] !== STATE.WORK) continue;
+    const b = c.buildings.find((x) => x.id === j.b);
+    if (b && Math.hypot(creatures.x[i] - b.x - 0.5, creatures.y[i] - b.y - 0.5) <= WORK_RANGE) out.set(b.id, (out.get(b.id) ?? 0) + 1);
+  }
+  return out;
+}
+
+/** The job of a resident, if any. */
+export function jobOf(c: Civ, id: number): { job: Job; building: Building; kind: JobKind } | null {
+  const job = c.jobs.find((j) => j.id === id);
+  const building = job && c.buildings.find((b) => b.id === job.b);
+  const kind = building && jobKind(building);
+  return job && building && kind ? { job, building, kind } : null;
+}
+
+/**
+ * Gives adult residents jobs. Jobs are kept while they make sense (the worker is a living adult resident,
+ * the building stands and still needs work, and the worker is not stuck), so nobody changes task all
+ * the time. Free adults take the nearest reachable building with a free place, most urgent first; when
+ * nobody is free, at most one worker per step moves from the least to the most urgent work.
+ */
+export function assignJobs(host: CivHost, s: Settlement, adults: number[]): void {
+  const { world, creatures, tick } = host;
+  const c = s.civ!;
+  const sp = s.species;
+  const adultSet = new Set(adults);
+  const byId = new Map(c.buildings.map((b) => [b.id, b] as const));
+  c.skip = c.skip.filter((k) => k[2] > tick && adultSet.has(k[0]) && byId.has(k[1]));
+  const skipped = (id: number, b: number) => c.skip.some((k) => k[0] === id && k[1] === b);
+  const count = new Map<number, number>();
+  const kept: Job[] = [];
+  for (const j of c.jobs) {
+    const b = byId.get(j.b);
+    if (!b || !adultSet.has(j.id) || kept.some((k) => k.id === j.id) || (count.get(b.id) ?? 0) >= slotsOf(b)) continue;
+    const i = creatures.indexOf(j.id);
+    const d = Math.hypot(creatures.x[i] - b.x - 0.5, creatures.y[i] - b.y - 0.5);
+    const st = creatures.state[i];
+    if (d <= WORK_RANGE) {
+      j.best = d;
+      j.stuck = 0;
+    } else if (d < j.best - 0.5) {
+      j.best = d;
+      j.stuck = 0;
+    } else if (st === STATE.TRAVEL || st === STATE.WANDER || st === STATE.WORK) {
+      // Only time spent trying to get there counts (not eating, drinking or running away).
+      if (++j.stuck >= STUCK_STEPS) {
+        if (c.skip.length < 64) c.skip.push([j.id, b.id, tick + SKIP_TICKS]);
+        continue;
+      }
+    }
+    kept.push(j);
+    count.set(b.id, (count.get(b.id) ?? 0) + 1);
+  }
+  c.jobs = kept;
+  const working = new Set(kept.map((j) => j.id));
+  const free = adults.filter((id) => !working.has(id));
+  const foodShort = c.food < Math.max(10, s.members.length);
+  const rank = (b: Building) => (!b.done ? (foodShort ? 1 : 0) : b.type === 'farm' ? (foodShort ? 0 : 1) : b.type === 'lumber' ? 2 : 3);
+  const order = c.buildings.filter((b) => slotsOf(b) > 0).sort((a, b) => rank(a) - rank(b) || a.id - b.id);
+  const give = (id: number, b: Building) => {
+    const i = creatures.indexOf(id);
+    c.jobs.push({ id, b: b.id, since: tick, best: Math.hypot(creatures.x[i] - b.x - 0.5, creatures.y[i] - b.y - 0.5), stuck: 0 });
+    count.set(b.id, (count.get(b.id) ?? 0) + 1);
+  };
+  const canReach = (id: number, b: Building) => {
+    const i = creatures.indexOf(id);
+    return !skipped(id, b.id) && creatures.reachable(world, sp, Math.floor(creatures.x[i]), Math.floor(creatures.y[i]), b.x, b.y);
+  };
+  let moved = false;
+  for (const b of order) {
+    while ((count.get(b.id) ?? 0) < slotsOf(b)) {
+      // Nearest free adult that can get there.
+      let pick = -1;
+      let pd = Infinity;
+      for (let k = 0; k < free.length; k++) {
+        const i = creatures.indexOf(free[k]);
+        const d = Math.hypot(creatures.x[i] - b.x - 0.5, creatures.y[i] - b.y - 0.5);
+        if (d < pd && canReach(free[k], b)) {
+          pd = d;
+          pick = k;
+        }
+      }
+      if (pick >= 0) {
+        give(free[pick], b);
+        free.splice(pick, 1);
+        continue;
+      }
+      // Nobody free: take one settled worker from the least urgent work (once per step).
+      if (moved) break;
+      let from: Job | null = null;
+      for (const j of c.jobs) {
+        const jb = byId.get(j.b)!;
+        if (rank(jb) <= rank(b) || tick - j.since < MIN_JOB_TICKS || !canReach(j.id, b)) continue;
+        if (!from || rank(jb) > rank(byId.get(from.b)!) || (rank(jb) === rank(byId.get(from.b)!) && j.id < from.id)) from = j;
+      }
+      if (!from) break;
+      c.jobs.splice(c.jobs.indexOf(from), 1);
+      count.set(from.b, (count.get(from.b) ?? 1) - 1);
+      give(from.id, b);
+      moved = true;
+    }
+  }
 }
 
 function nearestTree(world: World, b: Building): number {
@@ -496,11 +707,25 @@ export function importCiv(raw: unknown, world: World): Civ {
     const needed = Math.floor(num(b.needed, 1, 100, BUILDINGS[b.type as BuildingType].steps));
     const isDone = b.done === true;
     c.buildings.push({
-      id, type: b.type, x, y, started: num(b.started, 0, 1e12, 0), progress: Math.floor(num(b.progress, 0, needed, isDone ? needed : 0)), needed,
+      id, type: b.type, x, y, started: num(b.started, 0, 1e12, 0), progress: isDone ? needed : num(b.progress, 0, needed, 0), needed,
       done: isDone, reserve: num(b.reserve, 0, STONE_RESERVE_CAP, 0), acc: num(b.acc, 0, WOOD_PER_TREE, 0),
+      // Version 12 fields; older saves: a farm counts as working, nothing is exhausted.
+      active: typeof b.active === 'boolean' ? b.active : isDone && b.type === 'farm', idle: Math.floor(num(b.idle, 0, 1e6, 0)), empty: b.empty === true,
+      here: Math.floor(num(b.here, 0, BUILDERS, 0)),
     });
   }
   c.nextBuildingId = Math.max(Math.floor(num(r.nextBuildingId, 1, 1e9, 1)), maxId + 1);
+  // Jobs (version 12): one per worker, at a standing building; older saves start without jobs and get them on the next step.
+  const ids = new Set(c.buildings.map((b) => b.id));
+  const workers = new Set<number>();
+  for (const j of (Array.isArray(r.jobs) ? r.jobs : []).slice(0, 2000)) {
+    if (!j || typeof j !== 'object' || typeof j.id !== 'number' || !Number.isInteger(j.id) || workers.has(j.id) || !ids.has(j.b)) continue;
+    workers.add(j.id);
+    c.jobs.push({ id: j.id, b: j.b, since: num(j.since, 0, 1e12, 0), best: num(j.best, 0, 1e6, 0), stuck: Math.floor(num(j.stuck, 0, STUCK_STEPS, 0)) });
+  }
+  for (const k of (Array.isArray(r.skip) ? r.skip : []).slice(0, 64)) {
+    if (Array.isArray(k) && k.length === 3 && k.every((v) => typeof v === 'number' && Number.isFinite(v)) && ids.has(k[1])) c.skip.push([k[0], k[1], k[2]]);
+  }
   const rate = (r.rate ?? {}) as Record<string, unknown>;
   c.rate = {
     food: num(rate.food, 0, 1e6, 0), foodUse: num(rate.foodUse, 0, 1e6, 0), wood: num(rate.wood, 0, 1e6, 0),

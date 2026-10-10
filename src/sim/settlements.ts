@@ -19,7 +19,7 @@ import type { World } from '../world/world';
 import { SPECIES, type Creatures } from './creatures';
 import { MOVE, passable } from './pathfinding';
 import {
-  RADIUS_BONUS, civStep, exportCiv, housing, importCiv, newCiv, startBuilding, startResearch,
+  RADIUS_BONUS, civStep, exportCiv, housing, importCiv, jobKind, newCiv, startBuilding, startResearch, type JobKind,
   type Building, type BuildFail, type BuildingType, type Civ, type CivHost, type CivSave, type TechId,
 } from './civ';
 
@@ -137,6 +137,9 @@ export class Settlements {
   private width = 0;
   private height = 0;
   private memberOf = new Map<number, number>();
+  /** Workplace tile of every worker (creature id → tile), rebuilt from the jobs each step. */
+  private workTile = new Map<number, number>();
+  private workKindOf = new Map<number, JobKind>();
   private terrainVersion = -1;
   private dirty = false;
   /** Settlements run themselves (build, research) unless the player turns it off. */
@@ -165,6 +168,16 @@ export class Settlements {
     return sid ? this.get(sid) : undefined;
   }
 
+  /** Tile a worker should be at (-1 = no job). Used by the creatures every few ticks, so it is a map lookup. */
+  workGoal(id: number): number {
+    return this.workTile.get(id) ?? -1;
+  }
+
+  /** Kind of work of a worker (for drawing). */
+  workKind(id: number): JobKind | undefined {
+    return this.workKindOf.get(id);
+  }
+
   /** Population: members that are alive (members are pruned every step, so this is the live count). */
   population(s: Settlement): number {
     return s.members.length;
@@ -176,6 +189,8 @@ export class Settlements {
     this.owner = null;
     this.bans.clear();
     this.memberOf.clear();
+    this.workTile.clear();
+    this.workKindOf.clear();
     this.terrainVersion = -1;
     this.dirty = false;
     this.version++;
@@ -268,6 +283,7 @@ export class Settlements {
 
   /** A creature died or was removed: it leaves its settlement at once, so the population is always exact. */
   onDeath(id: number): void {
+    this.workTile.delete(id);
     const sid = this.memberOf.get(id);
     if (!sid) return;
     this.memberOf.delete(id);
@@ -391,6 +407,7 @@ export class Settlements {
         s.sampleTick = tick;
       } else if (pop < MIN_VIABLE) s.status = 'fading';
     }
+    this.rebuildWork(world);
     // The land can change under a settlement (floods, craters, snow): territories follow.
     if (world.passVersion !== this.terrainVersion) this.dirty = true;
     if (this.dirty) this.recomputeTerritory(world);
@@ -406,7 +423,9 @@ export class Settlements {
     const n = Math.min(s.members.length - 4, Math.max(MIN_EMIGRANTS, Math.ceil(s.members.length * 0.35)));
     if (n < MIN_EMIGRANTS) return;
     const ids = this.pickLeavers(s, byDist, n);
+    if (s.civ) s.civ.jobs = s.civ.jobs.filter((j) => !ids.includes(j.id));
     for (const id of ids) {
+      this.workTile.delete(id);
       s.members.splice(s.members.indexOf(id), 1);
       this.memberOf.delete(id);
       this.bans.set(id, { sid: s.id, until: tick + EMIGRATE_BAN_TICKS });
@@ -420,6 +439,21 @@ export class Settlements {
 
   private creaturesRef: Creatures | null = null;
 
+  private rebuildWork(world: World): void {
+    this.workTile.clear();
+    this.workKindOf.clear();
+    for (const s of this.list) {
+      if (!s.civ) continue;
+      for (const j of s.civ.jobs) {
+        const b = s.civ.buildings.find((x) => x.id === j.b);
+        const kind = b && jobKind(b);
+        if (!b || !kind) continue;
+        this.workTile.set(j.id, b.y * world.width + b.x);
+        this.workKindOf.set(j.id, kind);
+      }
+    }
+  }
+
   private pickLeavers(s: Settlement, ids: number[], n: number): number[] {
     const c = this.creaturesRef;
     if (!c) return ids.slice(0, n);
@@ -431,7 +465,10 @@ export class Settlements {
   }
 
   private remove(s: Settlement, text: string, code: string): void {
-    for (const m of s.members) this.memberOf.delete(m);
+    for (const m of s.members) {
+      this.memberOf.delete(m);
+      this.workTile.delete(m);
+    }
     this.list = this.list.filter((x) => x !== s);
     this.onEvent?.(text, code, { name: s.name });
     this.dirty = true;
@@ -596,7 +633,12 @@ export class Settlements {
       if (Array.isArray(b) && b.every((v) => typeof v === 'number' && Number.isFinite(v)) && ids.has(b[1])) this.bans.set(b[0], { sid: b[1], until: b[2] });
     }
     this.nextId = Math.max(Math.floor(num(save.nextId, 1, 65536, 1)), ...this.list.map((s) => s.id + 1), 1);
-    for (const s of this.list) for (const m of s.members) this.memberOf.set(m, s.id);
+    for (const s of this.list) {
+      for (const m of s.members) this.memberOf.set(m, s.id);
+      // Jobs belong to members of this settlement only.
+      if (s.civ) s.civ.jobs = s.civ.jobs.filter((j) => this.memberOf.get(j.id) === s.id);
+    }
+    this.rebuildWork(world);
     this.recomputeTerritory(world);
   }
 }

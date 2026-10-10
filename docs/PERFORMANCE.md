@@ -204,6 +204,10 @@ Without weather, cost per animal is unchanged; the small differences are run-to-
 | Navigation rebuilds during play with weather | about 37 ms (medium) / about 275 ms (large, in Chromium) per rebuild on the main thread | Medium: 6 of 6 rebuilds served by the worker. Large at 10×: 9 of 9 after scaling the delivery delay with map size (it was 5 of 9 with a fixed 20-tick delay, the rest falling back to the main thread). 0 errors. |
 | 5,476 animals, 4 weather systems, 10× speed | n/a | 60 fps, p95 frame 16.7 ms, worst 33 ms, 100 ticks/s |
 
+## Living settlements (0.15)
+
+`npm run bench:civ` (same setup as 0.14, single runs before and after the change in this container): people only 0.43 → 0.47 ms/tick, groups with autonomous settling 0.57 → 0.64 ms/tick, 12 developing settlements 0.54 → 0.59 ms/tick (settlement step 0.085 → 0.12 ms/tick averaged; ~400 members, ~100 buildings). Job assignment runs once per settlement step and is linear in buildings × free adults; walking to work uses the existing path budget; the renderer adds a 3×3 tool mark only for people in the Working state. Single runs are noisy (about ±10%). Browser frame cost and phones were **not measured**; no physical iPhone was used.
+
 ## Web Worker investigation (Milestone 4, still current)
 
 **What the simulation depends on.**

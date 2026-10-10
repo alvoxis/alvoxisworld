@@ -207,6 +207,7 @@ export class Game {
       ambientClouds: this.showAmbientClouds,
       settlements: this.sim.settlements.list,
       settlementBorders: this.showSettlementBorders,
+      workKind: (id) => this.sim.settlements.workKind(id),
       now,
     });
   }

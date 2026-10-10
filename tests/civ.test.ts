@@ -3,7 +3,7 @@ import { deserializeInto, serialize } from '../src/save/serialize';
 import { GRAZER, HUMAN } from '../src/sim/creatures';
 import {
   BASE_CAPACITY, BASE_STORAGE, BUILDINGS, FEED_HUNGER, HOUSE_CAPACITY, MAX_CONSTRUCTIONS, SLOTS, START_KIT, STONE_PER_TILE, TECHS, WOOD_PER_TREE,
-  costOf, housing, importCiv, newCiv, storage, stepsOf, type BuildingType, type Civ,
+  BUILDERS, BUILD_PER_WORKER, WORK_SLOTS, costOf, farmOutput, housing, importCiv, newCiv, storage, stepsOf, type BuildingType, type Civ,
 } from '../src/sim/civ';
 import { STEP_TICKS, MIN_FOUNDERS, type Settlement } from '../src/sim/settlements';
 import { Simulation } from '../src/sim/simulation';
@@ -69,6 +69,15 @@ function rich(c: Civ): void {
 
 function build(sim: Simulation, s: Settlement, type: BuildingType) {
   return sim.settlements.build(sim.world, s, type, sim.tick);
+}
+
+/** Runs settlement steps until the condition holds (at most `max` steps); returns the steps taken. */
+function until(sim: Simulation, cond: () => boolean, max = 80): number {
+  for (let k = 1; k <= max; k++) {
+    steps(sim, 1);
+    if (cond()) return k;
+  }
+  return -1;
 }
 
 function members(sim: Simulation): number[] {
@@ -261,10 +270,10 @@ describe('buildings', () => {
     expect(typeof b).toBe('object');
     expect(civ.wood).toBe(0);
     expect(civ.buildings[0].done).toBe(false);
-    steps(sim, BUILDINGS.house.steps - 1);
-    expect(civ.buildings[0].done).toBe(false);
-    steps(sim, 1);
-    expect(civ.buildings[0].done).toBe(true);
+    // Builders walk to the site and work there: at most BUILDERS × BUILD_PER_WORKER steps of work per step.
+    const took = until(sim, () => civ.buildings[0].done);
+    expect(took).toBeGreaterThanOrEqual(Math.ceil(BUILDINGS.house.steps / (BUILDERS * BUILD_PER_WORKER)));
+    expect(took).toBeGreaterThan(0);
     expect(sim.history.some((h) => h.code === 'settlement_built')).toBe(true);
   });
 
@@ -327,9 +336,9 @@ describe('buildings', () => {
     civ.wood = 300;
     build(sim, s, 'farm');
     build(sim, s, 'lumber');
-    steps(sim, 8);
+    until(sim, () => civ.buildings.every((b) => b.done));
     build(sim, s, 'quarry');
-    steps(sim, 9);
+    until(sim, () => civ.buildings.every((b) => b.done));
     const farm = civ.buildings.find((b) => b.type === 'farm')!;
     const lumber = civ.buildings.find((b) => b.type === 'lumber')!;
     const quarry = civ.buildings.find((b) => b.type === 'quarry')!;
@@ -353,11 +362,13 @@ describe('buildings', () => {
     expect(quarry.reserve).toBeLessThan(reserve0);
     expect(civ.stone).toBeGreaterThan(5);
     // Fertility follows moisture: a drought lowers the farm's yield.
-    steps(sim, 1);
-    const wet = civ.rate.food;
+    const at = { ...farm, here: 2 };
+    const wet = farmOutput(sim.world, at, 1);
+    expect(wet).toBeGreaterThan(0);
+    expect(farmOutput(sim.world, { ...at, here: 1 }, 1)).toBeCloseTo(wet / 2, 6); // half the workers, half the food
+    expect(farmOutput(sim.world, { ...at, here: 0 }, 1)).toBe(0); // nobody at work: no food
     sim.world.moisture[farm.y * sim.world.width + farm.x] = 5;
-    steps(sim, 1);
-    expect(civ.rate.food).toBeLessThan(wet);
+    expect(farmOutput(sim.world, at, 1)).toBeLessThan(wet);
     // Drained stone stops the quarry.
     quarry.reserve = 0.2;
     steps(sim, 3);
@@ -422,7 +433,7 @@ describe('development', () => {
     civ.techs = ['farming', 'construction'];
     sim.spawnInCircle(HUMAN, 40, 40, 5, 30);
     civ.buildings.length = 0;
-    for (let k = 0; k < 8; k++) civ.buildings.push({ id: k + 1, type: k === 0 ? 'storehouse' : 'house', x: 30 + k, y: 30, started: 0, progress: 6, needed: 6, done: true, reserve: 0, acc: 0 });
+    for (let k = 0; k < 8; k++) civ.buildings.push({ id: k + 1, type: k === 0 ? 'storehouse' : 'house', x: 30 + k, y: 30, started: 0, progress: 6, needed: 6, done: true, reserve: 0, acc: 0, active: false, idle: 0, empty: false, here: 0 });
     civ.nextBuildingId = 9;
     steps(sim, 4);
     expect(s.members.length).toBeGreaterThanOrEqual(30);
@@ -491,13 +502,16 @@ describe('technologies', () => {
     const { sim, s, civ } = camp(10);
     rich(civ);
     build(sim, s, 'lumber');
-    steps(sim, 6);
+    const lumber = civ.buildings[0];
+    expect(until(sim, () => lumber.done)).toBeGreaterThan(0);
     civ.wood = 0;
-    steps(sim, 1);
+    // Compare steps with the lumber camp fully staffed.
+    expect(until(sim, () => lumber.here === WORK_SLOTS.lumber)).toBeGreaterThan(0);
     const plain = civ.rate.wood;
+    expect(plain).toBeCloseTo(1, 5);
     civ.techs.push('harvesting');
     civ.wood = 0;
-    steps(sim, 1);
+    expect(until(sim, () => lumber.here === WORK_SLOTS.lumber)).toBeGreaterThan(0);
     expect(civ.rate.wood).toBeCloseTo(plain * 1.5, 5);
   });
 
