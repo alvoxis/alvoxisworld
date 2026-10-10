@@ -50,6 +50,11 @@ export class Game {
   readonly undo = new UndoHistory();
   /** Short visual effects (meteor flash, quake ripple). */
   private effects: VisualEffect[] = [];
+  /** Lightning bolts and impact dust being drawn (visual only; the damage already happened in the simulation). */
+  private bolts: Array<{ x: number; y: number; start: number }> = [];
+  private dust: Array<{ x: number; y: number; radius: number; start: number }> = [];
+  /** Draw decorative fair-weather clouds (storm, rain and snow clouds always show). */
+  showAmbientClouds = true;
   /** True while a new world is being generated. */
   generating = false;
   private genWorkerFactory: (() => GenWorkerLike) | null = null;
@@ -80,6 +85,8 @@ export class Game {
     this.sim = new Simulation(generateWorld(size.width, size.height, seed));
     this.sim.log(`World ${seed} was formed.`);
     this.sim.onSeasonChange = (s) => this.renderer.setWinter(s === 3);
+    // A meteor the player launched is one undo step when it lands (natural ones are not recorded).
+    this.sim.impactRecorder = (label, run) => this.undo.record(this.sim.world, label, run);
     this.attachWorld(this.sim.world);
     this.setupWorkers();
 
@@ -150,6 +157,7 @@ export class Game {
       }
     }
     this.sim.advance(dt);
+    this.collectSkyEvents(now);
     this.trackSelection();
     let cursor: BrushCursor | null = null;
     const pos = this.stroke ?? this.hoverPos;
@@ -159,8 +167,28 @@ export class Game {
       burning: this.sim.fire.active,
       weather: this.sim.weather.systems,
       effects: this.effects,
+      meteors: this.sim.sky.meteors,
+      bolts: this.bolts,
+      dust: this.dust,
+      drift: this.sim.weather.drift,
+      ambientClouds: this.showAmbientClouds,
       now,
     });
+  }
+
+  /** Turns the simulation's visual notices (bolts, impacts, quakes) into things the renderer draws. */
+  private collectSkyEvents(now: number): void {
+    for (const e of this.sim.sky.drainEvents()) {
+      if (e.kind === 'bolt') this.bolts.push({ x: e.x, y: e.y, start: now });
+      else if (e.kind === 'impact') {
+        this.effects.push({ kind: 'meteor', x: e.x, y: e.y, radius: e.radius * 2, start: now });
+        this.dust.push({ x: e.x, y: e.y, radius: e.radius, start: now });
+      } else this.effects.push({ kind: 'quake', x: e.x, y: e.y, radius: e.radius, start: now });
+    }
+    if (this.effects.length > 12) this.effects.splice(0, this.effects.length - 12);
+    if (this.dust.length > 8) this.dust.splice(0, this.dust.length - 8);
+    if (this.bolts.length && now - this.bolts[0].start > 600) this.bolts = this.bolts.filter((b) => now - b.start <= 600);
+    if (this.dust.length && now - this.dust[0].start > 7000) this.dust = this.dust.filter((d) => now - d.start <= 7000);
   }
 
   /**

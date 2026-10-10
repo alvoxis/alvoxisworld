@@ -10,6 +10,8 @@ export const WATER_FLAG = {
   RIVER_BED: 2,
   /** Temporary flood water; World.under holds the terrain to restore when it drains. */
   FLOOD: 4,
+  /** Seasonal snow cover on tundra; World.under holds the terrain to restore when it melts. */
+  SNOWCOVER: 8,
 } as const;
 
 /** Values saved per tile when recording for undo (see World.touch). */

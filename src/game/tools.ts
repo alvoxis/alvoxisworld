@@ -178,13 +178,31 @@ export const TOOLS: readonly Tool[] = [
   // God powers: weather and disasters.
   {
     id: 'rain', label: 'Rain', category: 'powers', icon: { emoji: '🌧️' }, usesBrush: true, usesIntensity: true,
-    repeatMs: Infinity, hint: 'Rain system: wetter, cooler, refills water, puts out fire',
+    repeatMs: Infinity, hint: 'Rain cloud: wetter, cooler, refills water, greens bare soil, puts out fire',
     apply: ({ sim, intensity }, x, y, r) => sim.summonWeather(WEATHER_KIND.RAIN, x, y, Math.max(6, r * 4), intensity),
   },
   {
+    id: 'storm', label: 'Storm', category: 'powers', icon: { emoji: '⛈️' }, usesBrush: true, usesIntensity: true,
+    repeatMs: Infinity, hint: 'Thunderstorm: heavy rain with lightning that can kill and start fires',
+    apply: ({ sim, intensity }, x, y, r) =>
+      sim.summonWeather(WEATHER_KIND.RAIN, x, y, Math.max(6, r * 3), Math.max(2, intensity), { storm: true }),
+  },
+  {
+    id: 'snow', label: 'Snow', category: 'powers', icon: { emoji: '❄️' }, usesBrush: true, usesIntensity: true,
+    repeatMs: Infinity, hint: 'Snowfall: colder and wetter; settles on tundra until spring; puts out fire',
+    apply: ({ sim, intensity }, x, y, r) => sim.summonWeather(WEATHER_KIND.RAIN, x, y, Math.max(6, r * 4), intensity, { snow: true }),
+  },
+  {
     id: 'drought', label: 'Drought', category: 'powers', icon: { emoji: '☀️' }, usesBrush: true, usesIntensity: true,
-    repeatMs: Infinity, hint: 'Drought: drier, hotter, dries water and plants',
+    repeatMs: Infinity, hint: 'Drought: drier, hotter, dries water and plants, fires spread faster',
     apply: ({ sim, intensity }, x, y, r) => sim.summonWeather(WEATHER_KIND.DROUGHT, x, y, Math.max(6, r * 4), intensity),
+  },
+  {
+    id: 'lightning', label: 'Lightning', category: 'powers', icon: { emoji: '🌩️' }, usesBrush: false, repeatMs: 350,
+    hint: 'A lightning bolt: hurts creatures at the spot and may ignite dry vegetation',
+    apply: ({ sim }, x, y) => {
+      sim.lightning(x, y);
+    },
   },
   {
     id: 'fire', label: 'Fire', category: 'powers', icon: { emoji: '🔥' }, usesBrush: true, repeatMs: 120,
@@ -202,10 +220,18 @@ export const TOOLS: readonly Tool[] = [
   },
   {
     id: 'meteor', label: 'Meteor', category: 'powers', icon: { emoji: '☄️' }, usesBrush: true, usesIntensity: true,
-    repeatMs: Infinity, undoable: true, hint: 'Crater, scorched ground, fires; kills creatures inside',
+    repeatMs: Infinity,
+    hint: 'A meteor falls: brush sets crater width, Power sets energy. Flattens plants, starts fires; undo after it lands',
     apply: (ctx, x, y, r) => {
-      ctx.sim.meteor(x, y, Math.max(2, r), ctx.intensity);
-      ctx.effect('meteor', x, y, Math.max(2, r) * 2);
+      if (!ctx.sim.launchMeteor(x, y, Math.max(2, r), ctx.intensity)) ctx.notify('Too many meteors in the sky');
+    },
+  },
+  {
+    id: 'shower', label: 'Meteor shower', category: 'powers', icon: { emoji: '🌠' }, usesBrush: true, usesIntensity: true,
+    repeatMs: Infinity, hint: 'Several small meteors over a few seconds (cannot be undone)',
+    apply: (ctx, x, y, r) => {
+      const n = ctx.sim.launchShower(x, y, Math.max(4, r * 1.5), 3 + ctx.intensity * 3);
+      if (!n) ctx.notify('Too many meteors in the sky');
     },
   },
   {

@@ -102,13 +102,13 @@ describe('movement constraints', () => {
     }
   });
 
-  it('flooding the land drowns land animals; draining strands fish', () => {
-    const world = testWorld(32, 32, T.GRASS, [[0, 0, 10, 32, T.SHALLOW_WATER]]);
+  it('flooding the land drowns land animals; draining strands fish (when no shore is near)', () => {
+    const world = testWorld(48, 32, T.GRASS, [[0, 0, 20, 32, T.SHALLOW_WATER]]);
     const sim = new Simulation(world);
-    sim.creatures.spawn(GRAZER, 20, 16, sim.rng);
-    sim.creatures.spawn(FISH, 5, 16, sim.rng);
+    sim.creatures.spawn(GRAZER, 40, 16, sim.rng);
+    sim.creatures.spawn(FISH, 2, 16, sim.rng);
     for (let y = 0; y < 32; y++) {
-      for (let x = 0; x < 32; x++) world.setTerrain(x, y, x < 10 ? T.GRASS : T.SHALLOW_WATER);
+      for (let x = 0; x < 48; x++) world.setTerrain(x, y, x < 20 ? T.GRASS : T.SHALLOW_WATER);
     }
     sim.step();
     expect(sim.creatures.count).toBe(0);

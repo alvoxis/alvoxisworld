@@ -447,6 +447,18 @@ function peakSprite(w: number, h: number, snow: boolean, seed: number): Sprite {
   });
 }
 
+/** A low bush for grassland: darker leaf mass with a lit top edge and a short shadow. */
+function bushSprite(leaf: RGB): Sprite {
+  return makeSprite(7, 5, 3, 4, (set) => {
+    const rows: Array<[number, number]> = [[1, 4], [0, 5], [0, 6], [1, 5]];
+    rows.forEach(([a, b], y) => {
+      for (let x = a; x <= b; x++) set(x, y, shade(leaf, y === 0 ? 1.25 : x < 3 ? 1.08 : 0.8));
+    });
+    set(4, 4, [10, 30, 10], 70);
+    set(5, 4, [10, 30, 10], 50);
+  });
+}
+
 /** Reeds for swamps. */
 function reedSprite(): Sprite {
   return makeSprite(5, 5, 2, 4, (set) => {
@@ -468,6 +480,7 @@ export const SPRITES = {
   snowPeak: [peakSprite(18, 12, true, 3), peakSprite(16, 11, true, 4)],
   smallSnowPeak: [peakSprite(10, 8, true, 7), peakSprite(8, 7, true, 8)],
   reed: [reedSprite()],
+  bush: [bushSprite([74, 138, 58]), bushSprite([92, 150, 62])],
 };
 
 /** Half-resolution copy (2×2 box filter with alpha weighting) for 4-px-per-tile chunks. */

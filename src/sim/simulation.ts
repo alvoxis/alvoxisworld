@@ -1,10 +1,11 @@
 import { Rng } from '../core/rng';
 import { World } from '../world/world';
-import { dateFromTick, SEASON_GROWTH, TICKS_PER_SECOND, type WorldDate } from './clock';
+import { dateFromTick, SEASON_GROWTH, TICKS_PER_SECOND, TICKS_PER_YEAR, type WorldDate } from './clock';
 import { Creatures, SPECIES } from './creatures';
-import { meteorStrike, earthquake, type DisasterResult } from './disasters';
+import { meteorStrike, earthquake, lightningStrike, meteorClass, type DisasterResult } from './disasters';
 import { EFFECTS } from './effects';
-import { Fire } from './fire';
+import { Fire, fuelOf } from './fire';
+import { DISASTER_RATES, DISASTER_STEP, FLIGHT_TICKS, Sky, type MeteorInFlight } from './sky';
 import { T, isWater } from '../world/terrain';
 import { WATER_FLAG } from '../world/world';
 import { Weather, WEATHER_KIND, type WeatherKind } from './weather';
@@ -28,6 +29,7 @@ export class Simulation {
   readonly creatures = new Creatures();
   readonly weather = new Weather();
   readonly fire = new Fire();
+  readonly sky = new Sky();
   rng: Rng;
   tick = 0;
   speed: Speed = 1;
@@ -35,6 +37,12 @@ export class Simulation {
   private accumulator = 0;
   private lastSeason = -1;
   private seenSpecies = new Set<number>();
+
+  /**
+   * Wraps the terrain change of a meteor that the player launched, so the game can
+   * record it as one undo step. Natural meteors are never wrapped.
+   */
+  impactRecorder: ((label: string, run: () => void) => void) | null = null;
 
   /** Called when the season changes (renderer re-tints the map). */
   onSeasonChange: (seasonIndex: number) => void = () => {};
@@ -57,6 +65,10 @@ export class Simulation {
     this.fire.clear();
     this.weather.systems = [];
     this.weather.wind = 0;
+    this.weather.drift = { x: 0, y: 0 };
+    this.weather.strikes = [];
+    this.sky.reset();
+    this.creatures.dangers = [];
     this.weather.refresh(world);
     this.rng = new Rng(world.seed ^ 0x51ed270b);
     if (rngState !== undefined) this.rng.state = rngState;
@@ -97,6 +109,12 @@ export class Simulation {
   step(): void {
     const date = this.date;
     this.weather.step(this.world, this.rng, this.tick, date.seasonIndex);
+    if (this.weather.strikes.length) this.resolveLightning();
+    if (this.sky.config.auto && this.tick % DISASTER_STEP === 0) this.naturalDisasters();
+    if (this.sky.meteors.length) {
+      for (const m of this.sky.advance()) this.impact(m);
+      this.creatures.dangers = this.sky.dangerZones();
+    } else if (this.creatures.dangers.length) this.creatures.dangers = [];
     this.fire.step(this.world, this.rng, this.weather);
     this.creatures.anyFire = this.fire.burning > 0;
     vegetationTick(this.world, this.rng, SEASON_GROWTH[date.season]);
@@ -117,10 +135,129 @@ export class Simulation {
 
   // ---- god powers (each changes real simulation state) --------------------
 
-  /** Rain or drought centred on a point. intensity 1..3. */
-  summonWeather(kind: WeatherKind, x: number, y: number, radius: number, intensity: number): void {
-    this.weather.addManual(kind, x, y, radius, 0.35 + 0.25 * intensity);
-    this.log(kind === WEATHER_KIND.RAIN ? 'The gods sent rain.' : 'The gods sent a drought.');
+  /** Rain, a thunderstorm, snow or a drought centred on a point. intensity 1..3. */
+  summonWeather(
+    kind: WeatherKind, x: number, y: number, radius: number, intensity: number, opts: { storm?: boolean; snow?: boolean } = {},
+  ): void {
+    this.weather.addManual(kind, x, y, radius, 0.35 + 0.25 * intensity, opts);
+    this.log(
+      kind === WEATHER_KIND.DROUGHT ? 'The gods sent a drought.'
+      : opts.snow ? 'The gods sent snow.'
+      : opts.storm ? 'The gods sent a thunderstorm.'
+      : 'The gods sent rain.',
+    );
+  }
+
+  // ---- sky: lightning, meteors in flight, natural disasters ---------------
+
+  /** Lightning at a tile (a god power, and what storms do). Real damage and ignition. */
+  lightning(x: number, y: number): { killed: number; ignited: boolean } {
+    const tx = Math.floor(x);
+    const ty = Math.floor(y);
+    if (!this.world.inBounds(tx, ty)) return { killed: 0, ignited: false };
+    const r = lightningStrike(this.world, this.creatures, this.fire, this.rng, tx, ty);
+    this.creatures.anyFire = this.fire.burning > 0;
+    this.sky.stats.lightning++;
+    this.sky.emit({ kind: 'bolt', x: tx + 0.5, y: ty + 0.5 });
+    if (r.killed) this.log(`Lightning struck down ${r.killed} creature${r.killed > 1 ? 's' : ''}.`);
+    return r;
+  }
+
+  private resolveLightning(): void {
+    const list = this.weather.strikes.slice();
+    this.weather.strikes.length = 0;
+    for (const s of list) this.lightning(s.x, s.y);
+  }
+
+  /**
+   * Sends a meteor: it flies for about 2 seconds (of simulated time) and then lands,
+   * digging its crater. radius sets the crater and intensity (1..3) its energy.
+   * Returns false if too many are already in the sky.
+   */
+  launchMeteor(x: number, y: number, radius: number, intensity: number, natural = false, flight = FLIGHT_TICKS): boolean {
+    const angle = this.rng.next() * Math.PI * 2;
+    return this.sky.launch(x, y, Math.max(2, radius), intensity, angle, natural, flight) !== null;
+  }
+
+  /** A meteor shower: `count` small meteors landing within `spread` tiles over a few seconds. */
+  launchShower(x: number, y: number, spread: number, count: number): number {
+    let n = 0;
+    for (let k = 0; k < count; k++) {
+      const a = this.rng.next() * Math.PI * 2;
+      const d = Math.sqrt(this.rng.next()) * spread;
+      const tx = Math.min(this.world.width - 1, Math.max(0, x + Math.cos(a) * d));
+      const ty = Math.min(this.world.height - 1, Math.max(0, y + Math.sin(a) * d));
+      const flight = FLIGHT_TICKS + Math.floor(this.rng.next() * 50);
+      if (this.launchMeteor(tx, ty, 2 + this.rng.next() * 1.2, 1, false, flight)) n++;
+    }
+    if (n) this.log(`A meteor shower fell (${n} meteors).`);
+    return n;
+  }
+
+  /** A meteor lands. Player-launched ones are recorded as one undo step. */
+  private impact(m: MeteorInFlight): void {
+    let result: DisasterResult | null = null;
+    const run = () => {
+      result = meteorStrike(this.world, this.creatures, this.fire, this.rng, m.x, m.y, m.radius, m.intensity);
+    };
+    if (!m.natural && this.impactRecorder) this.impactRecorder('Meteor', run);
+    else run();
+    const r = result as DisasterResult | null;
+    this.creatures.anyFire = this.fire.burning > 0;
+    this.sky.stats.meteors++;
+    this.sky.emit({ kind: 'impact', x: m.x, y: m.y, radius: Math.max(2, m.radius) * (0.7 + 0.3 * m.intensity), intensity: m.intensity });
+    const size = meteorClass(m.radius);
+    this.log(`A ${size} meteor struck${r && r.killed ? `, killing ${r.killed}` : ''}.`);
+  }
+
+  /** Natural disasters: rolled every DISASTER_STEP ticks from the settings. Uses the simulation RNG, so it is deterministic. */
+  private naturalDisasters(): void {
+    const c = this.sky.config;
+    const w = this.world;
+    // Bigger maps get proportionally more events (their area is bigger), up to 2.5×.
+    const scale = Math.min(2.5, Math.max(1, Math.sqrt((w.width * w.height) / (512 * 320))));
+    const perStep = (rate: number) => (rate * scale * DISASTER_STEP) / TICKS_PER_YEAR;
+    const f = Math.min(2, Math.max(0, c.frequency));
+    const pickLand = (): [number, number] | null => {
+      for (let k = 0; k < 12; k++) {
+        const x = Math.floor(this.rng.next() * w.width);
+        const y = Math.floor(this.rng.next() * w.height);
+        if (!isWater(w.terrain[w.idx(x, y)])) return [x, y];
+      }
+      return null;
+    };
+    if (c.meteors && this.rng.chance(perStep(DISASTER_RATES.meteors[f]))) {
+      const at = pickLand();
+      if (at) {
+        const roll = this.rng.next();
+        // Mostly small stones, sometimes a medium one, rarely a large one.
+        const [r, i] = roll < 0.7 ? [2 + this.rng.next() * 1.5, 1] : roll < 0.95 ? [5 + this.rng.next() * 2, 2] : [9 + this.rng.next() * 3, 3];
+        this.launchMeteor(at[0] + 0.5, at[1] + 0.5, r, i, true);
+      }
+    }
+    if (c.quakes && this.rng.chance(perStep(DISASTER_RATES.quakes[f]))) {
+      const at = pickLand();
+      if (at) {
+        const radius = 5 + this.rng.next() * 6;
+        this.earthquake(at[0] + 0.5, at[1] + 0.5, radius, this.rng.next() < 0.2 ? 2 : 1);
+        this.sky.emit({ kind: 'quake', x: at[0] + 0.5, y: at[1] + 0.5, radius: radius * 1.6 });
+      }
+    }
+    if (c.wildfires && this.rng.chance(perStep(DISASTER_RATES.wildfires[f]))) {
+      // A dry, burnable spot where it is not raining (dry lightning, a spark…).
+      for (let k = 0; k < 30; k++) {
+        const x = Math.floor(this.rng.next() * w.width);
+        const y = Math.floor(this.rng.next() * w.height);
+        const i = w.idx(x, y);
+        if (fuelOf(w.terrain[i]) <= 0 || w.moisture[i] > 120 || this.weather.wetnessAt(x, y) > 0) continue;
+        if (this.fire.ignite(w, x, y)) {
+          this.creatures.anyFire = true;
+          this.sky.stats.wildfires++;
+          this.log('A wildfire broke out.');
+          break;
+        }
+      }
+    }
   }
 
   /** Sets burnable tiles alight within a radius. Returns how many caught. */
@@ -243,6 +380,7 @@ export class Simulation {
 
   earthquake(x: number, y: number, radius: number, intensity: number): DisasterResult {
     const r = earthquake(this.world, this.creatures, this.rng, x, y, radius, intensity);
+    this.sky.stats.quakes++;
     this.log(`An earthquake shook the land${r.killed ? `, killing ${r.killed}` : ''}.`);
     return r;
   }

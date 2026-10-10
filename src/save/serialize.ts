@@ -2,6 +2,7 @@ import { CAUSE, Creatures, MAX_CREATURES, PATH_MAX, SPECIES, STATE } from '../si
 import { EFFECT_COUNT } from '../sim/effects';
 import { FOOD_CELL } from '../sim/foodmap';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
+import { type DisasterConfig, type MeteorInFlight } from '../sim/sky';
 import type { WeatherConfig, WeatherSystem } from '../sim/weather';
 import { T } from '../world/terrain';
 import { WATER_FLAG, World } from '../world/world';
@@ -10,9 +11,20 @@ import { WATER_FLAG, World } from '../world/world';
  * Save versions: 1 = Milestone 1 (energy only), 2 = creature ids/needs/states,
  * 3 = adds routes and remaining behaviour fields so a loaded world continues exactly,
  * 4 = weather, fire, long-term climate and water memory (dried lakes/rivers, floods),
- * 5 = buffs/debuffs on creatures (effTicks/effPower/effMask; absent = none).
+ * 5 = buffs/debuffs on creatures (effTicks/effPower/effMask; absent = none),
+ * 6 = sky: thunderstorms/snow flags and ids on weather systems, wind drift, meteors in flight,
+ *     natural-disaster settings (absent = defaults).
  */
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
+
+/** Version 6 additions. Everything in it is optional in a save and validated on load. */
+export interface SkySave {
+  config: DisasterConfig;
+  meteors: MeteorInFlight[];
+  nextMeteorId: number;
+  weatherNextId: number;
+  drift: { x: number; y: number };
+}
 
 /** Version 4 world/simulation additions (absent in older saves; migrated on load). */
 export interface SaveV4 {
@@ -100,6 +112,8 @@ export interface SaveData {
   creatures: CreatureSave | CreatureSaveV1;
   history: HistoryEntry[];
   v4?: SaveV4;
+  /** Version 6. */
+  sky?: SkySave;
 }
 
 const COPIED = [
@@ -140,6 +154,13 @@ export function serialize(sim: Simulation): SaveData {
     moisture: w.moisture.slice(),
     creatures,
     history: sim.history.map((h) => ({ ...h })),
+    sky: {
+      config: { ...sim.sky.config },
+      meteors: sim.sky.meteors.map((m) => ({ ...m })),
+      nextMeteorId: sim.sky.nextId,
+      weatherNextId: sim.weather.idCounter,
+      drift: { ...sim.weather.drift },
+    },
     v4: {
       baseTemperature: w.baseTemperature.slice(),
       baseMoisture: w.baseMoisture.slice(),
@@ -249,9 +270,53 @@ function loadCreaturesV1(c: Creatures, src: CreatureSaveV1): void {
   c.deaths = src.deaths;
 }
 
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** Keeps only well-formed weather systems (a hand-edited or damaged file must not break the weather). */
+function sanitizeSystems(list: unknown): Array<Partial<WeatherSystem> & Pick<WeatherSystem, 'kind' | 'x' | 'y' | 'radius' | 'intensity' | 'ttl' | 'manual'>> {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const s of list.slice(0, 64)) {
+    if (!s || (s.kind !== 0 && s.kind !== 1)) continue;
+    if (![s.x, s.y, s.radius, s.intensity, s.ttl].every(finite) || s.radius <= 0 || s.radius > 5000) continue;
+    out.push({
+      kind: s.kind, x: s.x, y: s.y, radius: s.radius, intensity: Math.min(1, Math.max(0, s.intensity)),
+      ttl: Math.max(0, s.ttl), manual: !!s.manual,
+      id: finite(s.id) ? s.id : undefined, storm: !!s.storm, snow: !!s.snow, forceSnow: !!s.forceSnow,
+    });
+  }
+  return out;
+}
+
+/** Restores the sky block of a version 6 save, ignoring anything malformed. */
+function loadSky(sim: Simulation, sky: SkySave): void {
+  const cfg = sky.config;
+  if (cfg && typeof cfg === 'object') {
+    sim.sky.config = {
+      auto: !!cfg.auto,
+      frequency: finite(cfg.frequency) ? Math.min(2, Math.max(0, Math.round(cfg.frequency))) : 1,
+      meteors: cfg.meteors !== false,
+      quakes: cfg.quakes !== false,
+      wildfires: cfg.wildfires !== false,
+    };
+  }
+  const w = sim.world;
+  sim.sky.meteors = (Array.isArray(sky.meteors) ? sky.meteors : [])
+    .slice(0, 64)
+    .filter((m) => m && [m.id, m.x, m.y, m.radius, m.intensity, m.ttl, m.total, m.angle].every(finite) && m.ttl > 0 && m.total > 0)
+    .filter((m) => m.x >= 0 && m.y >= 0 && m.x < w.width && m.y < w.height)
+    .map((m) => ({
+      id: m.id, x: m.x, y: m.y, radius: Math.min(60, Math.max(2, m.radius)), intensity: Math.min(3, Math.max(1, m.intensity)),
+      ttl: Math.min(400, m.ttl), total: Math.min(400, m.total), angle: m.angle, natural: !!m.natural,
+    }));
+  sim.sky.nextId = finite(sky.nextMeteorId) ? Math.max(sky.nextMeteorId, ...sim.sky.meteors.map((m) => m.id + 1), 1) : 1;
+  if (finite(sky.weatherNextId)) sim.weather.idCounter = Math.max(sim.weather.idCounter, sky.weatherNextId);
+  if (sky.drift && finite(sky.drift.x) && finite(sky.drift.y)) sim.weather.drift = { x: sky.drift.x, y: sky.drift.y };
+}
+
 /** Validates a snapshot and loads it into the simulation, replacing the current world. */
 export function deserializeInto(sim: Simulation, data: SaveData): World {
-  if (!data || ![1, 2, 3, 4, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
+  if (!data || ![1, 2, 3, 4, 5, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
   const n = data.width * data.height;
   for (const arr of [data.heights, data.terrain, data.temperature, data.moisture]) {
     if (!(arr instanceof Uint8Array) || arr.length !== n) throw new Error('Corrupt save: map size mismatch');
@@ -283,7 +348,7 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
   if (v4) {
     // Only tiles that are actually burning (guards against damaged or edited files).
     sim.fire.restore(Array.from(v4.fireActive).filter((i) => Number.isInteger(i) && i >= 0 && i < n && world.fire[i] > 0));
-    sim.weather.systems = v4.weather.systems.map((sys) => ({ ...sys }));
+    sim.weather.adopt(sanitizeSystems(v4.weather.systems));
     sim.weather.config = { ...v4.weather.config };
     sim.weather.wind = v4.weather.wind;
     sim.weather.refresh(world);
@@ -298,6 +363,7 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
       sim.creatures.importNav(world, v4.nav);
     }
   }
+  if (data.sky) loadSky(sim, data.sky);
   if (data.version === 1) loadCreaturesV1(sim.creatures, data.creatures as CreatureSaveV1);
   else loadCreatures(sim.creatures, data.creatures as CreatureSave);
   sim.creatures.reindex();

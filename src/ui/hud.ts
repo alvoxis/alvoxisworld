@@ -273,7 +273,10 @@ export class Hud {
     const wx = sim.weather.summary();
     const parts = [
       wx.rain ? `🌧 ${wx.rain} rain` : '',
+      wx.storm ? `⛈ ${wx.storm} storm` : '',
+      wx.snow ? `❄️ ${wx.snow} snow` : '',
       wx.drought ? `☀️ ${wx.drought} drought` : '',
+      sim.sky.meteors.length ? `☄️ ${sim.sky.meteors.length} falling` : '',
       sim.fire.burning ? `🔥 ${sim.fire.burning} burning` : '',
     ].filter(Boolean);
     $('weather-status').textContent = parts.length ? parts.join(' · ') : sim.weather.config.auto ? 'Clear skies' : 'Weather off';
@@ -566,6 +569,48 @@ export class Hud {
         gen.textContent = 'Generate';
       }
     });
+    const clouds = $<HTMLInputElement>('ambient-clouds');
+    try {
+      if (localStorage.getItem('alvoxis.clouds') === 'off') clouds.checked = false;
+    } catch {
+      /* storage unavailable: keep the default */
+    }
+    this.game.showAmbientClouds = clouds.checked;
+    clouds.addEventListener('change', () => {
+      this.game.showAmbientClouds = clouds.checked;
+      try {
+        localStorage.setItem('alvoxis.clouds', clouds.checked ? 'on' : 'off');
+      } catch {
+        /* storage unavailable: the choice lasts for this session */
+      }
+    });
+    const dis = {
+      auto: $<HTMLInputElement>('disasters-auto'),
+      frequency: $<HTMLSelectElement>('disasters-frequency'),
+      meteors: $<HTMLInputElement>('disasters-meteors'),
+      quakes: $<HTMLInputElement>('disasters-quakes'),
+      wildfires: $<HTMLInputElement>('disasters-wildfires'),
+    };
+    const applyDisasters = () => {
+      const c = this.game.sim.sky.config;
+      c.auto = dis.auto.checked;
+      c.frequency = Number(dis.frequency.value);
+      c.meteors = dis.meteors.checked;
+      c.quakes = dis.quakes.checked;
+      c.wildfires = dis.wildfires.checked;
+      dis.frequency.disabled = dis.meteors.disabled = dis.quakes.disabled = dis.wildfires.disabled = !c.auto;
+    };
+    for (const el of [dis.auto, dis.frequency, dis.meteors, dis.quakes, dis.wildfires]) el.addEventListener('change', applyDisasters);
+    this.syncDisasters = () => {
+      const c = this.game.sim.sky.config;
+      dis.auto.checked = c.auto;
+      dis.frequency.value = String(c.frequency);
+      dis.meteors.checked = c.meteors;
+      dis.quakes.checked = c.quakes;
+      dis.wildfires.checked = c.wildfires;
+      dis.frequency.disabled = dis.meteors.disabled = dis.quakes.disabled = dis.wildfires.disabled = !c.auto;
+    };
+    this.syncDisasters();
     const passOverlay = $<HTMLInputElement>('pass-overlay');
     passOverlay.addEventListener('change', () => this.game.renderer.setPassOverlay(passOverlay.checked));
     const auto = $<HTMLInputElement>('weather-auto');
@@ -574,8 +619,12 @@ export class Hud {
     sev.addEventListener('change', () => (this.game.sim.weather.config.severity = Number(sev.value)));
   }
 
+  /** Copies the simulation's disaster settings into the menu controls (set when the menu is built). */
+  private syncDisasters: () => void = () => {};
+
   private openMenu(): void {
     $<HTMLInputElement>('weather-auto').checked = this.game.sim.weather.config.auto;
+    this.syncDisasters();
     $<HTMLSelectElement>('weather-severity').value = String(this.game.sim.weather.config.severity);
     $('weather-severity').title = SEVERITY.join(' / ');
     this.renderStats();

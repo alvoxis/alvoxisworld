@@ -1,10 +1,12 @@
 import { hash2 } from '../core/rng';
 import { Creatures, SPECIES } from '../sim/creatures';
-import { WEATHER_KIND, type WeatherSystem } from '../sim/weather';
+import type { WeatherSystem } from '../sim/weather';
 import { SEA_LEVEL, T, TERRAIN, isWater } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
 import { Camera } from './camera';
 import { TerrainPainter, type PaintOptions } from './painter';
+import { SkyRenderer, type Bolt, type Dust, type VisualEffect } from './skyfx';
+import type { MeteorInFlight } from '../sim/sky';
 import { Tileset, TILE_PX, creatureSprite } from './tileset';
 
 /** Device pixels per tile at which 8-px-per-tile detail chunks are used. */
@@ -20,21 +22,19 @@ const SHALLOW_RGB = [66, 150, 196] as const;
 const MAX_GLINTS = 500;
 const DEEP_RGB = [20, 48, 108] as const;
 
-/** Short-lived visual effect (pure decoration over a real simulation change). */
-export interface VisualEffect {
-  kind: 'meteor' | 'quake';
-  x: number;
-  y: number;
-  radius: number;
-  /** performance.now() when it started. */
-  start: number;
-}
+export type { VisualEffect } from './skyfx';
 
 /** Simulation state drawn on top of the map. */
 export interface Overlay {
   burning: readonly number[];
   weather: readonly WeatherSystem[];
   effects: readonly VisualEffect[];
+  meteors: readonly MeteorInFlight[];
+  bolts: readonly Bolt[];
+  dust: readonly Dust[];
+  drift: { x: number; y: number };
+  /** Decorative fair-weather clouds. */
+  ambientClouds: boolean;
   now: number;
 }
 
@@ -117,6 +117,7 @@ export class Renderer {
   private readonly mid = new ChunkLevel(4, MAX_MID_CHUNKS);
   private readonly sprites: Array<{ right: HTMLCanvasElement; left: HTMLCanvasElement }>;
   private readonly flames: HTMLCanvasElement[];
+  private readonly skyfx = new SkyRenderer();
   winter = false;
   /** Hatch mountains and snow (impassable for lowland animals). */
   passOverlay = false;
@@ -330,7 +331,21 @@ export class Renderer {
 
     if (overlay) this.drawFire(overlay, s, ox, oy);
     this.drawCreatures(camera, creatures, s, ox, oy, alpha);
-    if (overlay) this.drawWeather(overlay, s, ox, oy);
+    if (overlay) {
+      this.skyfx.draw(ctx, camera, s, ox, oy, this.dpr, {
+        systems: overlay.weather,
+        meteors: overlay.meteors,
+        bolts: overlay.bolts,
+        dust: overlay.dust,
+        effects: overlay.effects,
+        burning: overlay.burning,
+        drift: overlay.drift,
+        ambientClouds: overlay.ambientClouds,
+        worldW: w.width,
+        worldH: w.height,
+        now: overlay.now,
+      });
+    }
     if (selectedId) this.drawSelection(creatures, selectedId, s, ox, oy, alpha);
 
     if (cursor) {
@@ -404,59 +419,6 @@ export class Renderer {
       } else {
         ctx.fillStyle = flick === 0 ? 'rgba(255,200,60,0.9)' : flick === 1 ? 'rgba(255,120,30,0.9)' : 'rgba(220,60,20,0.9)';
         ctx.fillRect(px, py, size, size);
-      }
-    }
-  }
-
-  /** Weather systems (soft tinted discs with rain streaks / heat shimmer) and impact effects. */
-  private drawWeather(o: Overlay, s: number, ox: number, oy: number): void {
-    const ctx = this.ctx;
-    for (const sys of o.weather) {
-      const cx = ox + sys.x * s;
-      const cy = oy + sys.y * s;
-      const r = sys.radius * s;
-      const rain = sys.kind === WEATHER_KIND.RAIN;
-      const g = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r);
-      const a = 0.2 + 0.25 * sys.intensity;
-      g.addColorStop(0, rain ? `rgba(70,90,120,${a})` : `rgba(240,150,40,${a * 0.8})`);
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
-      if (rain) {
-        ctx.strokeStyle = 'rgba(200,225,255,0.7)';
-        ctx.lineWidth = Math.max(1, this.dpr);
-        const drops = Math.min(120, Math.round(r / 6));
-        const t = o.now / 400;
-        ctx.beginPath();
-        for (let k = 0; k < drops; k++) {
-          const ang = (k * 2.399) % (Math.PI * 2);
-          const rr = r * Math.sqrt(((k * 0.618) % 1));
-          const dx = cx + Math.cos(ang) * rr;
-          const dy = cy + Math.sin(ang) * rr + (((t + k * 0.37) % 1) - 0.5) * 12 * this.dpr;
-          ctx.moveTo(dx, dy);
-          ctx.lineTo(dx - 2 * this.dpr, dy + 7 * this.dpr);
-        }
-        ctx.stroke();
-      }
-    }
-    for (const e of o.effects) {
-      const age = (o.now - e.start) / 900;
-      if (age < 0 || age > 1) continue;
-      const cx = ox + e.x * s;
-      const cy = oy + e.y * s;
-      const r = e.radius * s * (0.3 + age);
-      ctx.lineWidth = Math.max(2, 4 * this.dpr * (1 - age));
-      ctx.strokeStyle = e.kind === 'meteor' ? `rgba(255,220,140,${1 - age})` : `rgba(200,170,120,${1 - age})`;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.stroke();
-      if (e.kind === 'meteor' && age < 0.3) {
-        ctx.fillStyle = `rgba(255,240,200,${0.6 * (1 - age / 0.3)})`;
-        ctx.beginPath();
-        ctx.arc(cx, cy, e.radius * s * 0.6, 0, Math.PI * 2);
-        ctx.fill();
       }
     }
   }

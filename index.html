@@ -104,7 +104,25 @@
               <option value="2">Extreme</option>
             </select></label>
           </div>
-          <p class="hint">Rain and drought move across the map, change moisture and temperature, fill or dry lakes and rivers, flood low land and wither plants. Pausing stops the weather.</p>
+          <p class="hint">Rain, snow, thunderstorms and droughts move across the map with the wind. They change moisture and temperature, fill or dry lakes and rivers, flood low land, green or wither plants, and put out (or feed) fires. Thunderstorms throw lightning that hurts creatures and can start fires. Pausing stops the weather.</p>
+        </section>
+
+        <section>
+          <h2>Natural disasters</h2>
+          <div class="row">
+            <label class="check"><input type="checkbox" id="disasters-auto" /> Disasters strike by themselves</label>
+          </div>
+          <div class="row">
+            <label>How often <select id="disasters-frequency">
+              <option value="0">Rare</option>
+              <option value="1" selected>Normal</option>
+              <option value="2">Frequent</option>
+            </select></label>
+          </div>
+          <div class="row"><label class="check"><input type="checkbox" id="disasters-meteors" checked /> Meteors (mostly small, sometimes large)</label></div>
+          <div class="row"><label class="check"><input type="checkbox" id="disasters-quakes" checked /> Earthquakes</label></div>
+          <div class="row"><label class="check"><input type="checkbox" id="disasters-wildfires" checked /> Wildfires (dry places only)</label></div>
+          <p class="hint">Off by default, so the world only changes when you ask. Rates are per game year on a medium map and grow with bigger maps. Natural disasters are never added to the undo history; the god powers still work either way.</p>
         </section>
 
         <section>
@@ -112,7 +130,10 @@
           <div class="row">
             <label class="check"><input type="checkbox" id="pass-overlay" /> Mark terrain lowland animals cannot cross</label>
           </div>
-          <p class="hint">Hatches mountains and snow. Deep and shallow sea and lakes block all land animals; rivers can be waded.</p>
+          <div class="row">
+            <label class="check"><input type="checkbox" id="ambient-clouds" checked /> Show fair-weather clouds</label>
+          </div>
+          <p class="hint">Hatches mountains and snow. Deep and shallow sea and lakes block all land animals; rivers can be waded. Rain, snow and storm clouds are always shown; the decorative clouds fade away when you zoom in, and are only a picture (they don't affect the simulation).</p>
         </section>
 
         <section>

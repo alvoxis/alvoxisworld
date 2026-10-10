@@ -82,6 +82,7 @@ const FEATURES = {
   snowPeak: feature(SPRITES.snowPeak),
   smallSnowPeak: feature(SPRITES.smallSnowPeak),
   reed: feature(SPRITES.reed),
+  bush: feature(SPRITES.bush),
 };
 
 /**
@@ -311,9 +312,22 @@ export class TerrainPainter {
         let feat: Feature | null = null;
         let count = 1;
         switch (id) {
-          case T.FOREST:
+          case T.FOREST: {
             feat = FEATURES.oak;
-            count = h1 < 0.55 ? 2 : 1;
+            // Dense in the interior, thinning toward the edge with clearings, so forests do not end in a hard line.
+            const ti = ty * world.width + tx;
+            const tt = world.terrain;
+            const W = world.width;
+            const open =
+              (tx > 0 && tt[ti - 1] !== T.FOREST && tt[ti - 1] !== T.JUNGLE) ||
+              (tx < W - 1 && tt[ti + 1] !== T.FOREST && tt[ti + 1] !== T.JUNGLE) ||
+              (ty > 0 && tt[ti - W] !== T.FOREST && tt[ti - W] !== T.JUNGLE) ||
+              (ty < world.height - 1 && tt[ti + W] !== T.FOREST && tt[ti + W] !== T.JUNGLE);
+            count = open ? (h1 < 0.7 ? 1 : 0) : h1 < 0.55 ? 2 : 1;
+            break;
+          }
+          case T.GRASS:
+            if (h1 < 0.06) feat = FEATURES.bush;
             break;
           case T.JUNGLE:
             feat = FEATURES.jungle;

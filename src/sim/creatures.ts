@@ -133,14 +133,20 @@ export const CAUSE = {
   METEOR: 9,
   EARTHQUAKE: 10,
   POISON: 11,
+  LIGHTNING: 12,
 } as const;
 export const CAUSE_NAMES = [
   'unknown', 'starvation', 'thirst', 'predators', 'old age', 'drowning', 'stranding', 'divine removal', 'fire',
-  'meteor', 'earthquake', 'poison',
+  'meteor', 'earthquake', 'poison', 'lightning',
 ];
 export const CAUSE_COUNT = CAUSE_NAMES.length;
 /** Damage per tick to an animal standing in fire, as a share of its max health. */
 const FIRE_DAMAGE = 0.08;
+/** How far (tiles) an animal in the wrong terrain looks for a place it can live, and health lost per tick meanwhile. */
+const ESCAPE_RADIUS = 8;
+const ESCAPE_DAMAGE = 0.045;
+/** Animals notice fire this many tiles away and run from it. */
+const FIRE_SIGHT = 3;
 
 export const MAX_CREATURES = 6000;
 
@@ -278,6 +284,8 @@ export class Creatures {
   envThirst: ((x: number, y: number) => number) | null = null;
   /** Set by the simulation when any tile is burning; skips fire checks otherwise. */
   anyFire = false;
+  /** Zones to run from (around meteors about to land), set by Simulation each tick; empty most of the time. */
+  dangers: Array<{ x: number; y: number; r: number }> = [];
 
   /** Shared grid search and water-distance field (see pathfinding.ts). */
   readonly pathfinder = new Pathfinder();
@@ -537,12 +545,12 @@ export class Creatures {
     return killed;
   }
 
-  /** A burning tile within 2 tiles of creature i, or -1. */
+  /** A burning tile within FIRE_SIGHT tiles of creature i, or -1. */
   private nearbyFire(world: World, i: number): number {
     const tx = Math.floor(this.x[i]);
     const ty = Math.floor(this.y[i]);
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
+    for (let dy = -FIRE_SIGHT; dy <= FIRE_SIGHT; dy++) {
+      for (let dx = -FIRE_SIGHT; dx <= FIRE_SIGHT; dx++) {
         const x = tx + dx;
         const y = ty + dy;
         if (world.inBounds(x, y) && world.fire[y * world.width + x]) return y * world.width + x;
@@ -642,8 +650,17 @@ export class Creatures {
       const cx = Math.floor(this.x[i]);
       const cy = Math.floor(this.y[i]);
       if (!habitatOk(world, sp, cx, cy)) {
-        this.kill(i, sp.move === MOVE.WATER ? CAUSE.STRANDED : CAUSE.DROWNED);
-        continue;
+        // Flooded, drained or hit by a crater: swim or scramble to the nearest place it can live
+        // (within ESCAPE_RADIUS), losing health meanwhile; with nowhere close, it dies at once.
+        const cause = sp.move === MOVE.WATER ? CAUSE.STRANDED : CAUSE.DROWNED;
+        if (!this.escape(world, i, sp, cx, cy)) {
+          this.kill(i, cause);
+          continue;
+        }
+        this.health[i] -= sp.maxHealth * ESCAPE_DAMAGE;
+        this.harm[i] = cause;
+        if (this.health[i] <= 0) this.kill(i, cause);
+        continue; // all of its effort goes into getting out
       }
 
       // Fire burns anything standing in it.
@@ -680,12 +697,64 @@ export class Creatures {
     this.compact();
   }
 
+  /**
+   * Moves a creature that is standing where it cannot live toward the nearest tile
+   * it can, within the distance it can cover before its health runs out. It ignores
+   * the usual terrain rules for this short dash (a fish must cross dry land to reach
+   * water, a grazer must wade out of a pond). Returns false if there is no such tile.
+   */
+  private escape(world: World, i: number, sp: SpeciesDef, cx: number, cy: number): boolean {
+    const v = this.speedOf(i) * 1.25;
+    const reach = Math.min(ESCAPE_RADIUS, (this.health[i] / (sp.maxHealth * ESCAPE_DAMAGE)) * v + 0.8);
+    let bx = -1;
+    let by = -1;
+    let bd = Infinity;
+    for (let r = 1; r <= Math.ceil(reach) && bx < 0; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (!Creatures.canEnter(world, sp.id, cx + dx, cy + dy)) continue;
+          const d = dx * dx + dy * dy;
+          if (d <= reach * reach && d < bd) {
+            bd = d;
+            bx = cx + dx;
+            by = cy + dy;
+          }
+        }
+      }
+    }
+    if (bx < 0) return false;
+    const ux = bx + 0.5 - this.x[i];
+    const uy = by + 0.5 - this.y[i];
+    const d = Math.hypot(ux, uy) || 1;
+    const step = Math.min(v, d);
+    this.dx[i] = ux / d;
+    this.dy[i] = uy / d;
+    this.x[i] += this.dx[i] * step;
+    this.y[i] += this.dy[i] * step;
+    this.clearPath(i);
+    this.state[i] = STATE.FLEE;
+    this.timer[i] = 4;
+    return true;
+  }
+
   /** Chooses a behaviour. Runs every few ticks per creature (staggered by id). */
   private think(world: World, rng: Rng, i: number): void {
     const sp = SPECIES[this.species[i]];
     const s = this.state[i];
 
     // 1. Danger first. Keep the current escape heading for a while to avoid dithering.
+    for (const z of this.dangers) {
+      if (Math.hypot(this.x[i] - z.x, this.y[i] - z.y) < z.r) {
+        this.tx[i] = z.x;
+        this.ty[i] = z.y;
+        this.clearPath(i);
+        this.state[i] = STATE.FLEE;
+        this.chooseHeading(world, rng, i, z.x, z.y);
+        this.timer[i] = 14;
+        return;
+      }
+    }
     const fire = this.anyFire ? this.nearbyFire(world, i) : -1;
     if (fire >= 0) {
       const fx = (fire % world.width) + 0.5;

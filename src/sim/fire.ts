@@ -22,6 +22,8 @@ export function fuelOf(id: number): number {
 export const MAX_BURNING = 3000;
 /** Damage per tick to an animal standing in fire, as a share of its max health. */
 export const FIRE_DAMAGE = 0.08;
+/** How strongly wind pushes fire (1 = ±100% along the wind axis). */
+const WIND_PUSH = 0.7;
 
 const NEIGHBOURS = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
@@ -63,6 +65,8 @@ export class Fire {
     if (!this.active.length) return;
     const list = this.active;
     this.active = [];
+    const windX = Math.cos(weather.wind);
+    const windY = Math.sin(weather.wind);
     for (const i of list) {
       if (!world.fire[i]) {
         this.count--; // put out by rain or undo since the last step
@@ -86,7 +90,10 @@ export class Fire {
         const fuel = fuelOf(world.terrain[j]);
         if (fuel <= 0) continue;
         const dryness = 1 - world.moisture[j] / 255;
-        const p = 0.12 * fuel * dryness * dryness * (wet < 0 ? 1.6 : 1);
+        // Fire runs with the wind (×1.7 downwind, ×0.3 upwind) and faster uphill (×1.25) than downhill (×0.85).
+        const wind = 1 + WIND_PUSH * (dx * windX + dy * windY);
+        const slope = world.heights[j] > world.heights[i] + 1 ? 1.25 : world.heights[j] < world.heights[i] - 1 ? 0.85 : 1;
+        const p = 0.12 * fuel * dryness * dryness * (wet < 0 ? 1.6 : 1) * wind * slope;
         if (rng.chance(p)) this.ignite(world, nx, ny);
       }
       world.fire[i]--;

@@ -5,8 +5,10 @@ import { WATER_FLAG, World } from '../world/world';
 export const WEATHER_KIND = { RAIN: 0, DROUGHT: 1 } as const;
 export type WeatherKind = (typeof WEATHER_KIND)[keyof typeof WEATHER_KIND];
 
-/** A moving weather system (storm or heat wave). Positions/radius in tiles. */
+/** A moving weather system (rain, snow, thunderstorm or heat wave). Positions/radius in tiles. */
 export interface WeatherSystem {
+  /** Stable id (clouds drawn for a system keep their shape while it moves). */
+  id: number;
   kind: WeatherKind;
   x: number;
   y: number;
@@ -17,6 +19,12 @@ export interface WeatherSystem {
   ttl: number;
   /** Created by a god power (stationary, doesn't count toward the automatic cap). */
   manual: boolean;
+  /** Rain with thunder: throws lightning (see Weather.strikes). Never set on droughts or snow. */
+  storm: boolean;
+  /** Precipitation under this system is currently falling as snow (updated every weather step). */
+  snow: boolean;
+  /** Snow everywhere under the system, whatever the temperature (the Snow god power). */
+  forceSnow: boolean;
 }
 
 export const SEVERITY = ['Mild', 'Normal', 'Extreme'] as const;
@@ -34,6 +42,12 @@ export const MAX_AUTO_SYSTEMS = 4;
 export const MAX_MANUAL_SYSTEMS = 6;
 /** Coarse grid cell size for fast "what's the weather here" lookups. */
 const CELL = 16;
+/** Precipitation falls as snow on tiles colder than this (0..255, about 0.39). */
+export const SNOW_TEMPERATURE = 100;
+/** Snow settles on tundra colder than this. */
+const SNOW_COVER_TEMPERATURE = 85;
+/** Most lightning strikes one weather step can produce (bounds work at any speed). */
+const MAX_STRIKES_PER_STEP = 6;
 
 /** Chance per weather step that a new automatic system forms, by season (spring…winter). */
 const FORM_CHANCE = [
@@ -42,6 +56,9 @@ const FORM_CHANCE = [
   { rain: 0.05, drought: 0.015 },
   { rain: 0.02, drought: 0.005 },
 ];
+
+/** Chance per weather step that a new automatic thunderstorm forms, by season (spring…winter). */
+const STORM_CHANCE = [0.008, 0.014, 0.007, 0.0015];
 
 const NEIGHBOURS = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
@@ -63,15 +80,48 @@ export class Weather {
   config: WeatherConfig = { auto: true, severity: 1 };
   /** Wind direction (radians); systems drift with it. */
   wind = 0;
+  /** Total wind drift so far in tiles: decorative clouds move by it, so they follow the wind and stop when paused. */
+  drift = { x: 0, y: 0 };
+  private nextId = 1;
+  /** Lightning strikes decided this step; Simulation resolves (and clears) them right after. */
+  strikes: Array<{ x: number; y: number }> = [];
   /** Coarse per-cell signed wetness (+1 rain … −1 drought), rebuilt each weather step. */
   private grid = new Float32Array(0);
   private gridW = 0;
   private gridH = 0;
   /** Counters for statistics and tests. */
-  stats = { floods: 0, drained: 0, refilled: 0, dried: 0, withered: 0 };
+  stats = { floods: 0, drained: 0, refilled: 0, dried: 0, withered: 0, greened: 0, snowCover: 0, melted: 0 };
 
-  addManual(kind: WeatherKind, x: number, y: number, radius: number, intensity: number): WeatherSystem {
-    const sys: WeatherSystem = { kind, x, y, radius, intensity: Math.min(1, intensity), ttl: 400, manual: true };
+  /** Adds ids and the newer fields to systems loaded from older saves. */
+  adopt(list: Array<Partial<WeatherSystem> & Pick<WeatherSystem, 'kind' | 'x' | 'y' | 'radius' | 'intensity' | 'ttl' | 'manual'>>): void {
+    this.systems = list.map((s) => ({
+      ...s,
+      id: s.id ?? this.nextId++,
+      storm: s.storm ?? false,
+      snow: s.snow ?? false,
+      forceSnow: s.forceSnow ?? false,
+    }));
+    this.nextId = Math.max(this.nextId, ...this.systems.map((s) => s.id + 1), 1);
+  }
+
+  /** Next system id (saved, so clouds stay stable across a reload). */
+  get idCounter(): number {
+    return this.nextId;
+  }
+
+  set idCounter(n: number) {
+    this.nextId = Math.max(1, n);
+  }
+
+  addManual(
+    kind: WeatherKind, x: number, y: number, radius: number, intensity: number, opts: { storm?: boolean; snow?: boolean } = {},
+  ): WeatherSystem {
+    const sys: WeatherSystem = {
+      id: this.nextId++, kind, x, y, radius, intensity: Math.min(1, intensity), ttl: 400, manual: true,
+      storm: !!opts.storm && kind === WEATHER_KIND.RAIN && !opts.snow,
+      snow: !!opts.snow,
+      forceSnow: !!opts.snow && kind === WEATHER_KIND.RAIN,
+    };
     this.systems.push(sys);
     // Cap god-power systems: the oldest manual one ends.
     const manual = this.systems.filter((s) => s.manual);
@@ -98,8 +148,18 @@ export class Weather {
     if (tick % WEATHER_STEP !== 0) return;
     this.form(world, rng, seasonIndex);
     this.move(world, rng);
-    for (const s of this.systems) this.apply(world, rng, s);
-    this.relax(world, rng);
+    this.strikes.length = 0;
+    for (const s of this.systems) {
+      this.apply(world, rng, s, seasonIndex);
+      if (s.storm && !s.snow && this.strikes.length < MAX_STRIKES_PER_STEP && rng.chance(0.3 + 0.45 * s.intensity)) {
+        const a = rng.next() * Math.PI * 2;
+        const r = Math.sqrt(rng.next()) * s.radius * 0.85;
+        const x = Math.floor(s.x + Math.cos(a) * r);
+        const y = Math.floor(s.y + Math.sin(a) * r);
+        if (world.inBounds(x, y)) this.strikes.push({ x, y });
+      }
+    }
+    this.relax(world, rng, seasonIndex);
     this.rebuildGrid(world);
   }
 
@@ -111,26 +171,33 @@ export class Weather {
     const freq = [0.5, 1, 1.8][sev];
     const strength = [0.35, 0.6, 0.9][sev];
     const c = FORM_CHANCE[season];
-    const make = (kind: WeatherKind) => {
+    const make = (kind: WeatherKind, storm = false) => {
       const size = Math.min(world.width, world.height);
       this.systems.push({
+        id: this.nextId++,
         kind,
         x: rng.next() * world.width,
         y: rng.next() * world.height,
-        radius: size * (0.08 + rng.next() * 0.12),
-        intensity: strength * (0.6 + rng.next() * 0.4),
-        ttl: 600 + Math.floor(rng.next() * 1200),
+        radius: size * (storm ? 0.06 + rng.next() * 0.08 : 0.08 + rng.next() * 0.12),
+        intensity: storm ? Math.min(1, strength * 1.3 * (0.75 + rng.next() * 0.25)) : strength * (0.6 + rng.next() * 0.4),
+        ttl: storm ? 500 + Math.floor(rng.next() * 700) : 600 + Math.floor(rng.next() * 1200),
         manual: false,
+        storm,
+        snow: false,
+        forceSnow: false,
       });
     };
     if (rng.chance(c.rain * freq)) make(WEATHER_KIND.RAIN);
     else if (rng.chance(c.drought * freq)) make(WEATHER_KIND.DROUGHT);
+    else if (rng.chance(STORM_CHANCE[season] * freq)) make(WEATHER_KIND.RAIN, true);
   }
 
   private move(world: World, rng: Rng): void {
     this.wind += (rng.next() - 0.5) * 0.3;
     const vx = Math.cos(this.wind) * 0.04 * WEATHER_STEP;
     const vy = Math.sin(this.wind) * 0.04 * WEATHER_STEP;
+    this.drift.x += vx;
+    this.drift.y += vy;
     this.systems = this.systems.filter((s) => {
       s.ttl -= WEATHER_STEP;
       if (!s.manual) {
@@ -138,12 +205,18 @@ export class Weather {
         s.y += vy;
       }
       const off = s.x < -s.radius || s.y < -s.radius || s.x > world.width + s.radius || s.y > world.height + s.radius;
+      if (s.kind === WEATHER_KIND.RAIN) {
+        const cx = Math.floor(s.x);
+        const cy = Math.floor(s.y);
+        s.snow = s.forceSnow || (world.inBounds(cx, cy) && world.temperature[world.idx(cx, cy)] < SNOW_TEMPERATURE);
+        if (s.snow) s.storm = false;
+      }
       return s.ttl > 0 && !off;
     });
   }
 
   /** Samples tiles under a system and applies its effects. */
-  private apply(world: World, rng: Rng, s: WeatherSystem): void {
+  private apply(world: World, rng: Rng, s: WeatherSystem, season: number): void {
     const area = Math.PI * s.radius * s.radius;
     const samples = Math.min(4000, Math.ceil(area * 0.06));
     const rain = s.kind === WEATHER_KIND.RAIN;
@@ -155,17 +228,52 @@ export class Weather {
       const y = Math.floor(s.y + Math.sin(a) * r);
       if (!world.inBounds(x, y)) continue;
       const i = world.idx(x, y);
-      if (rain) this.rainOn(world, rng, x, y, i, k);
-      else this.droughtOn(world, rng, x, y, i, k);
+      if (!rain) this.droughtOn(world, rng, x, y, i, k);
+      else if (s.forceSnow || world.temperature[i] < SNOW_TEMPERATURE) this.snowOn(world, rng, x, y, i, k);
+      else this.rainOn(world, rng, x, y, i, k, season);
     }
   }
 
-  private rainOn(world: World, rng: Rng, x: number, y: number, i: number, k: number): void {
+  /** Snowfall: wetter and colder, puts out fire, and settles on cold tundra. No floods, no refilling (frozen). */
+  private snowOn(world: World, rng: Rng, x: number, y: number, i: number, k: number): void {
+    world.moisture[i] = Math.min(255, world.moisture[i] + Math.round(8 * k));
+    world.temperature[i] = Math.max(0, world.temperature[i] - Math.round(2 * k));
+    if (world.fire[i]) world.fire[i] = 0;
+    if (
+      world.terrain[i] === T.TUNDRA && world.temperature[i] < SNOW_COVER_TEMPERATURE && !world.waterFlags[i] &&
+      rng.chance(0.1 * k)
+    ) {
+      world.under[i] = T.TUNDRA;
+      world.setWaterFlags(i, WATER_FLAG.SNOWCOVER);
+      world.setTerrain(x, y, T.SNOW);
+      this.stats.snowCover++;
+    }
+  }
+
+  /** Snow cover melts: the tile returns to the terrain beneath (unless it was repainted meanwhile). */
+  private melt(world: World, x: number, y: number, i: number): void {
+    world.setWaterFlags(i, world.waterFlags[i] & ~WATER_FLAG.SNOWCOVER);
+    if (world.terrain[i] === T.SNOW) world.setTerrain(x, y, world.under[i]);
+    this.stats.melted++;
+  }
+
+  private rainOn(world: World, rng: Rng, x: number, y: number, i: number, k: number, season: number): void {
     world.moisture[i] = Math.min(255, world.moisture[i] + Math.round(14 * k));
     world.temperature[i] = Math.max(0, world.temperature[i] - Math.round(3 * k));
     if (world.fire[i]) world.fire[i] = 0;
     const id = world.terrain[i];
     const flags = world.waterFlags[i];
+    if (flags & WATER_FLAG.SNOWCOVER) {
+      if (rng.chance(0.3)) this.melt(world, x, y, i); // rain washes snow away
+      return;
+    }
+    // Rain greens bare ground (faster than vegetation succession alone) when the soil is wet enough
+    // and it is not winter.
+    if (id === T.SOIL && season !== 3 && world.moisture[i] >= 110 && rng.chance(0.06 * k)) {
+      world.setTerrain(x, y, T.GRASS);
+      this.stats.greened++;
+      return;
+    }
     // Dried beds refill.
     if (!isWater(id) && flags & (WATER_FLAG.LAKE_BED | WATER_FLAG.RIVER_BED) && rng.chance(0.25 * k)) {
       world.setTerrain(x, y, flags & WATER_FLAG.LAKE_BED ? T.LAKE : T.RIVER);
@@ -197,6 +305,10 @@ export class Weather {
     world.temperature[i] = Math.min(255, world.temperature[i] + Math.round(3 * k));
     const id = world.terrain[i];
     const flags = world.waterFlags[i];
+    if (flags & WATER_FLAG.SNOWCOVER) {
+      if (rng.chance(0.5)) this.melt(world, x, y, i);
+      return;
+    }
     if (flags & WATER_FLAG.FLOOD) {
       if (rng.chance(0.5)) this.drain(world, x, y, i);
       return;
@@ -243,7 +355,7 @@ export class Weather {
    * Map-wide, sampled: climate relaxes toward its long-term values, flood water
    * evaporates, and dried beds slowly recover where the climate is not dry.
    */
-  private relax(world: World, rng: Rng): void {
+  private relax(world: World, rng: Rng, season: number): void {
     const n = world.width * world.height;
     const samples = Math.ceil(n * 0.02); // each tile ≈ once per game year
     for (let s = 0; s < samples; s++) {
@@ -254,10 +366,15 @@ export class Weather {
       if (!flags) continue;
       const x = i % world.width;
       const y = (i - x) / world.width;
-      if (this.wetnessAt(x, y) > 0) continue; // still raining here
-      if (flags & WATER_FLAG.FLOOD) {
+      if (this.wetnessAt(x, y) > 0) continue; // still raining or snowing here
+      if (flags & WATER_FLAG.SNOWCOVER) {
+        if (season !== 3 && rng.chance(0.3)) this.melt(world, x, y, i); // melts from spring to autumn
+      } else if (flags & WATER_FLAG.FLOOD) {
         if (rng.chance(0.3)) this.drain(world, x, y, i);
-      } else if (!isWater(world.terrain[i]) && this.wetnessAt(x, y) === 0 && world.moisture[i] >= world.baseMoisture[i] - 10) {
+      } else if (
+        flags & (WATER_FLAG.LAKE_BED | WATER_FLAG.RIVER_BED) && !isWater(world.terrain[i]) && this.wetnessAt(x, y) === 0 &&
+        world.moisture[i] >= world.baseMoisture[i] - 10
+      ) {
         if (rng.chance(0.3)) {
           world.setTerrain(x, y, flags & WATER_FLAG.LAKE_BED ? T.LAKE : T.RIVER);
           this.stats.refilled++;
@@ -297,13 +414,17 @@ export class Weather {
   }
 
   /** Overall state for the HUD. */
-  summary(): { rain: number; drought: number } {
+  summary(): { rain: number; storm: number; snow: number; drought: number } {
     let rain = 0;
+    let storm = 0;
+    let snow = 0;
     let drought = 0;
     for (const s of this.systems) {
-      if (s.kind === WEATHER_KIND.RAIN) rain++;
-      else drought++;
+      if (s.kind === WEATHER_KIND.DROUGHT) drought++;
+      else if (s.snow) snow++;
+      else if (s.storm) storm++;
+      else rain++;
     }
-    return { rain, drought };
+    return { rain, storm, snow, drought };
   }
 }
