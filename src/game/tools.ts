@@ -79,6 +79,8 @@ export const TOOLS: readonly Tool[] = [
   },
   paintTool(T.DEEP_WATER),
   paintTool(T.SHALLOW_WATER),
+  paintTool(T.LAKE),
+  paintTool(T.RIVER),
   paintTool(T.SAND),
   paintTool(T.GRASS),
   paintTool(T.FOREST),

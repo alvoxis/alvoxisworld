@@ -167,7 +167,7 @@ export class Renderer {
         const frost = this.frosted(i);
         // Foam where shallow water meets land.
         const foam =
-          id === T.SHALLOW_WATER
+          id === T.SHALLOW_WATER || id === T.LAKE
             ? [
                 y > 0 && !isWater(w.terrain[i - w.width]),
                 y < w.height - 1 && !isWater(w.terrain[i + w.width]),

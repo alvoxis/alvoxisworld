@@ -95,6 +95,13 @@ export function applyPaintBrush(world: World, s: BrushStroke, terrainId: number)
   forEachInCircle(world, s.x, s.y, s.radius, (x, y) => {
     const i = world.idx(x, y);
     const h = world.heights[i];
+    if (terrainId === T.RIVER || terrainId === T.LAKE) {
+      // Fresh water sits above sea level; on the sea floor it would just be ocean.
+      if (h < SEA_LEVEL) setHeight(world, x, y, SEA_LEVEL + 1);
+      else if (h >= MOUNTAIN_LEVEL) setHeight(world, x, y, HILLS_LEVEL - 4);
+      world.setTerrain(x, y, terrainId);
+      return;
+    }
     if (def.water) {
       const target = terrainId === T.DEEP_WATER ? SEA_LEVEL - 26 : SEA_LEVEL - 6;
       if (terrainId === T.DEEP_WATER ? h > target : h >= SEA_LEVEL || h < target) setHeight(world, x, y, target);

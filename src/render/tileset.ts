@@ -84,6 +84,22 @@ export class Tileset {
         if (v < 3) for (let k = 0; k < 3; k++) set(x + k, y, light);
         break;
       }
+      case T.RIVER: {
+        // Running water: bright, with diagonal flow streaks.
+        fill(base, 0.04);
+        const light = shade(base, 1.3);
+        for (let k = 0; k < 3; k++) {
+          const sx = (v * 2 + k * 3) % 8;
+          set(sx, (k * 3 + v) % 8, light);
+          set(sx + 1, (k * 3 + v + 1) % 8, light);
+        }
+        break;
+      }
+      case T.LAKE:
+        // Still fresh water: darker, calm, a few soft glints.
+        fill(base, 0.03);
+        if (v < 2) set(rng.int(1, 6), rng.int(1, 6), shade(base, 1.22));
+        break;
       case T.SAND:
         fill(base, 0.06);
         speckle(shade(base, 0.85), 4);

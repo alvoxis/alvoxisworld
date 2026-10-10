@@ -1,4 +1,5 @@
 import { Simplex2 } from '../core/noise';
+import { addHydrology } from './hydrology';
 import { classify, SEA_LEVEL } from './terrain';
 import { World } from './world';
 
@@ -26,7 +27,12 @@ const smoothstep = (a: number, b: number, v: number) => {
  * ranges, latitude-based temperature and noise-based moisture, then classifies biomes.
  * Fully deterministic for a given (width, height, seed).
  */
-export function generateWorld(width: number, height: number, seed: number): World {
+export interface GenerateOptions {
+  /** Add rivers and lakes (default true). */
+  hydrology?: boolean;
+}
+
+export function generateWorld(width: number, height: number, seed: number, options: GenerateOptions = {}): World {
   const world = new World(width, height, seed);
   const elevationNoise = new Simplex2(seed);
   const continentNoise = new Simplex2(seed ^ 0x9e3779b9);
@@ -65,6 +71,7 @@ export function generateWorld(width: number, height: number, seed: number): Worl
       world.terrain[i] = classify(h, temperature, moisture);
     }
   }
+  if (options.hydrology !== false) addHydrology(world);
   world.markAllDirty();
   return world;
 }
