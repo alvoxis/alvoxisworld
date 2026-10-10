@@ -1,0 +1,20 @@
+{
+  "name": "alvoxis-world-evolution",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ALVOXIS: World Evolution — a browser-based pixel-art sandbox god game.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run test && vite build"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vitest": "^2.1.9"
+  }
+}

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ALVOXIS" />
+    <meta name="theme-color" content="#0d1f3a" />
+    <meta name="description" content="ALVOXIS: World Evolution — a pixel-art sandbox god game in your browser." />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    <title>ALVOXIS: World Evolution</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="map" aria-label="World map"></canvas>
+
+      <header id="topbar">
+        <button id="btn-menu" class="chip" aria-label="Open menu">☰</button>
+        <div id="status">
+          <div id="date">Year 1 · Spring · Day 1</div>
+          <div id="pop"></div>
+        </div>
+        <div id="speed" role="group" aria-label="Time speed">
+          <button class="chip" data-speed="0" aria-label="Pause">⏸</button>
+          <button class="chip" data-speed="1">1×</button>
+          <button class="chip" data-speed="3">3×</button>
+          <button class="chip" data-speed="10">10×</button>
+        </div>
+      </header>
+
+      <div id="zoom" role="group" aria-label="Zoom">
+        <button class="chip" id="zoom-in" aria-label="Zoom in">＋</button>
+        <button class="chip" id="zoom-out" aria-label="Zoom out">－</button>
+        <button class="chip" id="zoom-fit" aria-label="Show whole world">⤢</button>
+      </div>
+
+      <section id="info" hidden>
+        <button class="chip close" id="info-close" aria-label="Close">✕</button>
+        <div id="info-body"></div>
+      </section>
+
+      <div id="toast" role="status" aria-live="polite"></div>
+
+      <footer id="toolbar">
+        <div id="tools" role="toolbar" aria-label="Tools"></div>
+        <div id="toolbar-bottom">
+          <nav id="cats" aria-label="Tool categories"></nav>
+          <div id="brush" aria-label="Brush size">
+            <button class="chip" id="brush-minus" aria-label="Smaller brush">－</button>
+            <span id="brush-size">4</span>
+            <button class="chip" id="brush-plus" aria-label="Larger brush">＋</button>
+          </div>
+        </div>
+      </footer>
+
+      <dialog id="menu">
+        <div class="menu-head">
+          <h1>ALVOXIS: World Evolution</h1>
+          <button class="chip" id="menu-close" aria-label="Close menu">✕</button>
+        </div>
+
+        <section>
+          <h2>New world</h2>
+          <div class="row">
+            <label>Seed <input id="seed" inputmode="text" autocomplete="off" placeholder="random" /></label>
+            <button class="btn" id="seed-random" type="button">🎲</button>
+          </div>
+          <div class="row">
+            <label>Size <select id="size"></select></label>
+            <button class="btn primary" id="generate" type="button">Generate</button>
+          </div>
+          <p class="hint" id="current-seed"></p>
+        </section>
+
+        <section>
+          <h2>Save &amp; load</h2>
+          <p class="hint">Saved in this browser (IndexedDB).</p>
+          <div id="slots"></div>
+        </section>
+
+        <section>
+          <h2>World statistics</h2>
+          <div id="stats"></div>
+        </section>
+
+        <section>
+          <h2>History</h2>
+          <ol id="history"></ol>
+        </section>
+
+        <section>
+          <h2>Controls</h2>
+          <ul class="hint">
+            <li>One finger / left mouse: use the selected tool. Hold to keep applying.</li>
+            <li>Two fingers: pan and pinch-zoom. Mouse: right-drag to pan, wheel to zoom.</li>
+            <li>Keyboard: arrows/WASD pan, +/− zoom, Space pause.</li>
+            <li>✋ Move tool: one-finger drag pans the map.</li>
+          </ul>
+        </section>
+      </dialog>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
