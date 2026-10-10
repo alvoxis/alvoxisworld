@@ -160,6 +160,14 @@ Same method as the previous milestone (headless Chromium, iPhone 13 emulation, `
 
 The localisation and Settings code adds no per-frame work (strings are built on change, the status line was already rebuilt four times a second). Performance mode in this software-rendered headless browser changes little (the canvas is 390 px instead of 780 px wide, frame cost within noise); its intended benefit is on devices with a high pixel density and a GPU, which has not been measured here. The simulation is identical in every mode.
 
+## Human settlements (0.10–0.13)
+
+`npm run bench:civ` (Node, 512×320, seed 77, 2,400 ticks after a 600-tick warm-up, medians of 3): the same ~12 groups of people cost **0.48 ms/tick** without settlements and **0.57 ms/tick** with 12 developing settlements (~420 members, ~100 buildings). The settlement step runs once per 20 ticks and costs about 2.3 ms when it runs (0.11 ms averaged over ticks), well inside the 12 ms simulation budget. Drawing buildings strokes only those in view. Browser frame cost with settlements and phone behaviour were **not measured**; no physical iPhone was used.
+
+## Autonomous living world (0.14)
+
+`npm run bench:civ` (Node, 512×320, seed 77, 2,400 ticks after a 600-tick warm-up, medians of 3, about 12 groups of 12 people at the start): **0.43 ms/tick** with group handling switched off, **0.56 ms/tick** with groups and autonomous settling (people then found settlements, breed to the housing limit and build, ~180 members, ~40 buildings), **0.55 ms/tick** with 12 developing settlements (~440 members, ~110 buildings). The group step runs once per 30 ticks. The difference mixes the group code with the larger population and the settlement economy that autonomous founding causes, so the cost of the groups alone was not isolated. Drawing: settlement borders and buildings are still drawn only for what is in view; creatures now have a minimum size (no extra cost per creature). Browser frame cost and phones were **not measured**; no physical iPhone was used.
+
 ## Earlier milestones
 
 ### Milestone 4: simulation benchmarks (Node, medians of 3 runs)

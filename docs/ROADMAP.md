@@ -29,6 +29,15 @@ Russian, English and Simplified Chinese interface with instant switching; SVG to
 ## ✅ Civilization Foundation (done)
 Settlements of existing land animals: founding conditions, exact population, real territory and borders, card, growth and disappearance, save format 8. No people, economy, research, diplomacy or wars yet.
 
+## ✅ Humans Foundation 0.9.0 (done)
+People as a sixth species with the existing creature rules, available from the start; prey of raptors and tyrants; kept apart from animal settlements. Save format 9. Next logical step: human settlements (a separate settlement kind with its own founding rules) before any buildings or resources.
+
+## ✅ Civilization 0.10–0.13 (done)
+Human settlements, food/wood/stone, five buildings, housing-limited growth with camp/village/town stages, three technologies. Save format 10. Next logical step: people that really work (jobs and walking to workplaces), roads, more resources and buildings, then states, diplomacy and wars as separate stages.
+
+## ✅ Autonomous Living World 0.14 (done)
+Creatures that are easy to see and pick; groups; people that find homes, found settlements, join, leave and move on by themselves; species civilization profiles. Save format 11. Next logical step: people that work (jobs, walking to buildings), roads, a second people with its own profile, tuning of the site scoring on real worlds.
+
 ## Milestone 6: Richer nature (next)
 - More fauna as data: sauropods, pterosaurs, crocodiles (amphibious habitat), small mammals. Herds, nesting and eggs, sexes, seasonal migration.
 - Snow cover beyond tundra, erosion and rivers carving new courses.

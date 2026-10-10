@@ -15,10 +15,10 @@ Browser pixel-art sandbox god game. TypeScript (strict), Vite, Vitest, Canvas 2D
 ## Project rules that always apply
 
 - Every button/option must really work; no decorative or mock controls. Do not present unimplemented things as done.
-- Keep saves compatible: current `SAVE_VERSION` is 8 and loads versions 1–8. Add new save fields as optional and sanitise them on load. Bump the version only when needed and add a migration/test.
+- Keep saves compatible: current `SAVE_VERSION` is 11 and loads versions 1–11. Add new save fields as optional and sanitise them on load. Bump the version only when needed and add a migration/test.
 - Preserve species coexistence and never auto-remove dinosaurs or other species. Simulation stays deterministic (fixed 10 ticks/s; use the sim RNG, not `Math.random`).
 - Settings and quality options change drawing only, never simulation rules.
-- Settlements exist (`src/sim/settlements.ts`, save v8) as the foundation for later civilization work. Still out of scope unless explicitly requested: states, research, diplomacy, wars, rulers, people/hybrid races, inventory, the "Alvoxis Energy" economy, real payments. Promo codes are a local, non-secure test prototype and must not be described otherwise.
+- Settlements (`src/sim/settlements.ts`) and the human economy (`src/sim/civ.ts`: food/wood/stone, five buildings, stages, three technologies) exist. Still out of scope unless explicitly requested: states, diplomacy, wars, rulers, trade, hybrid races, inventory, the "Alvoxis Energy" economy, real payments. Promo codes are a local, non-secure test prototype and must not be described otherwise.
 - No pull requests unless asked.
 
 ## Localisation (ru / en / zh-CN)
@@ -40,10 +40,10 @@ Browser pixel-art sandbox god game. TypeScript (strict), Vite, Vitest, Canvas 2D
 ## Map (where to look)
 
 - `src/world/` terrain, `World` layers (typed arrays), generator, hydrology, slopes (`passability.ts`).
-- `src/sim/` `settlements.ts`, `simulation.ts` (tick loop, god powers, history), `creatures.ts` (SoA creatures, species data), `pathfinding.ts` / `regions.ts` / `navjobs.ts` (navigation, workers), `weather.ts`, `fire.ts`, `sky.ts` (meteors, showers), `disasters.ts`, `effects.ts`, `foodmap.ts`, `clock.ts`.
+- `src/sim/` `settlements.ts`, `civ.ts`, `groups.ts` (groups of free people, autonomous settling), `sites.ts` (where to settle), `simulation.ts` (tick loop, god powers, history), `creatures.ts` (SoA creatures, species data), `pathfinding.ts` / `regions.ts` / `navjobs.ts` (navigation, workers), `weather.ts`, `fire.ts`, `sky.ts` (meteors, showers), `disasters.ts`, `effects.ts`, `foodmap.ts`, `clock.ts`.
 - `src/game/` `game.ts` (controller, loop, save/load hooks), `tools.ts` (tool list, area rings), `settings.ts`, `promo.ts`, `undo.ts`, `timecontrol.ts`.
 - `src/render/` `renderer.ts`, `painter.ts` (terrain chunks), `skyfx.ts`, `tileset.ts`, `camera.ts`.
-- `src/ui/` `hud.ts` (all DOM UI and Settings), `icons.ts`, `minimap.ts`. `index.html` + `src/styles.css`.
+- `src/ui/` `hud.ts` (all DOM UI and Settings), `settlementcard.ts`, `icons.ts`, `minimap.ts`. `index.html` + `src/styles.css`.
 - `src/save/` `serialize.ts` (format), `storage.ts` (IndexedDB slots), `file.ts` (export/import).
 - `src/i18n/`, `src/app/` (version, changelog, diagnostics).
 - `tests/` one file per area (e.g. `creatures`, `sky`, `passability`, `areas`, `i18n`, `settings`, `savefile`, `render`).

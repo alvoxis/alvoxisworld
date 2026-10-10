@@ -236,3 +236,28 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
 - Rendering: `Renderer.drawSettlements` strokes the edge list segments in view; the settings flag `borders` only controls drawing.
 - Saving: `SaveData.settlements?` (save version 8); `importState` validates ids, species, coordinates and members, then rebuilds territory.
 - Extension points for later stages (not implemented): species/race of members is per settlement; a state would own several settlements by id; events already carry codes and parameters for history and translation.
+
+## People (`HUMAN` in `src/sim/creatures.ts`)
+
+- One more `SPECIES` entry (id 5, `sentient: true`, move class LOWLAND, plant food). Everything per species (counts, crowding, statistics, food-map groups, sprites, spawn tool, translations) is derived from `SPECIES`, so no second code path exists. The sprite is `PIXEL_ART[5]` in `render/tileset.ts`.
+- Predation uses the existing prey lists (`RAPTOR`, `TYRANT` now list `HUMAN`); fleeing uses `PREDATORS_OF`. There is no separate human loop.
+- `sentient` is the hook for later stages: animal settlements skip sentient species; a human settlement/civilization layer can attach to those creatures through the same ids, hooks (`onBirth`, `onDeath`) and save block pattern as `settlements`.
+- Save version 9 adds `CreatureSave.statSpecies` so per-species statistic arrays can be read back after the species list grows.
+
+## Human civilization layer (`src/sim/civ.ts`)
+
+- `Settlement.civ?` exists only for sentient species. `Settlements.step` (every 20 ticks) calls `civStep` per human settlement; `civStep` does hazards → construction → production → meals → research → stage → optional auto management. All numbers are deterministic (no random generator), and world edits are limited to felling the nearest forest tile (`world.setTerrain`).
+- Hooks into existing systems: `Creatures.breedBlock(id)` (housing stops births in `roomToBreed`), meals change `Creatures.hunger`, joining respects `housing()`. Territory, border lists and membership are the ones from the animal settlement code.
+- `Settlements.build()` / `research()` are the only player actions; the card and the auto manager both go through them (`startBuilding`, `startResearch`).
+- Rendering: `Renderer.drawBuilding` draws only buildings in view from the settlement lists. The card (`ui/settlementcard.ts`) builds its DOM once per settlement and refreshes text, so taps are not lost.
+- Saving: `SettlementsSave.list[].civ` and `.auto` (save format 10), `importCiv` validates everything.
+- Cost: `npm run bench:civ` (12 settlements, ~420 people on a 512×320 map): 0.57 ms/tick vs 0.48 ms/tick with the same people and no settlements; the settlement step is about 2.3 ms on the one tick in twenty where it runs (Node, one run of three medians; browser and phone cost not measured).
+
+## Groups and autonomous settling (`groups.ts`, `sites.ts`)
+
+- `Groups.step` runs every 30 ticks (after `Settlements.step`) and does one pass over the creatures: free sentient creatures are assigned to groups by distance, groups are re-centred, members drift out, loners cluster (single link, 4 tiles). Decisions run per group when its `next` tick comes. No random numbers: candidate places come from `hash2(group id, decision number, k)`.
+- A group never moves creatures. `Groups.goalOf(id)` is read through `Creatures.groupGoal` when a creature has no need; `think` plans a route (`planTo`) and sets state `TRAVEL` (id 8). Without a goal, behaviour is identical to before (animals are untouched).
+- `assessSite` is the single definition of a good home (also used to refuse sites: ground, claimed, gap, water, danger, food, space). Founding goes through `Settlements.found(..., 'human', {minFounders, species})`, so ownership, members, events and the economy are the existing ones.
+- Emigration: `civStep` returns a pressure number, `Settlements` keeps `stress`, and `emigrate` frees members and calls `onEmigrate`, which creates a group that avoids the settlement for a while.
+- Extension point for other peoples: `SpeciesDef.civ` (`CivProfile`). Compatible-species lists are data only for now (settlements and groups hold one species).
+- Cost: one pass over the creatures per 30 ticks plus a few site assessments (each about 300 tiles and one scan of the creatures) per group decision, a decision every 150–1,200 ticks per group. `npm run bench:civ` gives the settlement part; the group part was not measured separately.
