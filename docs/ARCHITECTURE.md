@@ -20,16 +20,19 @@
 ```
 src/
   core/        Pure utilities: seeded RNG (mulberry32), coordinate hash, simplex noise + fBm
-  world/       World data model (typed-array grids, dirty-chunk tracking, passability version),
-               terrain catalogue + biome classification, procedural generator, hydrology
-               (rivers/lakes), terrain brushes
-  sim/         Fixed-timestep Simulation, calendar/seasons, vegetation (random ticks),
-               creatures (structure-of-arrays + spatial hash), pathfinding (A*, BFS, water field)
+  world/       World data model (typed-array layers, dirty-chunk tracking, passability version,
+               undo hook), terrain catalogue + biome classification, procedural generator,
+               hydrology (rivers/lakes), terrain brushes, world-generation worker (genjobs, gen.worker)
+  sim/         Fixed-timestep Simulation, calendar/seasons, vegetation (random ticks), weather,
+               fire, disasters (meteor/earthquake), creatures (structure-of-arrays + spatial hash),
+               pathfinding (A*, BFS, water field), regions (hierarchical routes), food map,
+               navigation worker (navjobs, nav.worker)
   render/      Camera (pan/zoom maths), procedural pixel-art tileset & sprites, Renderer
   input/       Unified pointer (touch/mouse/pen), pinch, wheel and keyboard handling
-  game/        Game controller (loop, strokes, actions) and the tool catalogue
+  game/        Game controller (loop, strokes, actions), tool catalogue, undo history
   save/        Serialisation (pure, tested) and IndexedDB slot storage
-  ui/          DOM HUD: toolbar, categories, top bar, menu (new world, save/load, stats, history)
+  ui/          DOM HUD (toolbar, categories, top bar, menu: new world, weather, save/load, stats,
+               history) and the minimap
   main.ts      Boot
 tests/         Vitest suites (world, brushes, simulation, save/load, camera)
 ```
@@ -45,6 +48,17 @@ Dependencies only point downward: `ui → game → (render, input, save) → sim
 | `heights` | Elevation, 0–255. `SEA_LEVEL = 110`. |
 | `terrain` | Terrain id (see `terrain.ts`). |
 | `temperature`, `moisture` | Climate, 0–255. Drives biome classification and vegetation spread. |
+
+Since Milestone 4, these layers are also kept per tile:
+
+| Layer | Meaning |
+|---|---|
+| `baseTemperature`, `baseMoisture` | Long-term climate; weather pushes the current values around and they relax back. |
+| `waterFlags` | `LAKE_BED` / `RIVER_BED` (the tile is or was lake/river and can refill), `FLOOD` (temporary water). |
+| `under` | Terrain under flood water, restored when it drains. |
+| `fire` | Remaining burn ticks. |
+
+Player-driven changes go through `World.setTerrain / setHeight / setClimate / setWaterFlags`, which call `touch(i)` first so the undo recorder can save the tile's previous values.
 
 The map is split into 32×32-tile **chunks**. Every mutation goes through `setTerrain` or a brush, which calls `markDirty(x, y)` and also flags neighbouring chunks, because hill shading reads neighbour heights. The renderer consumes `dirtyChunks` once per frame.
 
@@ -67,6 +81,42 @@ Rivers and lakes are ordinary terrain ids (`T.RIVER`, `T.LAKE`, both `isWater`),
 - **Budgets**: every search has its own node limit, and all searches in one tick share `NODE_BUDGET` (40,000 expansions). When the budget is spent a search returns `NO_BUDGET` and the creature retries on a later decision, so search work can never stall the tick.
 - **`WaterField`**: a multi-source BFS distance map, per land class, to the nearest drink spot. Thirsty animals walk down it one step at a time. It is rebuilt when `World.passVersion` has changed, at most every 10 ticks. `passVersion` is bumped by `setTerrain` only when a tile changes movement class (land, sea or lake, river, mountain or snow). Grazing grass into soil, for example, doesn't trigger a rebuild.
 - **Routes** are stored per creature: up to `PATH_MAX` (32) tile indices, plus position and goal. Each waypoint is re-checked with `passable` before use, so terrain edits invalidate routes lazily, and longer routes are re-planned when the stored part runs out.
+
+### Weather, fire and disasters (`src/sim/weather.ts`, `fire.ts`, `disasters.ts`)
+
+- **Order in each tick:** `Simulation.step` runs weather, then fire, then vegetation, then creatures. Everything uses the simulation RNG, so it's deterministic and stops when paused.
+- **Weather** keeps a short list of moving systems (rain or drought, with position, radius, intensity and lifetime). Every 10 ticks it:
+  - may form new automatic systems (by season and severity, capped);
+  - moves them with the wind;
+  - applies effects to a sample of the tiles under each system (about 6% of the area);
+  - relaxes 2% of the map's tiles back toward long-term climate, where floods also drain and dried beds refill.
+  It also keeps a coarse wetness grid (16×16-tile cells) for O(1) lookups: animals' thirst and fire suppression.
+- **Fire** keeps a list of burning tiles plus `world.fire`. Each tick a burning tile can ignite its four neighbours (probability is fuel × dryness², higher in drought) and burns down. Burned land becomes soil. An exact counter enforces `MAX_BURNING` (3,000).
+- **Disasters** are plain functions that edit terrain through the world setters (so undo covers them) and hurt creatures through `Creatures.hurtInCircle` with their own causes of death.
+
+### Undo (`src/game/undo.ts`)
+
+- One action is one stroke (or one tap of a one-shot power).
+- `UndoHistory.record()` installs `world.recorder` only while the tool itself runs, so simulation changes between applications are never captured.
+- The first time a tile is touched, its 8 per-tile values are saved. Undo writes them back in reverse, bumps `passVersion` when movement classes change, and puts out fires on restored tiles.
+- History is bounded: 40 actions and 400,000 tiles.
+
+### Workers (`src/world/genjobs.ts`, `src/sim/navjobs.ts`)
+
+Both workers follow the same pattern:
+1. A pure job function (`computeWorld`, `computeNav`) that never throws; errors come back as results.
+2. A tiny worker entry file, bundled by Vite through `new Worker(new URL(...), { type: 'module' })`.
+3. A main-thread client that falls back to running the same function locally.
+
+Navigation rebuilds are installed at a fixed tick (request + `NAV_DELAY`), so results never depend on timing. See docs/PERFORMANCE.md for the investigation.
+
+### Long routes and food (`src/sim/regions.ts`, `src/sim/foodmap.ts`)
+
+- **`RegionGraph`** splits the map into 16×16 cells, labels connected walkable areas in each cell (per movement class), and links regions across cell borders.
+  - `connected(a, b)` is an O(1) reachability test.
+  - `waypoint(s, goal)` runs A* over regions (a few thousand nodes on the largest map) and returns a tile about `LEG` (24) tiles along the route.
+  - `Creatures.planTo` uses it for any goal further than a leg. `continueRoute` plans the next leg when the stored one runs out.
+- **`FoodMap`** counts food tiles per 8×8 cell for each distinct diet. `seekFood` skips its search when nothing edible is in sight, and `migrateToFood` heads for the nearest cell with *reachable* food.
 
 ### Creature simulation (`src/sim/creatures.ts`)
 
