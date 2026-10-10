@@ -657,3 +657,40 @@ label.check input {
     display: inline;
   }
 }
+
+/* Save file export/import */
+.row.file-row {
+  margin-top: 8px;
+  align-items: stretch;
+}
+
+.row.file-row .chip.wide,
+.row label.file-pick {
+  flex: 1;
+  height: 44px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  font-size: 14px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* The real input covers the label (invisible) so taps reach it in every browser. */
+.file-pick input[type='file'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  padding: 0;
+  border: 0;
+}
+
+.file-status {
+  color: var(--text);
+  word-break: break-word;
+}

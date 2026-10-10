@@ -2,7 +2,8 @@ import { seedFromString } from '../core/rng';
 import { InputController } from '../input/input';
 import { Camera } from '../render/camera';
 import { Renderer, type BrushCursor, type VisualEffect } from '../render/renderer';
-import { deserializeInto, serialize } from '../save/serialize';
+import { deserializeInto, serialize, type SaveData } from '../save/serialize';
+import { decodeSaveFile, encodeSaveFile, saveFileName, type ImportReport } from '../save/file';
 import { loadFromSlot, saveToSlot, type SlotId } from '../save/storage';
 import { CAUSE, CAUSE_NAMES, SPECIES, type CreatureInfo } from '../sim/creatures';
 import { EFFECT_DURATIONS } from '../sim/effects';
@@ -14,7 +15,7 @@ import { generateWorldAsync, type GenWorkerLike } from '../world/genjobs';
 import { SEA_LEVEL, TERRAIN } from '../world/terrain';
 import { World } from '../world/world';
 import { BRUSH_SIZES, toolById, type Tool, type ToolContext } from './tools';
-import { UndoHistory } from './undo';
+import { UndoHistory, type UndoResult } from './undo';
 
 export interface TileReport {
   x: number;
@@ -198,9 +199,14 @@ export class Game {
     this.intensity = Math.max(1, Math.min(3, Math.round(level)));
   }
 
-  /** Reverts the last undoable action. Returns its label, or null if nothing to undo. */
-  undoLast(): string | null {
+  /** Reverts the last undoable action (tiles the world changed since are kept). Null if nothing to undo. */
+  undoLast(): UndoResult | null {
     return this.undo.undo(this.sim.world);
+  }
+
+  /** Re-applies the last undone action. Null if nothing to redo. */
+  redoLast(): UndoResult | null {
+    return this.undo.redo(this.sim.world);
   }
 
   setBrushIndex(i: number): void {
@@ -379,12 +385,34 @@ export class Game {
   async load(slot: SlotId): Promise<boolean> {
     const data = await loadFromSlot(slot);
     if (!data) return false;
+    this.install(data);
+    return true;
+  }
+
+  /** The current world as a save file (gzip-compressed JSON when the browser supports it). */
+  async exportFile(): Promise<{ bytes: Uint8Array; name: string }> {
+    const data = serialize(this.sim);
+    const { bytes } = await encodeSaveFile(data);
+    return { bytes, name: saveFileName(data, `y${this.sim.date.year}`) };
+  }
+
+  /**
+   * Validates a save file completely before touching the running world; throws
+   * SaveFileError (world unchanged) for anything malformed.
+   */
+  async importFile(bytes: Uint8Array): Promise<ImportReport> {
+    const report = await decodeSaveFile(bytes);
+    this.install(report.data);
+    this.sim.log(`World ${report.data.seed} was imported from a file.`);
+    return report;
+  }
+
+  private install(data: SaveData): void {
     const world = deserializeInto(this.sim, data);
     this.attachWorld(world);
     this.camera.fit();
     this.select(0);
     this.undo.clear();
     this.onWorldChanged();
-    return true;
   }
 }

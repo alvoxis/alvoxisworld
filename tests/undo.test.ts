@@ -31,7 +31,7 @@ describe('undo', () => {
     u.end();
     expect(u.size).toBe(1); // one stroke = one action
     expect(snapshot(w)).not.toEqual(before);
-    expect(u.undo(w)).toBe('Raise');
+    expect(u.undo(w)).toEqual({ label: 'Raise', applied: expect.any(Number), skipped: 0 });
     expect(snapshot(w)).toEqual(before);
     expect(u.canUndo).toBe(false);
   });
@@ -111,6 +111,102 @@ describe('undo', () => {
     expect(u.nextLabel).toBe(`Raise ${MAX_UNDO_ACTIONS + 9}`);
     u.clear();
     expect(u.canUndo).toBe(false);
+  });
+});
+
+describe('redo and conflict checks', () => {
+  it('redo re-applies an undone action exactly, in order', () => {
+    const w = generateWorld(128, 96, 11);
+    const s0 = snapshot(w);
+    const u = new UndoHistory();
+    u.record(w, 'A', () => applyPaintBrush(w, { x: 40, y: 40, radius: 5 }, T.DESERT));
+    const s1 = snapshot(w);
+    u.record(w, 'B', () => applyHeightBrush(w, { x: 42, y: 40, radius: 6 }, 1));
+    const s2 = snapshot(w);
+    expect(u.canRedo).toBe(false);
+    expect(u.undo(w)?.label).toBe('B');
+    expect(u.undo(w)?.label).toBe('A');
+    expect(snapshot(w)).toEqual(s0);
+    expect(u.nextRedoLabel).toBe('A');
+    expect(u.redo(w)).toEqual({ label: 'A', applied: expect.any(Number), skipped: 0 });
+    expect(snapshot(w)).toEqual(s1);
+    expect(u.redo(w)?.label).toBe('B');
+    expect(snapshot(w)).toEqual(s2);
+    expect(u.canRedo).toBe(false);
+    expect(u.redo(w)).toBeNull();
+  });
+
+  it('a new action clears the redo stack', () => {
+    const w = generateWorld(96, 64, 12);
+    const u = new UndoHistory();
+    u.record(w, 'A', () => applyHeightBrush(w, { x: 20, y: 20, radius: 3 }, 1));
+    u.undo(w);
+    expect(u.canRedo).toBe(true);
+    u.record(w, 'B', () => applyHeightBrush(w, { x: 50, y: 30, radius: 3 }, 1));
+    expect(u.canRedo).toBe(false);
+    expect(u.nextLabel).toBe('B');
+    expect(u.size).toBe(1);
+  });
+
+  it('undo keeps tiles the simulation changed after the action', () => {
+    const w = generateWorld(128, 96, 13);
+    const u = new UndoHistory();
+    u.record(w, 'Grass', () => applyPaintBrush(w, { x: 60.5, y: 40.5, radius: 3 }, T.GRASS));
+    // Later "simulation" change on one painted tile (e.g. grazing turns grass to soil).
+    const i = 40 * 128 + 60;
+    expect(w.terrain[i]).toBe(T.GRASS);
+    w.setTerrain(60, 40, T.SOIL);
+    const r = u.undo(w)!;
+    expect(r.skipped).toBe(1);
+    expect(r.applied).toBeGreaterThan(10);
+    expect(w.terrain[i]).toBe(T.SOIL); // newer state kept, not overwritten with stale terrain
+    // Redo also skips it: the tile no longer holds what undo would have restored.
+    const rr = u.redo(w)!;
+    expect(rr.skipped).toBe(1);
+    expect(w.terrain[i]).toBe(T.SOIL);
+  });
+
+  it('weather on current climate does not block undo, and is left alone', () => {
+    const w = generateWorld(128, 96, 14);
+    const u = new UndoHistory();
+    u.record(w, 'Raise', () => applyHeightBrush(w, { x: 60.5, y: 40.5, radius: 3 }, 1));
+    const i = 40 * 128 + 60;
+    w.moisture[i] = 250; // rain passing over
+    const r = u.undo(w)!;
+    expect(r.skipped).toBe(0);
+    expect(w.moisture[i]).toBe(250);
+  });
+
+  it('undo of a flood is skipped where rain later changed the tile, applied elsewhere', () => {
+    const w = generateWorld(128, 96, 15);
+    const sim = new Simulation(w);
+    sim.weather.config.auto = false;
+    const u = new UndoHistory();
+    let land = -1;
+    for (let i = 0; i < w.terrain.length && land < 0; i++) if (w.terrain[i] === T.GRASS) land = i;
+    const x = land % 128;
+    const y = Math.floor(land / 128);
+    u.record(w, 'Flood', () => sim.flood(x + 0.5, y + 0.5, 3));
+    expect(w.terrain[land]).toBe(T.LAKE);
+    w.setTerrain(x, y, T.SAND); // something else changed it afterwards
+    const r = u.undo(w)!;
+    expect(r.skipped).toBe(1);
+    expect(w.terrain[land]).toBe(T.SAND);
+  });
+
+  it('bounds memory across undo and redo stacks', () => {
+    const w = generateWorld(96, 64, 16);
+    const u = new UndoHistory();
+    for (let k = 0; k < 5; k++) u.record(w, `R${k}`, () => applyHeightBrush(w, { x: 20 + k * 10, y: 30, radius: 2 }, 1));
+    const stored = u.storedTiles;
+    u.undo(w);
+    u.undo(w);
+    expect(u.storedTiles).toBe(stored); // moved, not copied
+    u.record(w, 'New', () => applyHeightBrush(w, { x: 80, y: 10, radius: 1 }, 1));
+    expect(u.storedTiles).toBeLessThan(stored);
+    u.clear();
+    expect(u.storedTiles).toBe(0);
+    expect(u.canRedo).toBe(false);
   });
 });
 

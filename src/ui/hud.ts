@@ -1,6 +1,7 @@
 import { CATEGORIES, TOOLS, BRUSH_SIZES, type Tool, type ToolCategory } from '../game/tools';
 import type { Game, TileReport } from '../game/game';
 import { creatureSprite } from '../render/tileset';
+import { MAX_FILE_BYTES } from '../save/file';
 import { SLOTS, listSlots, deleteSlot, type SlotId } from '../save/storage';
 import { dateFromTick } from '../sim/clock';
 import { CAUSE_NAMES, SPECIES } from '../sim/creatures';
@@ -59,7 +60,12 @@ export class Hud {
         e.preventDefault();
         this.game.togglePause();
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      const mod = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        this.doRedo();
+      } else if (mod && key === 'z') {
         e.preventDefault();
         this.doUndo();
       }
@@ -154,14 +160,23 @@ export class Hud {
   }
 
   private syncUndo(): void {
+    const u = this.game.undo;
     const b = $<HTMLButtonElement>('undo');
-    b.disabled = !this.game.undo.canUndo;
-    b.title = this.game.undo.nextLabel ? `Undo ${this.game.undo.nextLabel}` : 'Nothing to undo';
+    b.disabled = !u.canUndo;
+    b.title = u.nextLabel ? `Undo ${u.nextLabel}` : 'Nothing to undo';
+    const r = $<HTMLButtonElement>('redo');
+    r.disabled = !u.canRedo;
+    r.title = u.nextRedoLabel ? `Redo ${u.nextRedoLabel}` : 'Nothing to redo';
   }
 
   private doUndo(): void {
-    const label = this.game.undoLast();
-    this.toast(label ? `Undid: ${label}` : 'Nothing to undo');
+    const r = this.game.undoLast();
+    this.toast(r ? `Undid: ${r.label}${keptNote(r.skipped)}` : 'Nothing to undo');
+  }
+
+  private doRedo(): void {
+    const r = this.game.redoLast();
+    this.toast(r ? `Redid: ${r.label}${keptNote(r.skipped)}` : 'Nothing to redo');
   }
 
   private bindBrush(): void {
@@ -209,6 +224,7 @@ export class Hud {
     $('zoom-out').addEventListener('click', () => this.game.input.zoomCenter(1 / 1.4));
     $('zoom-fit').addEventListener('click', () => this.game.camera.fit());
     $('undo').addEventListener('click', () => this.doUndo());
+    $('redo').addEventListener('click', () => this.doRedo());
     $('minimap-toggle').addEventListener('click', () => {
       const mm = $('minimap');
       mm.hidden = !mm.hidden;
@@ -447,6 +463,54 @@ export class Hud {
 
   // ---- menu --------------------------------------------------------------
 
+  private bindSaveFiles(): void {
+    // The menu is a modal dialog (top layer), so results are shown inside it as well as in a toast.
+    const status = (text: string) => {
+      const el = $('file-status');
+      el.hidden = false;
+      el.textContent = text;
+      this.toast(text);
+    };
+    const exp = $<HTMLButtonElement>('export-save');
+    exp.addEventListener('click', async () => {
+      exp.disabled = true;
+      try {
+        const { bytes, name } = await this.game.exportFile();
+        const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/octet-stream' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        status(`Exported ${name} (${formatBytes(bytes.length)})`);
+      } catch (err) {
+        status(`Export failed: ${(err as Error).message}`);
+      } finally {
+        exp.disabled = false;
+      }
+    });
+    const input = $<HTMLInputElement>('import-save');
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      input.value = ''; // picking the same file again fires change again
+      if (!file) return;
+      if (file.size > MAX_FILE_BYTES) {
+        status('Import failed: Save file is too large');
+        return;
+      }
+      try {
+        const report = await this.game.importFile(new Uint8Array(await file.arrayBuffer()));
+        this.menu.close();
+        const note = report.migrated ? ` · upgraded from save v${report.version}` : '';
+        this.toast(`Imported ${report.width}×${report.height} world${note}`);
+      } catch (err) {
+        status(`Import failed: ${(err as Error).message}`);
+      }
+    });
+  }
+
   private bindMenu(): void {
     const size = $<HTMLSelectElement>('size');
     for (const s of WORLD_SIZES) {
@@ -457,6 +521,7 @@ export class Hud {
     }
     size.value = 'medium';
     $('menu-close').addEventListener('click', () => this.menu.close());
+    this.bindSaveFiles();
     this.menu.addEventListener('click', (e) => {
       if (e.target === this.menu) this.menu.close(); // tap on backdrop
     });
@@ -608,4 +673,13 @@ export class Hud {
     });
     return b;
   }
+}
+
+/** Toast suffix when undo/redo left tiles the world had changed since. */
+function keptNote(skipped: number): string {
+  return skipped ? ` (${skipped} tile${skipped === 1 ? '' : 's'} changed since, kept)` : '';
+}
+
+function formatBytes(n: number): string {
+  return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 }

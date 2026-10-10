@@ -37,6 +37,7 @@
         <button class="chip" id="zoom-out" aria-label="Zoom out">－</button>
         <button class="chip" id="zoom-fit" aria-label="Show whole world">⤢</button>
         <button class="chip" id="undo" aria-label="Undo last terrain change" disabled>↶</button>
+        <button class="chip" id="redo" aria-label="Redo terrain change" disabled>↷</button>
         <button class="chip" id="minimap-toggle" aria-label="Show or hide the minimap" aria-pressed="true">🗺</button>
       </div>
 
@@ -105,6 +106,12 @@
           <h2>Save &amp; load</h2>
           <p class="hint">Saved in this browser (IndexedDB).</p>
           <div id="slots"></div>
+          <div class="row file-row">
+            <button class="chip wide" id="export-save">⬇ Export to file</button>
+            <label class="chip wide file-pick" id="import-label">⬆ Import file<input type="file" id="import-save" accept=".alvoxis,.json,.gz,application/json,application/gzip,application/octet-stream" /></label>
+          </div>
+          <p class="hint file-status" id="file-status" aria-live="polite" hidden></p>
+          <p class="hint">Files keep the whole world (map, creatures, weather). Import checks the file first; a damaged or foreign file leaves your world untouched.</p>
         </section>
 
         <section>
@@ -124,7 +131,7 @@
             <li>Two fingers: pan and pinch-zoom. Mouse: right-drag to pan, wheel to zoom.</li>
             <li>Keyboard: arrows/WASD pan, +/− zoom, Space pause.</li>
             <li>✋ Move tool: one-finger drag pans the map.</li>
-            <li>↶ Undo: reverts the last terrain change (brushes, painting, meteor and earthquake terrain). Ctrl/Cmd+Z on a keyboard.</li>
+            <li>↶ Undo / ↷ Redo: reverts or re-applies terrain changes (brushes, painting, flood, drain, meteor and earthquake terrain). Tiles the world has changed since (rain, drought, grazing, fire) keep their newer state. Creatures, effects, weather and fire are not undoable. Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or Ctrl+Y on a keyboard.</li>
             <li>🗺 Minimap: tap or drag on it to move the camera.</li>
           </ul>
         </section>

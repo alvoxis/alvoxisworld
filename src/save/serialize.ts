@@ -1,5 +1,6 @@
 import { CAUSE, Creatures, MAX_CREATURES, PATH_MAX, SPECIES, STATE } from '../sim/creatures';
 import { EFFECT_COUNT } from '../sim/effects';
+import { FOOD_CELL } from '../sim/foodmap';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
 import type { WeatherConfig, WeatherSystem } from '../sim/weather';
 import { T } from '../world/terrain';
@@ -161,22 +162,29 @@ export function serialize(sim: Simulation): SaveData {
 /** Versions 2 and 3 (version 2 lacks the COPIED_V3 fields and routes). */
 function loadCreatures(c: Creatures, src: CreatureSave): void {
   const count = Math.min(src.count, MAX_CREATURES);
+  if (!Number.isFinite(src.nextId) || !Number.isFinite(src.births) || !Number.isFinite(src.deaths)) {
+    throw new Error('Corrupt save: creature counters');
+  }
   for (const k of COPIED) {
     const arr = src[k];
-    if (!arr || arr.length < count) throw new Error(`Corrupt save: creature field ${k}`);
+    if (!arr || arr.constructor !== c[k].constructor || arr.length < count) throw new Error(`Corrupt save: creature field ${k}`);
     (c[k] as Uint8Array).set(arr.subarray(0, count) as unknown as ArrayLike<number>);
   }
   c.px.set(c.x.subarray(0, count));
   c.py.set(c.y.subarray(0, count));
   for (const k of COPIED_V3) {
     const arr = src[k];
-    if (arr && arr.length >= count) (c[k] as Uint8Array).set(arr.subarray(0, count) as unknown as ArrayLike<number>);
+    if (arr && arr.constructor === c[k].constructor && arr.length >= count) (c[k] as Uint8Array).set(arr.subarray(0, count) as unknown as ArrayLike<number>);
     else (c[k] as Uint8Array).fill(k === 'pathGoal' ? -1 : 0, 0, count);
   }
-  if (src.path && src.path.length >= count * PATH_MAX) c.path.set(src.path.subarray(0, count * PATH_MAX));
+  if (src.path instanceof Int32Array && src.path.length >= count * PATH_MAX) c.path.set(src.path.subarray(0, count * PATH_MAX));
   else c.pathLen.fill(0, 0, count);
   const ne = count * EFFECT_COUNT;
-  if (src.effTicks?.length === ne && src.effPower?.length === ne && src.effMask?.length === count) {
+  if (
+    src.effTicks instanceof Uint16Array && src.effTicks.length === ne &&
+    src.effPower instanceof Uint8Array && src.effPower.length === ne &&
+    src.effMask instanceof Uint8Array && src.effMask.length === count
+  ) {
     c.effTicks.set(src.effTicks);
     c.effPower.set(src.effPower);
     c.effMask.set(src.effMask);
@@ -206,6 +214,9 @@ function loadCreatures(c: Creatures, src: CreatureSave): void {
 /** Milestone 1 saves: energy becomes hunger, everyone gets full health and a fresh id. */
 function loadCreaturesV1(c: Creatures, src: CreatureSaveV1): void {
   const count = Math.min(src.count, MAX_CREATURES);
+  for (const k of ['x', 'y', 'dx', 'dy', 'species', 'energy', 'age'] as const) {
+    if (!src[k] || src[k].length < count) throw new Error(`Corrupt save: creature field ${k}`);
+  }
   for (let i = 0; i < count; i++) {
     const sp = SPECIES[src.species[i]] ?? SPECIES[0];
     c.id[i] = i + 1;
@@ -270,12 +281,17 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
 
   sim.reset(world, data.tick, data.rngState);
   if (v4) {
-    sim.fire.restore(Array.from(v4.fireActive));
+    // Only tiles that are actually burning (guards against damaged or edited files).
+    sim.fire.restore(Array.from(v4.fireActive).filter((i) => Number.isInteger(i) && i >= 0 && i < n && world.fire[i] > 0));
     sim.weather.systems = v4.weather.systems.map((sys) => ({ ...sys }));
     sim.weather.config = { ...v4.weather.config };
     sim.weather.wind = v4.weather.wind;
     sim.weather.refresh(world);
-    sim.creatures.foodMap.importState(v4.foodMap);
+    const fm = v4.foodMap;
+    const fw = Math.ceil(world.width / FOOD_CELL);
+    const fh = Math.ceil(world.height / FOOD_CELL);
+    const fmOk = fm && fm.w === fw && fm.h === fh && fm.counts.every((c) => c instanceof Uint16Array && c.length === fw * fh);
+    sim.creatures.foodMap.importState(fmOk ? fm : undefined);
     // Passability version continues from the saved one so snapshots compare correctly.
     if (v4.nav && v4.nav.terrain.length === n) {
       world.passVersion = Math.max(world.passVersion, v4.nav.passVersion, v4.nav.pending?.passVersion ?? 0, v4.passVersion ?? 0);
