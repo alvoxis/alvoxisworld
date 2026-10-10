@@ -7,7 +7,9 @@ export const FOOD_CELL = 8;
  * Coarse count of food tiles per cell for each distinct diet ("food group").
  * Lets hungry animals skip searches that cannot succeed (no food anywhere in
  * sight) and pick a direction to migrate in, instead of re-running a failing
- * breadth-first search every few ticks. Rebuilt periodically in one O(map) pass.
+ * breadth-first search every few ticks. Built in one pass when a world starts, then
+ * refreshed a band of cell rows per tick (round robin, about every FOOD_MAP_TICKS
+ * ticks per band), so a big map never pays an O(map) hitch in a single tick.
  */
 export class FoodMap {
   /** Group index per species. */
@@ -19,6 +21,8 @@ export class FoodMap {
   w = 0;
   h = 0;
   builtTick = -Infinity;
+  /** Next band (row of cells) the incremental refresh will recount. */
+  cursor = 0;
 
   constructor(speciesFood: ReadonlyArray<readonly number[]>) {
     const keys: string[] = [];
@@ -38,6 +42,7 @@ export class FoodMap {
     });
   }
 
+  /** Recounts every cell at once (a new world, or tests). */
   build(world: World, tick: number): void {
     this.w = Math.ceil(world.width / FOOD_CELL);
     this.h = Math.ceil(world.height / FOOD_CELL);
@@ -47,25 +52,55 @@ export class FoodMap {
     } else {
       for (const c of this.counts) c.fill(0);
     }
+    for (let band = 0; band < this.h; band++) this.countBand(world, band);
+    this.builtTick = tick;
+    this.cursor = 0;
+  }
+
+  /** Counts food tiles in one band (FOOD_CELL tile rows) into the cells of that band row. */
+  private countBand(world: World, band: number): void {
     const mask = this.terrainMask;
-    for (let y = 0; y < world.height; y++) {
-      const row = Math.floor(y / FOOD_CELL) * this.w;
-      for (let x = 0; x < world.width; x++) {
-        const m = mask[world.terrain[y * world.width + x]];
+    const W = world.width;
+    const y1 = Math.min(world.height, (band + 1) * FOOD_CELL);
+    const rowCells = band * this.w;
+    for (let g = 0; g < this.groups; g++) this.counts[g].fill(0, rowCells, rowCells + this.w);
+    for (let y = band * FOOD_CELL; y < y1; y++) {
+      const base = y * W;
+      for (let x = 0; x < W; x++) {
+        const m = mask[world.terrain[base + x]];
         if (!m) continue;
-        const cell = row + Math.floor(x / FOOD_CELL);
+        const cell = rowCells + (x >> 3); // FOOD_CELL is 8
         for (let g = 0; g < this.groups; g++) if (m & (1 << g)) this.counts[g][cell]++;
       }
+    }
+  }
+
+  /**
+   * Called every tick. Builds everything on the first call for a world (or after a
+   * time rewind), then recounts a few bands per tick, so the whole map is refreshed
+   * about every FOOD_MAP_TICKS ticks with the cost spread evenly.
+   */
+  update(world: World, tick: number, period: number): void {
+    const w = Math.ceil(world.width / FOOD_CELL);
+    const h = Math.ceil(world.height / FOOD_CELL);
+    if (this.w !== w || this.h !== h || this.builtTick > tick || !Number.isFinite(this.builtTick)) {
+      this.build(world, tick);
+      return;
+    }
+    const perTick = Math.max(1, Math.ceil(this.h / period));
+    for (let k = 0; k < perTick; k++) {
+      this.countBand(world, this.cursor);
+      this.cursor = (this.cursor + 1) % this.h;
     }
     this.builtTick = tick;
   }
 
   /** Snapshot for saves (so a loaded world sees exactly the same food map). */
-  exportState(): { builtTick: number; w: number; h: number; counts: Uint16Array[] } {
-    return { builtTick: this.builtTick, w: this.w, h: this.h, counts: this.counts.map((c) => c.slice()) };
+  exportState(): { builtTick: number; w: number; h: number; counts: Uint16Array[]; cursor: number } {
+    return { builtTick: this.builtTick, w: this.w, h: this.h, counts: this.counts.map((c) => c.slice()), cursor: this.cursor };
   }
 
-  importState(s: { builtTick: number; w: number; h: number; counts: Uint16Array[] } | undefined): void {
+  importState(s: { builtTick: number; w: number; h: number; counts: Uint16Array[]; cursor?: number } | undefined): void {
     if (!s || s.counts.length !== this.groups) {
       this.builtTick = -Infinity;
       return;
@@ -74,6 +109,7 @@ export class FoodMap {
     this.w = s.w;
     this.h = s.h;
     this.counts = s.counts.map((c) => c.slice());
+    this.cursor = Number.isInteger(s.cursor) && s.cursor! >= 0 && s.cursor! < s.h ? s.cursor! : 0;
   }
 
   /** Food tiles of a group in cells overlapping the square of radius r around (x, y). */

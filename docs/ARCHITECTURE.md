@@ -83,6 +83,10 @@ Rivers and lakes are ordinary terrain ids (`T.RIVER`, `T.LAKE`, both `isWater`),
 - **`WaterField`**: a multi-source BFS distance map, per land class, to the nearest drink spot. Thirsty animals walk down it one step at a time. It is rebuilt when `World.passVersion` has changed, at most every 10 ticks. `passVersion` is bumped by `setTerrain` only when a tile changes movement class (land, sea or lake, river, mountain or snow). Grazing grass into soil, for example, doesn't trigger a rebuild.
 - **Routes** are stored per creature: up to `PATH_MAX` (32) tile indices, plus position and goal. Each waypoint is re-checked with `passable` before use, so terrain edits invalidate routes lazily, and longer routes are re-planned when the stored part runs out.
 
+#### Slopes and passability (`src/world/passability.ts`)
+
+`World.slopeClass` (gentle 0 / steep 1 / cliff 2) is derived from the largest height drop to the 4 neighbours, ignoring open-water neighbours (a coast is not a cliff). `setHeight`, `writeTile` and water-ness changes refresh a tile and its neighbours only. Navigation uses `navCodes()` = terrain id | slope << 4 (still one byte per tile), so snapshots, workers, regions and the water field all see slopes. `passableId(cls, code)` is the one rule: WATER swims; LAND and LOWLAND wade rivers only, cliffs block both, LOWLAND is also blocked by mountain, snow and steep tiles; `tileCost` charges river 3 and steep 2. Creatures check `canMove` (destination plus both diagonal corners) and `unstick()` moves an animal standing on blocked ground to the nearest open tile (`trapped` counts animals with none within 4 tiles).
+
 ### Weather, fire and disasters (`src/sim/weather.ts`, `fire.ts`, `disasters.ts`, `sky.ts`)
 
 - **Order in each tick:** `Simulation.step` runs weather, then resolves lightning strikes, then (if enabled) the natural-disaster roll, then meteors in flight (advance, land), then fire, then vegetation, then creatures. Everything uses the simulation RNG, so it's deterministic and stops when paused.
@@ -204,3 +208,11 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
 - **New buff or debuff:** add an id and an `EFFECTS` entry (with its opposite) in `sim/effects.ts`, raise `EFFECT_COUNT`, and add its rule in `Creatures` (`tickEffects`, `speedOf`, needs or breeding). The Buffs & Debuffs tab lists it automatically.
 - **New species:** add a `SPECIES` entry (plus a constant for its id) and a pixel-art entry in `PIXEL_ART` (`render/tileset.ts`, one character per pixel, 1/8 tile per pixel), then a `spawnTool` line in `game/tools.ts`. Shared behaviour comes from the species data. Truly new movement (flying, amphibious) needs a new movement class in `pathfinding.ts` (`MOVE`, `passableId`, and a `WaterField` entry if it drinks).
 - **New tool:** add an object to `TOOLS`. The UI picks it up automatically.
+
+## Frame budgeting (Technical Improvement Milestone)
+
+- `Simulation.advance` stops ticking when 12 ms of a frame is spent (`SIM_BUDGET_MS`); backlog is capped at 2 frames, `achievedSpeed`/`throttled` feed the speed label.
+- `Renderer.flushDirty` repaints dirty chunks and the 1 px map within 4 ms per frame, visible chunks first.
+- `FoodMap.update` recounts a few bands per tick (full map every 50 ticks); weather climate relaxation sweeps a contiguous window with a cursor.
+- Meteor showers: `Sky.showers` queue (≤ 4 showers, ≤ 120 queued, ≤ 24 in flight), launched by `Simulation.tickShowers`.
+- Save format v7 adds the relax cursor, showers and food-map cursor; older saves load (slopes are recomputed).

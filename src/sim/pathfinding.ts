@@ -1,3 +1,4 @@
+import { SLOPE, SLOPE_SHIFT, TERRAIN_MASK } from '../world/passability';
 import { T, isWater } from '../world/terrain';
 import { World } from '../world/world';
 
@@ -16,22 +17,35 @@ export const MOVE = {
 export type MoveClass = (typeof MOVE)[keyof typeof MOVE];
 export const MOVE_CLASSES = 3;
 
-/** Whether a movement class may stand on tile (x, y). */
+/** Whether a movement class may stand on tile (x, y): its terrain and its slope (see world/passability.ts). */
 export function passable(world: World, cls: number, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= world.width || y >= world.height) return false;
-  return passableId(cls, world.terrain[y * world.width + x]);
+  const i = y * world.width + x;
+  return passableId(cls, world.terrain[i] | (world.slopeClass[i] << SLOPE_SHIFT));
 }
 
-export function passableId(cls: number, id: number): boolean {
+/**
+ * Passability from a navigation code (terrain id in the low four bits, slope class
+ * above; a plain terrain id is a code on level ground).
+ *  - WATER swims anywhere there is water, whatever the slope under it.
+ *  - Everything that walks wades rivers but not lakes or sea, and never stands on a sheer cliff.
+ *  - LOWLAND also avoids mountains, snow and steep slopes; LAND climbs them (at a cost, see tileCost).
+ */
+export function passableId(cls: number, code: number): boolean {
+  const id = code & TERRAIN_MASK;
   if (cls === MOVE.WATER) return isWater(id);
   if (isWater(id) && id !== T.RIVER) return false;
-  if (cls === MOVE.LOWLAND && (id === T.MOUNTAIN || id === T.SNOW)) return false;
+  const slope = code >> SLOPE_SHIFT;
+  if (slope >= SLOPE.CLIFF) return false;
+  if (cls === MOVE.LOWLAND && (id === T.MOUNTAIN || id === T.SNOW || slope === SLOPE.STEEP)) return false;
   return true;
 }
 
-/** Movement cost multiplier: land animals wade slowly through rivers. */
-export function tileCost(cls: number, id: number): number {
-  return cls !== MOVE.WATER && id === T.RIVER ? 3 : 1;
+/** Movement cost multiplier: land animals wade slowly through rivers and climb steep ground slowly. */
+export function tileCost(cls: number, code: number): number {
+  if (cls === MOVE.WATER) return 1;
+  if ((code & TERRAIN_MASK) === T.RIVER) return 3;
+  return code >> SLOPE_SHIFT === SLOPE.STEEP ? 2 : 1;
 }
 
 /** A tile where a land animal can drink: on a river or swamp, or next to any water. */
@@ -199,7 +213,7 @@ export class Pathfinder {
         const nb = ny * w + nx;
         const m = mark[nb];
         if (m === done) continue;
-        const cost = (k >= 4 ? SQRT2 : 1) * tileCost(cls, world.terrain[nb]);
+        const cost = (k >= 4 ? SQRT2 : 1) * tileCost(cls, world.terrain[nb] | (world.slopeClass[nb] << SLOPE_SHIFT));
         const ng = gc + cost;
         if (m === open && this.g[nb] <= ng) continue;
         mark[nb] = open;
@@ -344,8 +358,14 @@ export const UNREACHABLE = 0xffff;
 export interface NavGrid {
   width: number;
   height: number;
+  /** Navigation codes: terrain id plus slope class (see World.navCodes). */
   terrain: Uint8Array;
   passVersion: number;
+}
+
+/** The navigation view of a live world (snapshotted codes; costs one pass over the map). */
+export function navGridOf(world: World): NavGrid {
+  return { width: world.width, height: world.height, terrain: world.navCodes(), passVersion: world.passVersion };
 }
 
 /**
@@ -362,7 +382,7 @@ export function computeWaterDist(grid: NavGrid): Uint16Array[] {
   // Drink spots (class-independent): on a river or swamp, or next to any water.
   const drink = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
-    const id = t[i];
+    const id = t[i] & TERRAIN_MASK;
     if (id === T.RIVER || id === T.SWAMP) drink[i] = 1;
     if (!isWater(id)) continue;
     const x = i % w;
@@ -439,7 +459,7 @@ export class WaterField {
 
   build(world: World): void {
     const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
-    this.apply(world, computeWaterDist(world), world.passVersion);
+    this.apply(world, computeWaterDist(navGridOf(world)), world.passVersion);
     if (t0) this.lastBuildMs = performance.now() - t0;
   }
 

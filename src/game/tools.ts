@@ -18,6 +18,14 @@ export const CATEGORIES: ReadonlyArray<{ id: Exclude<ToolCategory, 'view'>; labe
   { id: 'effects', label: 'Buffs & Debuffs', short: 'Effects' },
 ];
 
+/** One circle drawn around the pointer to preview where a tool acts. */
+export interface AreaRing {
+  /** Radius in tiles. */
+  radius: number;
+  /** 'main' is where the tool acts directly; 'outer' is a wider zone of consequence (a blast, a weather area). */
+  kind: 'main' | 'outer';
+}
+
 export type ToolIcon = { emoji: string } | { terrain: number } | { species: number };
 
 export interface ToolContext {
@@ -27,6 +35,8 @@ export interface ToolContext {
   intensity: number;
   /** Effect duration in ticks chosen in the toolbar. */
   durationTicks: number;
+  /** Number of meteors chosen for a meteor shower. */
+  count: number;
   /** Shows a short visual effect (impact flash, quake ripple). */
   effect(kind: 'meteor' | 'quake', x: number, y: number, radius: number): void;
   /** Shows a short message to the player. */
@@ -53,6 +63,13 @@ export interface Tool {
   usesIntensity?: boolean;
   /** Uses the effect duration setting. */
   usesDuration?: boolean;
+  /** Uses the meteor count setting. */
+  usesCount?: boolean;
+  /**
+   * The circles to preview for the chosen size and power, in tiles. Defaults to one main
+   * ring of the chosen radius. Must describe what apply() really does with its radius.
+   */
+  area?(radius: number, power: number): AreaRing[];
   apply(ctx: ToolContext, x: number, y: number, radius: number): void;
 }
 
@@ -78,6 +95,7 @@ const spawnTool = (species: number): Tool => {
     hint: `${sp.diet === 'carnivore' ? 'Predator' : 'Herbivore'} · ${sp.move === 2 ? 'lives in water' : 'lives on land'}`,
     usesBrush: true,
     repeatMs: 180,
+    area: (r) => [{ radius: Math.max(1, r), kind: 'main' }],
     apply: ({ sim }, x, y, r) => {
       sim.spawnInCircle(species, x, y, Math.max(1, r), perDab);
     },
@@ -96,6 +114,7 @@ const effectTool = (e: number): Tool => {
     usesIntensity: true,
     usesDuration: true,
     repeatMs: Infinity,
+    area: (r) => [{ radius: Math.max(0.6, r - 0.5), kind: 'main' }],
     apply: (ctx, x, y, r) => {
       const n = ctx.sim.applyEffect(e, x, y, r - 0.5, ctx.durationTicks, ctx.intensity);
       ctx.notify(n ? `${def.name} on ${n} creature${n > 1 ? 's' : ''}` : 'No creature there');
@@ -123,6 +142,7 @@ export const TOOLS: readonly Tool[] = [
   {
     id: 'smite', label: 'Remove life', category: 'creatures', icon: { emoji: '⚡' }, usesBrush: true, repeatMs: 0,
     hint: 'Removes creatures under the brush',
+    area: (r) => [{ radius: Math.max(1, r), kind: 'main' }],
     apply: ({ sim }, x, y, r) => {
       sim.creatures.removeInCircle(x, y, Math.max(1, r));
     },
@@ -179,22 +199,26 @@ export const TOOLS: readonly Tool[] = [
   {
     id: 'rain', label: 'Rain', category: 'powers', icon: { emoji: '🌧️' }, usesBrush: true, usesIntensity: true,
     repeatMs: Infinity, hint: 'Rain cloud: wetter, cooler, refills water, greens bare soil, puts out fire',
+    area: (r) => [{ radius: Math.max(6, r * 4), kind: 'main' }],
     apply: ({ sim, intensity }, x, y, r) => sim.summonWeather(WEATHER_KIND.RAIN, x, y, Math.max(6, r * 4), intensity),
   },
   {
     id: 'storm', label: 'Storm', category: 'powers', icon: { emoji: '⛈️' }, usesBrush: true, usesIntensity: true,
     repeatMs: Infinity, hint: 'Thunderstorm: heavy rain with lightning that can kill and start fires',
+    area: (r) => [{ radius: Math.max(6, r * 3), kind: 'main' }],
     apply: ({ sim, intensity }, x, y, r) =>
       sim.summonWeather(WEATHER_KIND.RAIN, x, y, Math.max(6, r * 3), Math.max(2, intensity), { storm: true }),
   },
   {
     id: 'snow', label: 'Snow', category: 'powers', icon: { emoji: '❄️' }, usesBrush: true, usesIntensity: true,
     repeatMs: Infinity, hint: 'Snowfall: colder and wetter; settles on tundra until spring; puts out fire',
+    area: (r) => [{ radius: Math.max(6, r * 4), kind: 'main' }],
     apply: ({ sim, intensity }, x, y, r) => sim.summonWeather(WEATHER_KIND.RAIN, x, y, Math.max(6, r * 4), intensity, { snow: true }),
   },
   {
     id: 'drought', label: 'Drought', category: 'powers', icon: { emoji: '☀️' }, usesBrush: true, usesIntensity: true,
     repeatMs: Infinity, hint: 'Drought: drier, hotter, dries water and plants, fires spread faster',
+    area: (r) => [{ radius: Math.max(6, r * 4), kind: 'main' }],
     apply: ({ sim, intensity }, x, y, r) => sim.summonWeather(WEATHER_KIND.DROUGHT, x, y, Math.max(6, r * 4), intensity),
   },
   {
@@ -206,7 +230,8 @@ export const TOOLS: readonly Tool[] = [
   },
   {
     id: 'fire', label: 'Fire', category: 'powers', icon: { emoji: '🔥' }, usesBrush: true, repeatMs: 120,
-    hint: 'Sets dry vegetation alight; spreads by fuel and dryness',
+    hint: 'Sets dry vegetation alight; spreads by fuel, dryness, wind and slope',
+    area: (r) => [{ radius: Math.max(1, r * 0.5), kind: 'main' }],
     apply: ({ sim }, x, y, r) => {
       sim.igniteArea(x, y, Math.max(1, r * 0.5));
     },
@@ -214,6 +239,7 @@ export const TOOLS: readonly Tool[] = [
   {
     id: 'extinguish', label: 'Extinguish', category: 'powers', icon: { emoji: '🧯' }, usesBrush: true, repeatMs: 0,
     hint: 'Puts out fires under the brush',
+    area: (r) => [{ radius: Math.max(1, r), kind: 'main' }],
     apply: ({ sim }, x, y, r) => {
       sim.extinguish(x, y, Math.max(1, r));
     },
@@ -221,22 +247,29 @@ export const TOOLS: readonly Tool[] = [
   {
     id: 'meteor', label: 'Meteor', category: 'powers', icon: { emoji: '☄️' }, usesBrush: true, usesIntensity: true,
     repeatMs: Infinity,
-    hint: 'A meteor falls: brush sets crater width, Power sets energy. Flattens plants, starts fires; undo after it lands',
+    hint: 'A meteor falls: the circle sets its size (crater), Power its energy. The dashed ring is the blast zone',
+    area: (r, power) => {
+      const crater = Math.max(2, r) * (0.7 + 0.3 * power);
+      return [{ radius: crater, kind: 'main' }, { radius: crater * 2.2, kind: 'outer' }];
+    },
     apply: (ctx, x, y, r) => {
       if (!ctx.sim.launchMeteor(x, y, Math.max(2, r), ctx.intensity)) ctx.notify('Too many meteors in the sky');
     },
   },
   {
     id: 'shower', label: 'Meteor shower', category: 'powers', icon: { emoji: '🌠' }, usesBrush: true, usesIntensity: true,
-    repeatMs: Infinity, hint: 'Several small meteors over a few seconds (cannot be undone)',
+    usesCount: true, repeatMs: Infinity,
+    hint: 'Meteor shower: the circle is the area, Count sets how many, Power how big (cannot be undone)',
+    area: (r) => [{ radius: Math.max(3, r), kind: 'main' }],
     apply: (ctx, x, y, r) => {
-      const n = ctx.sim.launchShower(x, y, Math.max(4, r * 1.5), 3 + ctx.intensity * 3);
-      if (!n) ctx.notify('Too many meteors in the sky');
+      const n = ctx.sim.launchShower(x, y, Math.max(3, r), ctx.count, ctx.intensity);
+      ctx.notify(n ? `Meteor shower: ${n} meteors` : 'Too many meteors in the sky');
     },
   },
   {
     id: 'quake', label: 'Earthquake', category: 'powers', icon: { emoji: '🌋' }, usesBrush: true, usesIntensity: true,
     repeatMs: Infinity, undoable: true, hint: 'Rift and buckled ground; injures creatures',
+    area: (r, power) => [{ radius: Math.max(3, r * 1.5) * (0.8 + 0.4 * power), kind: 'main' }],
     apply: (ctx, x, y, r) => {
       ctx.sim.earthquake(x, y, Math.max(3, r * 1.5), ctx.intensity);
       ctx.effect('quake', x, y, Math.max(3, r * 1.5) * 1.6);
@@ -255,7 +288,19 @@ export const TOOLS: readonly Tool[] = [
   },
 ];
 
+/**
+ * The area sizes offered by the round size buttons, from very small to very large:
+ * one shared radius (in tiles) for every tool that uses an area. What a tool does with it
+ * (a brush, a weather area, a crater) is described by its `area` function.
+ */
 export const BRUSH_SIZES = [1, 2, 4, 7, 11, 16, 24] as const;
+export const SIZE_NAMES = ['Very small', 'Small', 'Medium-small', 'Medium', 'Medium-large', 'Large', 'Very large'] as const;
+
+/** The circles to preview for a tool at a chosen size and power (empty if the tool has no area). */
+export function areaOf(tool: Tool, radius: number, power: number): AreaRing[] {
+  if (!tool.usesBrush) return [];
+  return tool.area ? tool.area(radius, power) : [{ radius, kind: 'main' }];
+}
 
 export function toolById(id: string): Tool {
   const t = TOOLS.find((t) => t.id === id);

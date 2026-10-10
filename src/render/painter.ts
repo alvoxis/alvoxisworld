@@ -1,4 +1,5 @@
 import { hash2, Rng } from '../core/rng';
+import { SLOPE } from '../world/passability';
 import { SEA_LEVEL, T, TERRAIN, TERRAIN_COUNT } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
 import { SPRITES, Tileset, VARIANTS, halfSprite, type Sprite } from './tileset';
@@ -101,6 +102,8 @@ export class TerrainPainter {
   private readonly ids = new Uint8Array(M * M);
   private readonly variant = new Uint8Array(M * M);
   private readonly frost = new Uint8Array(M * M);
+  /** Slope class per tile of the chunk plus margin (see world/passability.ts). */
+  private readonly slope = new Uint8Array(M * M);
   private readonly vLight = new Float32Array((CHUNK + 1) * (CHUNK + 1));
   private readonly vDepth = new Float32Array((CHUNK + 1) * (CHUNK + 1));
 
@@ -123,6 +126,7 @@ export class TerrainPainter {
     const ids = this.ids;
     const variant = this.variant;
     const frost = this.frost;
+    const slope = this.slope;
 
     // Tile data for the chunk plus margin (clamped at the map edge).
     for (let my = 0; my < M; my++) {
@@ -134,6 +138,7 @@ export class TerrainPainter {
         const k = my * M + mx;
         ids[k] = id;
         variant[k] = Math.floor(hash2(x, y, world.seed) * VARIANTS);
+        slope[k] = world.slopeClass[i];
         frost[k] = opts.winter && !OPEN_WATER[id] && id !== T.RIVER && id !== T.SNOW && world.temperature[i] < FROST_TEMPERATURE ? 1 : 0;
       }
     }
@@ -277,10 +282,30 @@ export class TerrainPainter {
                 g = g * 0.42 + 145;
                 b = b * 0.42 + 152;
               }
-              if (pass && (id === T.MOUNTAIN || id === T.SNOW) && ((gpx + gpy) & 7) < 2) {
-                r = r * 0.5 + 90;
-                g *= 0.45;
-                b *= 0.45;
+              // Sheer cliffs always read as rock faces (dark vertical streaks), steep ground slightly darker.
+              const sc = slope[k];
+              if (sc === SLOPE.CLIFF) {
+                const streak = 0.5 + 0.22 * (((gpx * 5 + (gpy >> 2)) & 3) / 3);
+                r = r * streak + 14;
+                g = g * streak + 14;
+                b = b * streak + 20;
+              } else if (sc === SLOPE.STEEP) {
+                r *= 0.93;
+                g *= 0.93;
+                b *= 0.93;
+              }
+              if (pass) {
+                // Passability overlay: red hatching where lowland animals cannot go (mountains, snow, steep
+                // slopes) and a dense cross-hatch where nothing can (sheer cliffs).
+                if (sc === SLOPE.CLIFF && (((gpx + gpy) & 3) < 2 || ((gpx - gpy) & 3) === 0)) {
+                  r = r * 0.35 + 130;
+                  g *= 0.3;
+                  b *= 0.3;
+                } else if ((id === T.MOUNTAIN || id === T.SNOW || sc === SLOPE.STEEP) && ((gpx + gpy) & 7) < 2) {
+                  r = r * 0.5 + 90;
+                  g *= 0.45;
+                  b *= 0.45;
+                }
               }
             }
             out[o] = r;

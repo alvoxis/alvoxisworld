@@ -17,6 +17,12 @@ const MAX_DETAIL_CHUNKS = 80;
 const MAX_MID_CHUNKS = 160;
 /** Chunk painting budget per frame (ms); at least one visible chunk is painted per frame. */
 const PAINT_BUDGET_MS = 6;
+/**
+ * Time one frame may spend refreshing the 1-px map (and minimap source) after the
+ * world changed. A season change, a big flood or a world load dirties thousands of
+ * chunks at once; doing them all in one frame took 55–80 ms on 2048×1280.
+ */
+const FLUSH_BUDGET_MS = 4;
 const FROST_TEMPERATURE = 0.45 * 255;
 const SHALLOW_RGB = [66, 150, 196] as const;
 const MAX_GLINTS = 500;
@@ -38,10 +44,11 @@ export interface Overlay {
   now: number;
 }
 
+/** Circles previewing where the current tool acts (see AreaRing in game/tools.ts). */
 export interface BrushCursor {
   x: number;
   y: number;
-  radius: number;
+  rings: ReadonlyArray<{ radius: number; kind: 'main' | 'outer' }>;
 }
 
 interface CachedChunk {
@@ -160,6 +167,7 @@ export class Renderer {
     this.detail.clear();
     this.mid.clear();
     world.markAllDirty();
+    this.flushDirty(null, 0, Infinity); // a new world is shown complete at once
   }
 
   setWinter(winter: boolean): void {
@@ -181,15 +189,38 @@ export class Renderer {
     this.canvas.height = Math.round(cssH * this.dpr);
   }
 
-  /** Rebuilds the 1px map for every dirty chunk and marks painted chunks stale. */
-  private flushDirty(): void {
+  /**
+   * Rebuilds the 1px map for dirty chunks and marks painted chunks stale. Chunks in
+   * view go first, and work stops after `budgetMs`; the rest stays dirty and is done
+   * on the next frames. Returns how many chunks remain dirty.
+   */
+  private flushDirty(camera: Camera | null, s: number, budgetMs: number): number {
     const w = this.world;
-    if (w.dirtyChunks.size === 0) return;
+    if (w.dirtyChunks.size === 0) return 0;
+    const start = performance.now();
+    const order: number[] = [];
+    if (camera && w.dirtyChunks.size > 1) {
+      const cx0 = Math.floor(camera.x / CHUNK) - 1;
+      const cy0 = Math.floor(camera.y / CHUNK) - 1;
+      const cx1 = Math.floor((camera.x + this.canvas.width / s) / CHUNK) + 1;
+      const cy1 = Math.floor((camera.y + this.canvas.height / s) / CHUNK) + 1;
+      const rest: number[] = [];
+      for (const c of w.dirtyChunks) {
+        const cx = c % w.chunksX;
+        const cy = (c - cx) / w.chunksX;
+        (cx >= cx0 && cx <= cx1 && cy >= cy0 && cy <= cy1 ? order : rest).push(c);
+      }
+      for (const c of rest) order.push(c);
+    } else {
+      for (const c of w.dirtyChunks) order.push(c);
+    }
     const data = this.baseImage.data;
     const W = w.width;
     const H = w.height;
     const hs = w.heights;
-    for (const c of w.dirtyChunks) {
+    for (const c of order) {
+      if (performance.now() - start > budgetMs) break;
+      w.dirtyChunks.delete(c);
       const cx = c % w.chunksX;
       const cy = Math.floor(c / w.chunksX);
       const x0 = cx * CHUNK;
@@ -238,7 +269,7 @@ export class Renderer {
       this.detail.markStale(c);
       this.mid.markStale(c);
     }
-    w.dirtyChunks.clear();
+    return w.dirtyChunks.size;
   }
 
   /** Draws the visible chunks of one level, painting missing or stale ones within the frame budget. */
@@ -306,10 +337,10 @@ export class Renderer {
   render(
     camera: Camera, creatures: Creatures, cursor: BrushCursor | null, alpha = 1, selectedId = 0, overlay?: Overlay,
   ): void {
-    this.flushDirty();
     const ctx = this.ctx;
     const w = this.world;
     const s = camera.zoom * this.dpr; // device px per tile
+    this.flushDirty(camera, s, FLUSH_BUDGET_MS);
     const ox = -camera.x * s;
     const oy = -camera.y * s;
     const cw = this.canvas.width;
@@ -348,13 +379,7 @@ export class Renderer {
     }
     if (selectedId) this.drawSelection(creatures, selectedId, s, ox, oy, alpha);
 
-    if (cursor) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = Math.max(1, this.dpr);
-      ctx.beginPath();
-      ctx.arc(ox + cursor.x * s, oy + cursor.y * s, Math.max(3, cursor.radius * s), 0, Math.PI * 2);
-      ctx.stroke();
-    }
+    if (cursor) this.drawCursor(cursor, s, ox, oy);
   }
 
   /**
@@ -387,6 +412,36 @@ export class Renderer {
         const drift = phase * s * 0.8;
         ctx.fillRect(Math.round(ox + x * s + drift), Math.round(oy + y * s), len, thick);
         drawn++;
+      }
+    }
+  }
+
+  /** The action-area preview: a solid ring (with a faint fill) where the tool acts, dashed rings for wider zones. */
+  private drawCursor(cursor: BrushCursor, s: number, ox: number, oy: number): void {
+    const ctx = this.ctx;
+    const cx = ox + cursor.x * s;
+    const cy = oy + cursor.y * s;
+    for (const ring of cursor.rings) {
+      const r = Math.max(3 * this.dpr, ring.radius * s);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      if (ring.kind === 'main') {
+        ctx.fillStyle = 'rgba(255,255,255,0.07)';
+        ctx.fill();
+        // A dark under-stroke keeps the white ring visible over snow and sand.
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+        ctx.lineWidth = Math.max(3, 3 * this.dpr);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.lineWidth = Math.max(1.5, 1.6 * this.dpr);
+        ctx.setLineDash([]);
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = 'rgba(255,170,70,0.9)';
+        ctx.lineWidth = Math.max(1.5, 1.5 * this.dpr);
+        ctx.setLineDash([7 * this.dpr, 6 * this.dpr]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
   }

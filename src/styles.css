@@ -237,8 +237,9 @@ button {
 
 #toolbar-bottom {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
 }
 
 #cats {
@@ -251,22 +252,6 @@ button {
 
 #cats .chip {
   flex: 0 0 auto;
-}
-
-#brush {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-#brush.disabled {
-  opacity: 0.4;
-}
-
-#brush-size {
-  min-width: 28px;
-  text-align: center;
-  font-weight: 700;
 }
 
 dialog#menu {
@@ -514,10 +499,6 @@ label.check input {
 
 /* Phones: categories get their own full-width row; brush and power controls below. */
 @media (max-width: 560px) {
-  #toolbar-bottom {
-    flex-wrap: wrap;
-    row-gap: 6px;
-  }
   #cats {
     flex: 1 1 100%;
     overflow: visible;
@@ -530,9 +511,6 @@ label.check input {
   }
   #intensity .lbl {
     display: none;
-  }
-  #brush {
-    margin-left: auto;
   }
 }
 
@@ -557,6 +535,12 @@ label.check input {
   font-size: 12px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+#speed-label.throttled {
+  color: var(--accent, #f2c14e);
+  min-width: 56px;
+  line-height: 1.1;
 }
 
 /* Tool tabs */
@@ -599,15 +583,8 @@ label.check input {
   font-size: 18px;
 }
 
-#toolbar-bottom {
-  justify-content: flex-start;
-}
-
-#toolbar-bottom #brush {
-  margin-left: auto;
-}
-
-#duration {
+#duration,
+#count {
   flex: 0 0 auto;
   white-space: nowrap;
 }
@@ -693,4 +670,55 @@ label.check input {
 .file-status {
   color: var(--text);
   word-break: break-word;
+}
+
+/* Area size: a row of round buttons, from a tiny circle to a big one. */
+#sizes {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 2px;
+}
+
+#sizes .size {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 56px;
+  height: 44px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  touch-action: manipulation;
+}
+
+#sizes .size .dot {
+  display: block;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#sizes .size[aria-checked='true'] {
+  background: var(--chip-active);
+  border-color: var(--accent);
+}
+
+#sizes .size[aria-checked='true'] .dot {
+  border-color: var(--accent);
+  background: rgba(242, 193, 78, 0.38);
+}
+
+#sizes.disabled {
+  opacity: 0.35;
+}
+
+#toolbar-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

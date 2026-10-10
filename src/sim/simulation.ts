@@ -5,7 +5,7 @@ import { Creatures, SPECIES } from './creatures';
 import { meteorStrike, earthquake, lightningStrike, meteorClass, type DisasterResult } from './disasters';
 import { EFFECTS } from './effects';
 import { Fire, fuelOf } from './fire';
-import { DISASTER_RATES, DISASTER_STEP, FLIGHT_TICKS, Sky, type MeteorInFlight } from './sky';
+import { DISASTER_RATES, DISASTER_STEP, FLIGHT_TICKS, MAX_METEORS, Sky, type MeteorInFlight } from './sky';
 import { T, isWater } from '../world/terrain';
 import { WATER_FLAG } from '../world/world';
 import { Weather, WEATHER_KIND, type WeatherKind } from './weather';
@@ -15,6 +15,15 @@ import { vegetationTick } from './vegetation';
 export const SPEED_LEVELS = [1, 2, 3, 5, 10, 20] as const;
 export type Speed = number;
 const MAX_TICKS_PER_FRAME = 40;
+/**
+ * Real time (ms) one frame may spend running simulation ticks. At high speed on a big
+ * or crowded world the requested ticks cost more than a frame can afford (40 ticks of
+ * 1,600 animals took 200+ ms on 2048×1280, freezing the screen), so the simulation
+ * runs slower than requested instead and the speed label says so. At least one tick
+ * runs per frame. Only the pace changes, never the order of ticks, so results stay
+ * deterministic.
+ */
+export const SIM_BUDGET_MS = 12;
 
 export interface HistoryEntry {
   tick: number;
@@ -35,6 +44,10 @@ export class Simulation {
   speed: Speed = 1;
   history: HistoryEntry[] = [];
   private accumulator = 0;
+  /** Ticks and seconds counted since the last speed measurement (see achievedSpeed). */
+  private pace = { ticks: 0, secs: 0 };
+  /** Speed actually reached over the last second or so, in multiples of real time (0 = not measured yet). */
+  achievedSpeed = 0;
   private lastSeason = -1;
   private seenSpecies = new Set<number>();
 
@@ -66,6 +79,7 @@ export class Simulation {
     this.weather.systems = [];
     this.weather.wind = 0;
     this.weather.drift = { x: 0, y: 0 };
+    this.weather.relaxCursor = 0;
     this.weather.strikes = [];
     this.sky.reset();
     this.creatures.dangers = [];
@@ -92,17 +106,36 @@ export class Simulation {
     return Math.min(1, Math.max(0, this.accumulator));
   }
 
+  /** True when the simulation is running clearly slower than the selected speed because frames cannot afford more. */
+  get throttled(): boolean {
+    return this.speed > 0 && this.achievedSpeed > 0 && this.achievedSpeed < this.speed * 0.85;
+  }
+
   /** Advances by real elapsed seconds; returns the number of ticks run. */
   advance(dtSeconds: number): number {
-    if (this.speed === 0) return 0;
-    this.accumulator += Math.min(dtSeconds, 0.25) * TICKS_PER_SECOND * this.speed;
+    if (this.speed === 0) {
+      this.pace = { ticks: 0, secs: 0 };
+      this.achievedSpeed = 0;
+      return 0;
+    }
+    const dt = Math.min(dtSeconds, 0.25);
+    this.accumulator += dt * TICKS_PER_SECOND * this.speed;
+    const start = performance.now();
     let ran = 0;
     while (this.accumulator >= 1 && ran < MAX_TICKS_PER_FRAME) {
       this.step();
       this.accumulator -= 1;
       ran++;
+      if (performance.now() - start > SIM_BUDGET_MS) break;
     }
-    if (ran === MAX_TICKS_PER_FRAME) this.accumulator = 0; // drop backlog instead of spiralling
+    // Out of time or ticks: keep at most a couple of ticks of backlog instead of spiralling.
+    if (this.accumulator > 2) this.accumulator = 2;
+    this.pace.ticks += ran;
+    this.pace.secs += dt;
+    if (this.pace.secs >= 1) {
+      this.achievedSpeed = this.pace.ticks / (this.pace.secs * TICKS_PER_SECOND);
+      this.pace = { ticks: 0, secs: 0 };
+    }
     return ran;
   }
 
@@ -111,6 +144,7 @@ export class Simulation {
     this.weather.step(this.world, this.rng, this.tick, date.seasonIndex);
     if (this.weather.strikes.length) this.resolveLightning();
     if (this.sky.config.auto && this.tick % DISASTER_STEP === 0) this.naturalDisasters();
+    if (this.sky.showers.length) this.tickShowers();
     if (this.sky.meteors.length) {
       for (const m of this.sky.advance()) this.impact(m);
       this.creatures.dangers = this.sky.dangerZones();
@@ -179,19 +213,41 @@ export class Simulation {
     return this.sky.launch(x, y, Math.max(2, radius), intensity, angle, natural, flight) !== null;
   }
 
-  /** A meteor shower: `count` small meteors landing within `spread` tiles over a few seconds. */
-  launchShower(x: number, y: number, spread: number, count: number): number {
-    let n = 0;
-    for (let k = 0; k < count; k++) {
-      const a = this.rng.next() * Math.PI * 2;
-      const d = Math.sqrt(this.rng.next()) * spread;
-      const tx = Math.min(this.world.width - 1, Math.max(0, x + Math.cos(a) * d));
-      const ty = Math.min(this.world.height - 1, Math.max(0, y + Math.sin(a) * d));
-      const flight = FLIGHT_TICKS + Math.floor(this.rng.next() * 50);
-      if (this.launchMeteor(tx, ty, 2 + this.rng.next() * 1.2, 1, false, flight)) n++;
-    }
-    if (n) this.log(`A meteor shower fell (${n} meteors).`);
+  /**
+   * A meteor shower: `count` meteors, one every few ticks over about 5 seconds, each
+   * landing at its own random point within `spread` tiles and coming in from its own
+   * direction. `intensity` (1..3) sets their sizes. Returns how many were accepted
+   * (none when too many showers or meteors are already queued). Cannot be undone.
+   */
+  launchShower(x: number, y: number, spread: number, count: number, intensity = 1): number {
+    const n = this.sky.startShower(x, y, Math.max(2, spread), count, Math.min(3, Math.max(1, Math.round(intensity))));
+    if (n) this.log(`A meteor shower began (${n} meteors).`);
     return n;
+  }
+
+  /** Fires the next meteor of each active shower when its turn comes (at most one per shower per tick, within the cap in the air). */
+  private tickShowers(): void {
+    for (const sh of this.sky.showers) {
+      if (--sh.wait > 0) continue;
+      if (this.sky.meteors.length >= MAX_METEORS) {
+        sh.wait = 1; // the sky is full: try again next tick
+        continue;
+      }
+      const a = this.rng.next() * Math.PI * 2;
+      const d = Math.sqrt(this.rng.next()) * sh.spread;
+      const tx = Math.min(this.world.width - 1, Math.max(0, sh.x + Math.cos(a) * d));
+      const ty = Math.min(this.world.height - 1, Math.max(0, sh.y + Math.sin(a) * d));
+      const roll = this.rng.next();
+      // Size mix by intensity: 1 = small stones; 2 = mostly small, some medium; 3 = small, medium and the odd large.
+      const [radius, energy] =
+        sh.intensity >= 3 && roll > 0.85 ? [8 + this.rng.next() * 2.5, 3]
+        : sh.intensity >= 2 && roll > (sh.intensity >= 3 ? 0.5 : 0.7) ? [4.5 + this.rng.next() * 1.8, 2]
+        : [2 + this.rng.next() * 1.2, 1];
+      this.launchMeteor(tx, ty, radius, energy, false, FLIGHT_TICKS - 4 + Math.floor(this.rng.next() * 24));
+      sh.remaining--;
+      sh.wait = sh.gap;
+    }
+    this.sky.showers = this.sky.showers.filter((sh) => sh.remaining > 0);
   }
 
   /** A meteor lands. Player-launched ones are recorded as one undo step. */

@@ -54,16 +54,15 @@
         <nav id="cats" role="tablist" aria-label="Tool tabs"></nav>
         <div id="tools" role="toolbar" aria-label="Tools"></div>
         <div id="toolbar-bottom">
-          <div id="quick" role="group" aria-label="View tools">
-            <button class="chip" id="tool-move" aria-label="Move the map">✋</button>
-            <button class="chip" id="tool-inspect" aria-label="Inspect">🔍</button>
-          </div>
-          <button class="chip" id="intensity" aria-label="Power level" hidden>Power ●●○</button>
-          <button class="chip" id="duration" aria-label="Effect duration" hidden>⏳ Medium</button>
-          <div id="brush" aria-label="Brush size">
-            <button class="chip" id="brush-minus" aria-label="Smaller brush">－</button>
-            <span id="brush-size">4</span>
-            <button class="chip" id="brush-plus" aria-label="Larger brush">＋</button>
+          <div id="sizes" role="radiogroup" aria-label="Area size: from very small to very large"></div>
+          <div id="toolbar-extra">
+            <div id="quick" role="group" aria-label="View tools">
+              <button class="chip" id="tool-move" aria-label="Move the map">✋</button>
+              <button class="chip" id="tool-inspect" aria-label="Inspect">🔍</button>
+            </div>
+            <button class="chip" id="intensity" aria-label="Power level" hidden>Power ●●○</button>
+            <button class="chip" id="duration" aria-label="Effect duration" hidden>⏳ Medium</button>
+            <button class="chip" id="count" aria-label="Number of meteors" hidden>☄ ×12</button>
           </div>
         </div>
       </footer>
@@ -128,7 +127,7 @@
         <section>
           <h2>View</h2>
           <div class="row">
-            <label class="check"><input type="checkbox" id="pass-overlay" /> Mark terrain lowland animals cannot cross</label>
+            <label class="check"><input type="checkbox" id="pass-overlay" /> Mark ground animals cannot cross (red: snow, mountain, steep slope; crossed lines: sheer cliff)</label>
           </div>
           <div class="row">
             <label class="check"><input type="checkbox" id="ambient-clouds" checked /> Show fair-weather clouds</label>

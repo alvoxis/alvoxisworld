@@ -2,7 +2,7 @@ import { CAUSE, Creatures, MAX_CREATURES, PATH_MAX, SPECIES, STATE } from '../si
 import { EFFECT_COUNT } from '../sim/effects';
 import { FOOD_CELL } from '../sim/foodmap';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
-import { type DisasterConfig, type MeteorInFlight } from '../sim/sky';
+import { MAX_QUEUED_METEORS, MAX_SHOWERS, type DisasterConfig, type MeteorInFlight, type Shower } from '../sim/sky';
 import type { WeatherConfig, WeatherSystem } from '../sim/weather';
 import { T } from '../world/terrain';
 import { WATER_FLAG, World } from '../world/world';
@@ -13,9 +13,11 @@ import { WATER_FLAG, World } from '../world/world';
  * 4 = weather, fire, long-term climate and water memory (dried lakes/rivers, floods),
  * 5 = buffs/debuffs on creatures (effTicks/effPower/effMask; absent = none),
  * 6 = sky: thunderstorms/snow flags and ids on weather systems, wind drift, meteors in flight,
- *     natural-disaster settings (absent = defaults).
+ *     natural-disaster settings (absent = defaults),
+ * 7 = navigation snapshots hold terrain + slope class codes (older saves rebuild navigation once on load,
+ *     because slopes were not part of walkability before).
  */
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 /** Version 6 additions. Everything in it is optional in a save and validated on load. */
 export interface SkySave {
@@ -24,6 +26,11 @@ export interface SkySave {
   nextMeteorId: number;
   weatherNextId: number;
   drift: { x: number; y: number };
+  /** Optional: where the climate-relaxation window sweeps next. */
+  relaxCursor?: number;
+  /** Optional: meteor showers still firing. */
+  showers?: Shower[];
+  nextShowerId?: number;
 }
 
 /** Version 4 world/simulation additions (absent in older saves; migrated on load). */
@@ -35,7 +42,7 @@ export interface SaveV4 {
   fire: Uint8Array;
   fireActive: Int32Array;
   weather: { systems: WeatherSystem[]; config: WeatherConfig; wind: number };
-  foodMap?: { builtTick: number; w: number; h: number; counts: Uint16Array[] };
+  foodMap?: { builtTick: number; w: number; h: number; counts: Uint16Array[]; cursor?: number };
   /** world.passVersion at save time. */
   passVersion?: number;
   /** Navigation snapshot + pending rebuild, so a reload rebuilds identical navigation data. */
@@ -160,6 +167,9 @@ export function serialize(sim: Simulation): SaveData {
       nextMeteorId: sim.sky.nextId,
       weatherNextId: sim.weather.idCounter,
       drift: { ...sim.weather.drift },
+      relaxCursor: sim.weather.relaxCursor,
+      showers: sim.sky.showers.map((sh) => ({ ...sh })),
+      nextShowerId: sim.sky.nextShowerId,
     },
     v4: {
       baseTemperature: w.baseTemperature.slice(),
@@ -309,14 +319,30 @@ function loadSky(sim: Simulation, sky: SkySave): void {
       id: m.id, x: m.x, y: m.y, radius: Math.min(60, Math.max(2, m.radius)), intensity: Math.min(3, Math.max(1, m.intensity)),
       ttl: Math.min(400, m.ttl), total: Math.min(400, m.total), angle: m.angle, natural: !!m.natural,
     }));
+  let queued = 0;
+  sim.sky.showers = (Array.isArray(sky.showers) ? sky.showers : [])
+    .slice(0, MAX_SHOWERS)
+    .filter((sh) => sh && [sh.id, sh.x, sh.y, sh.spread, sh.intensity, sh.remaining, sh.gap, sh.wait].every(finite) && sh.remaining > 0)
+    .map((sh) => {
+      const remaining = Math.min(Math.floor(sh.remaining), Math.max(0, MAX_QUEUED_METEORS - queued));
+      queued += remaining;
+      return {
+        id: sh.id, x: Math.min(w.width - 1, Math.max(0, sh.x)), y: Math.min(w.height - 1, Math.max(0, sh.y)),
+        spread: Math.min(200, Math.max(2, sh.spread)), intensity: Math.min(3, Math.max(1, Math.round(sh.intensity))),
+        remaining, gap: Math.min(100, Math.max(1, Math.round(sh.gap))), wait: Math.min(100, Math.max(0, Math.round(sh.wait))),
+      };
+    })
+    .filter((sh) => sh.remaining > 0);
+  sim.sky.nextShowerId = finite(sky.nextShowerId) ? Math.max(sky.nextShowerId, ...sim.sky.showers.map((sh) => sh.id + 1), 1) : 1;
   sim.sky.nextId = finite(sky.nextMeteorId) ? Math.max(sky.nextMeteorId, ...sim.sky.meteors.map((m) => m.id + 1), 1) : 1;
   if (finite(sky.weatherNextId)) sim.weather.idCounter = Math.max(sim.weather.idCounter, sky.weatherNextId);
+  if (finite(sky.relaxCursor) && sky.relaxCursor >= 0) sim.weather.relaxCursor = Math.floor(sky.relaxCursor) % Math.max(1, w.width * w.height);
   if (sky.drift && finite(sky.drift.x) && finite(sky.drift.y)) sim.weather.drift = { x: sky.drift.x, y: sky.drift.y };
 }
 
 /** Validates a snapshot and loads it into the simulation, replacing the current world. */
 export function deserializeInto(sim: Simulation, data: SaveData): World {
-  if (!data || ![1, 2, 3, 4, 5, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
+  if (!data || ![1, 2, 3, 4, 5, 6, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
   const n = data.width * data.height;
   for (const arr of [data.heights, data.terrain, data.temperature, data.moisture]) {
     if (!(arr instanceof Uint8Array) || arr.length !== n) throw new Error('Corrupt save: map size mismatch');
@@ -342,6 +368,7 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
       else if (world.terrain[i] === T.RIVER) world.waterFlags[i] = WATER_FLAG.RIVER_BED;
     }
   }
+  world.recomputeSlopes();
   world.markAllDirty();
 
   sim.reset(world, data.tick, data.rngState);
@@ -368,5 +395,7 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
   else loadCreatures(sim.creatures, data.creatures as CreatureSave);
   sim.creatures.reindex();
   sim.history = data.history.map((h) => ({ ...h }));
+  // Saves before 7 built their navigation data without slopes: have it rebuilt once.
+  if (data.version < 7) world.passVersion++;
   return world;
 }

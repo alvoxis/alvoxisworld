@@ -1,4 +1,10 @@
+import { navCode, slopeClassOf } from './passability';
 import { T, TERRAIN, isWater, passClass } from './terrain';
+
+/** Sea and lakes: water nothing walks on. Rivers are shallow enough to wade, so they count as ground. */
+function isOpenWater(id: number): boolean {
+  return isWater(id) && id !== T.RIVER;
+}
 
 export const CHUNK = 32;
 
@@ -43,6 +49,12 @@ export class World {
   readonly under: Uint8Array;
   /** Fire: remaining burn ticks (0 = not burning). */
   readonly fire: Uint8Array;
+  /**
+   * Slope class per tile (see passability.ts), derived from heights and kept up to
+   * date by setHeight/writeTile. Code that fills `heights` directly (the generator,
+   * loading, tests) must call recomputeSlopes() afterwards; until then every tile is gentle.
+   */
+  readonly slopeClass: Uint8Array;
 
   readonly chunksX: number;
   readonly chunksY: number;
@@ -70,6 +82,7 @@ export class World {
     this.waterFlags = new Uint8Array(n);
     this.under = new Uint8Array(n);
     this.fire = new Uint8Array(n);
+    this.slopeClass = new Uint8Array(n);
     this.chunksX = Math.ceil(width / CHUNK);
     this.chunksY = Math.ceil(height / CHUNK);
   }
@@ -120,6 +133,8 @@ export class World {
     this.touch(i);
     this.terrain[i] = id;
     if (passClass(old) !== passClass(id)) this.passVersion++;
+    // Water stops counting as a neighbour for slopes (and starts again): refresh them.
+    if (isOpenWater(old) !== isOpenWater(id) && this.refreshSlopesAround(x, y)) this.passVersion++;
     this.markDirty(x, y);
   }
 
@@ -129,7 +144,66 @@ export class World {
     if (this.heights[i] === v) return;
     this.touch(i);
     this.heights[i] = v;
+    if (this.refreshSlopesAround(x, y)) this.passVersion++;
     this.markDirty(x, y);
+  }
+
+  /**
+   * Slope class of tile (x, y) from the current heights. Only walkable neighbours count
+   * (land and rivers): a drop into the sea or a lake is a shore, not a cliff to climb.
+   */
+  slopeClassAt(x: number, y: number): number {
+    const w = this.width;
+    const i = y * w + x;
+    const h = this.heights[i];
+    const t = this.terrain;
+    let d = 0;
+    if (x > 0 && !isOpenWater(t[i - 1])) d = Math.max(d, Math.abs(h - this.heights[i - 1]));
+    if (x < w - 1 && !isOpenWater(t[i + 1])) d = Math.max(d, Math.abs(h - this.heights[i + 1]));
+    if (y > 0 && !isOpenWater(t[i - w])) d = Math.max(d, Math.abs(h - this.heights[i - w]));
+    if (y < this.height - 1 && !isOpenWater(t[i + w])) d = Math.max(d, Math.abs(h - this.heights[i + w]));
+    return slopeClassOf(d);
+  }
+
+  /** Recomputes every tile's slope class (after the heights were filled directly). */
+  recomputeSlopes(): void {
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) this.slopeClass[y * this.width + x] = this.slopeClassAt(x, y);
+    }
+  }
+
+  /**
+   * Recomputes the slope class of a tile and its four neighbours after a height
+   * change. Returns true if a walkable tile changed class, i.e. where animals can go
+   * changed (water tiles are ignored: no walking species cares about their slope).
+   */
+  private refreshSlopesAround(x: number, y: number): boolean {
+    let changed = false;
+    for (let k = 0; k < 5; k++) {
+      const nx = k === 1 ? x - 1 : k === 2 ? x + 1 : x;
+      const ny = k === 3 ? y - 1 : k === 4 ? y + 1 : y;
+      if (nx < 0 || ny < 0 || nx >= this.width || ny >= this.height) continue;
+      const i = ny * this.width + nx;
+      const c = this.slopeClassAt(nx, ny);
+      if (c === this.slopeClass[i]) continue;
+      this.slopeClass[i] = c;
+      const id = this.terrain[i];
+      if (!isWater(id) || id === T.RIVER) changed = true;
+    }
+    return changed;
+  }
+
+  /**
+   * One byte per tile for navigation: terrain id and slope class (see passability.ts).
+   * Snapshots of it go to the navigation worker and into saves.
+   */
+  navCodes(): Uint8Array {
+    const n = this.terrain.length;
+    const out = new Uint8Array(n);
+    const t = this.terrain;
+    const sc = this.slopeClass;
+    for (let i = 0; i < n; i++) out[i] = navCode(t[i], sc[i]);
+    return out;
   }
 
   /** Sets current and long-term climate (painting a biome changes the climate for good). */
@@ -171,6 +245,7 @@ export class World {
     this.baseMoisture[i] = src[off + 5];
     this.waterFlags[i] = src[off + 6];
     this.under[i] = src[off + 7];
+    if (this.refreshSlopesAround(x, y)) this.passVersion++; // heights or water changed: slopes follow
     this.markDirty(x, y);
   }
 

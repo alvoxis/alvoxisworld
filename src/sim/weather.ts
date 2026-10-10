@@ -83,6 +83,8 @@ export class Weather {
   /** Total wind drift so far in tiles: decorative clouds move by it, so they follow the wind and stop when paused. */
   drift = { x: 0, y: 0 };
   private nextId = 1;
+  /** Where the climate-relaxation window starts next (saved, so a reload continues identically). */
+  relaxCursor = 0;
   /** Lightning strikes decided this step; Simulation resolves (and clears) them right after. */
   strikes: Array<{ x: number; y: number }> = [];
   /** Coarse per-cell signed wetness (+1 rain … −1 drought), rebuilt each weather step. */
@@ -357,9 +359,12 @@ export class Weather {
    */
   private relax(world: World, rng: Rng, season: number): void {
     const n = world.width * world.height;
-    const samples = Math.ceil(n * 0.02); // each tile ≈ once per game year
-    for (let s = 0; s < samples; s++) {
-      const i = Math.floor(rng.next() * n);
+    // A window of consecutive tiles that sweeps the map: each tile is visited about
+    // once per game year, and reading memory in order is several times cheaper than
+    // random access on a big map (the old random sampling cost 8 ms per step on 2048×1280).
+    const samples = Math.min(n, Math.ceil(n * 0.02));
+    let i = this.relaxCursor < n ? this.relaxCursor : 0;
+    for (let s = 0; s < samples; s++, i = i + 1 === n ? 0 : i + 1) {
       world.moisture[i] += Math.round((world.baseMoisture[i] - world.moisture[i]) * 0.25);
       world.temperature[i] += Math.round((world.baseTemperature[i] - world.temperature[i]) * 0.25);
       const flags = world.waterFlags[i];
@@ -381,6 +386,7 @@ export class Weather {
         }
       }
     }
+    this.relaxCursor = i;
   }
 
   private rebuildGrid(world: World): void {

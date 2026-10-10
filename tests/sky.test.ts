@@ -5,7 +5,7 @@ import { CAUSE, FISH, GRAZER, RAPTOR, TYRANT } from '../src/sim/creatures';
 import { meteorClass } from '../src/sim/disasters';
 import { Fire } from '../src/sim/fire';
 import { Simulation } from '../src/sim/simulation';
-import { FLIGHT_TICKS, MAX_METEORS } from '../src/sim/sky';
+import { FLIGHT_TICKS, MAX_METEORS, MAX_QUEUED_METEORS, MAX_SHOWERS } from '../src/sim/sky';
 import { SNOW_TEMPERATURE, WEATHER_KIND, Weather } from '../src/sim/weather';
 import { SEA_LEVEL, T } from '../src/world/terrain';
 import { WATER_FLAG, World } from '../src/world/world';
@@ -245,7 +245,7 @@ describe('meteors in flight', () => {
     expect(sim.creatures.deathsBy(TYRANT, CAUSE.METEOR) + sim.creatures.deathsBy(RAPTOR, CAUSE.METEOR)).toBe(2);
   });
 
-  it('caps the meteors in the sky, and a shower lands over time', () => {
+  it('caps the meteors in the sky at once', () => {
     const w = testWorld(128, 128, T.GRASS);
     const sim = quiet(new Simulation(w));
     for (let k = 0; k < MAX_METEORS + 5; k++) sim.launchMeteor(10 + k, 10, 2, 1);
@@ -253,13 +253,6 @@ describe('meteors in flight', () => {
     expect(sim.launchMeteor(5, 5, 2, 1)).toBe(false);
     run(sim, FLIGHT_TICKS + 2);
     expect(sim.sky.meteors).toHaveLength(0);
-    const n = sim.launchShower(64, 64, 12, 9);
-    expect(n).toBe(9);
-    run(sim, 5);
-    expect(sim.sky.meteors.length).toBe(9); // they are still falling
-    run(sim, 80);
-    expect(sim.sky.meteors).toHaveLength(0);
-    expect(sim.sky.stats.meteors).toBe(MAX_METEORS + 9);
   });
 
   it('pausing the simulation pauses meteors (they only advance in step())', () => {
@@ -291,6 +284,138 @@ describe('meteors in flight', () => {
     natural.launchMeteor(48.5, 48.5, 5, 2, true);
     run(natural, FLIGHT_TICKS + 1);
     expect(u2.canUndo).toBe(false);
+  });
+});
+
+describe('meteor showers', () => {
+  const world = () => testWorld(160, 160, T.FOREST, [], 60);
+
+  it('fire their meteors one after another over a few seconds, each from its own direction to its own point', () => {
+    const sim = quiet(new Simulation(world()));
+    expect(sim.launchShower(80, 80, 20, 24, 1)).toBe(24);
+    expect(sim.sky.showers).toHaveLength(1);
+    const seen = new Map<number, { x: number; y: number; angle: number }>();
+    let peak = 0;
+    for (let t = 0; t < 140; t++) {
+      sim.step();
+      peak = Math.max(peak, sim.sky.meteors.length);
+      for (const m of sim.sky.meteors) seen.set(m.id, { x: m.x, y: m.y, angle: m.angle });
+    }
+    expect(seen.size).toBe(24); // all of them were launched
+    expect(sim.sky.stats.meteors).toBe(24); // and all of them landed
+    expect(sim.sky.showers).toHaveLength(0);
+    expect(sim.sky.meteors).toHaveLength(0);
+    expect(peak).toBeLessThanOrEqual(MAX_METEORS);
+    expect(peak).toBeGreaterThan(3); // not all at the same instant, but several in the air together
+    const pts = [...seen.values()];
+    for (const p of pts) expect(Math.hypot(p.x - 80, p.y - 80)).toBeLessThanOrEqual(20.01);
+    expect(new Set(pts.map((p) => Math.round(p.x) + ',' + Math.round(p.y))).size).toBeGreaterThan(15); // different spots
+    expect(new Set(pts.map((p) => p.angle.toFixed(1))).size).toBeGreaterThan(12); // different trajectories (directions spread around the circle)
+  });
+
+  it('really change the world: every meteor digs a crater, hurts creatures, flattens plants and lights fires', () => {
+    const w = world();
+    const sim = quiet(new Simulation(w));
+    sim.spawnInCircle(GRAZER, 80, 80, 12, 30);
+    const forest0 = count(w, T.FOREST);
+    const craters: Array<[number, number, number]> = [];
+    const h0 = Array.from(w.heights);
+    sim.launchShower(80, 80, 16, 12, 2);
+    let events = 0;
+    for (let t = 0; t < 160; t++) {
+      sim.step();
+      events += sim.sky.drainEvents().filter((e) => e.kind === 'impact').length;
+    }
+    expect(events).toBe(12); // one visual impact per simulated impact
+    let lowered = 0;
+    for (let i = 0; i < w.heights.length; i++) if (w.heights[i] < h0[i]) lowered++;
+    craters.push([lowered, 0, 0]);
+    expect(lowered).toBeGreaterThan(100);
+    expect(count(w, T.FOREST)).toBeLessThan(forest0 - 100);
+    expect(count(w, T.SOIL)).toBeGreaterThan(100);
+    expect(sim.fire.burnedOut + sim.fire.burning).toBeGreaterThan(0);
+    expect(sim.creatures.count).toBeLessThan(30);
+  });
+
+  it('intensity sets the sizes: stones only, then medium ones, then the odd large one', () => {
+    const biggest = (intensity: number) => {
+      const sim = quiet(new Simulation(world()));
+      sim.launchShower(80, 80, 20, 48, intensity);
+      const radii: number[] = [];
+      const seen = new Set<number>();
+      for (let t = 0; t < 140; t++) {
+        sim.step();
+        for (const m of sim.sky.meteors) if (!seen.has(m.id)) (seen.add(m.id), radii.push(m.radius));
+      }
+      return { max: Math.max(...radii), mediumOrMore: radii.filter((r) => r >= 4).length, large: radii.filter((r) => r >= 8).length, n: radii.length };
+    };
+    const a = biggest(1);
+    const b = biggest(2);
+    const c = biggest(3);
+    expect(a.n).toBe(48);
+    expect(a.max).toBeLessThan(4);
+    expect(b.mediumOrMore).toBeGreaterThan(5);
+    expect(b.large).toBe(0);
+    expect(c.large).toBeGreaterThan(0);
+    expect(c.mediumOrMore).toBeGreaterThan(b.mediumOrMore);
+  });
+
+  it('are bounded: few showers at once, a cap on queued meteors, and never more than the sky allows in flight', () => {
+    const sim = quiet(new Simulation(world()));
+    let accepted = 0;
+    for (let k = 0; k < 10; k++) accepted += sim.launchShower(40 + k * 8, 40, 10, 48, 1);
+    expect(sim.sky.showers.length).toBeLessThanOrEqual(MAX_SHOWERS);
+    expect(accepted).toBeLessThanOrEqual(MAX_QUEUED_METEORS);
+    expect(sim.sky.queued).toBe(accepted);
+    let peak = 0;
+    for (let t = 0; t < 400; t++) {
+      sim.step();
+      peak = Math.max(peak, sim.sky.meteors.length);
+    }
+    expect(peak).toBeLessThanOrEqual(MAX_METEORS);
+    expect(sim.sky.stats.meteors).toBe(accepted); // every accepted meteor landed
+    expect(sim.sky.showers).toHaveLength(0);
+  });
+
+  it('a meteor already launched cannot be cancelled: it lands at its chosen point', () => {
+    const sim = quiet(new Simulation(world()));
+    sim.launchMeteor(100.5, 60.5, 5, 2);
+    const m = sim.sky.meteors[0];
+    const target = [m.x, m.y];
+    // Even an undo of something else, a world edit or a pause/resume does not remove it.
+    const undo = new UndoHistory();
+    undo.undo(sim.world);
+    sim.speed = 0;
+    sim.advance(1);
+    expect(sim.sky.meteors).toHaveLength(1);
+    sim.speed = 1;
+    run(sim, FLIGHT_TICKS + 1);
+    expect(sim.sky.meteors).toHaveLength(0);
+    expect(sim.sky.stats.meteors).toBe(1);
+    expect(sim.world.heights[sim.world.idx(Math.floor(target[0]), Math.floor(target[1]))]).toBeLessThan(SEA_LEVEL + 20);
+  });
+
+  it('are saved and continue identically after loading, and survive malformed data', () => {
+    const sim = quiet(new Simulation(world()));
+    sim.launchShower(80, 80, 18, 30, 2);
+    run(sim, 20);
+    const data = serialize(sim);
+    expect(data.sky?.showers?.length).toBe(1);
+    const other = new Simulation(testWorld(8, 8, T.GRASS));
+    deserializeInto(other, data);
+    expect(other.sky.showers).toEqual(sim.sky.showers);
+    run(sim, 150);
+    run(other, 150);
+    expect(Array.from(other.world.heights)).toEqual(Array.from(sim.world.heights));
+    expect(other.sky.stats.meteors).toBe(sim.sky.stats.meteors);
+    const bad = serialize(sim);
+    bad.sky!.showers = [null, { id: 1, x: Number.NaN, y: 2, spread: 3, intensity: 1, remaining: 5, gap: 1, wait: 0 }, { id: 2, x: 10, y: 10, spread: 9999, intensity: 99, remaining: 9999, gap: -4, wait: 0 }] as never;
+    const third = new Simulation(testWorld(8, 8, T.GRASS));
+    deserializeInto(third, bad);
+    expect(third.sky.showers).toHaveLength(1);
+    expect(third.sky.showers[0].remaining).toBeLessThanOrEqual(MAX_QUEUED_METEORS);
+    expect(third.sky.showers[0].intensity).toBe(3);
+    run(third, 10);
   });
 });
 

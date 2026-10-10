@@ -102,7 +102,7 @@ You need Node.js 22.12 or newer (Vite 8 and Vitest 5; CI uses 22).
   - **Fire:** sets burnable ground alight; see Fire above.
   - **Extinguish:** puts out every fire under the brush.
   - **Meteor:** a meteor falls from the sky and lands about 2 seconds later (of simulated time; it pauses with the game). **Brush size sets the crater radius and Power sets the energy** (depth, blast and number of fires): small, medium and large are named by crater radius (under 4, under 8, 8 and more tiles). On landing it digs a bowl crater with a raised rim and scorches the floor; a crater below sea level becomes a crater lake. Animals inside are killed and those nearby injured; vegetation out to 2.2 crater radii is flattened to bare soil (more near the crater) and up to 60 fires start around the rim. Animals within the danger zone run away while it falls, and at most 24 meteors can be in the sky. **Undo reverts one landed meteor as one step** (tiles that fire or weather changed since are kept).
-  - **Meteor shower:** 6, 9 or 12 small meteors (by Power) landing within about 1.5× the brush size over a few seconds. Cannot be undone.
+  - **Meteor shower:** its own tool. The circle is the area the meteors fall in (at least 3 tiles), **Count** (6, 12, 24 or 48) is how many, and **Power** (1–3) sets how big they are (1: small stones; 2: some medium; 3: medium and the odd large one). Each meteor has its own direction and impact point and does the full job (crater, deaths, vegetation, fires). They are launched over about 5 seconds; at most 4 showers, 120 queued meteors and 24 in the air at once, so a phone is never flooded. Showers cannot be undone, and a launched meteor cannot be cancelled.
   - **Earthquake:** a fault line drops into a rift, the ground around it buckles (fading with distance), and animals are hurt by the shaking.
 - **Buffs & Debuffs** (Milestone 5). Tap creatures to apply an effect to every creature under the brush, or to the nearest one within 2 tiles. **Power** sets the strength (1–3) and **⏳ Short / Medium / Long** the duration (30, 120 or 360 days). A toast says how many creatures were affected.
 
@@ -121,7 +121,7 @@ You need Node.js 22.12 or newer (Vite 8 and Vitest 5; CI uses 22).
   - **Cannot be undone:** creatures spawned, removed or killed (by disasters too); buffs and debuffs; Rain and Drought (they change the weather over time); Fire and Extinguish; natural changes (grazing, weather, fire spreading). Redo does not relight fires.
   - History is cleared when you create, load or import a world.
 - **Water rule for terrain brushes:** Raise, Lower and Smooth keep rivers, lakes and flood water while the tile stays at or above sea level. Lowering fresh water below sea level turns it into sea. Painting any other biome over water replaces it, including its bed memory. Undo can bring it back.
-- Brush size: 1–24 tiles (1, 2, 4, 7, 11, 16, 24).
+- **Area size** is a row of seven round buttons, from very small to very large (radius 1, 2, 4, 7, 11, 16, 24 tiles). The selected one is filled, and the same radius is used by every tool that has an area (biomes, terrain brushes, spawning, weather, fire, buffs, meteors). Hovering or touching the map draws the real area of the selected tool: a solid ring where it acts and, for meteors, a dashed outer ring for the blast zone. Choosing a size flashes the ring at the screen centre. Weather powers use 4× (storm 3×) the radius, with a minimum of 6 tiles; the ring shows exactly that.
 
 **Simulation**
 - Fixed-timestep clock: day, season and year (10 ticks per second at 1×). **Time controls** (Milestone 5): ⏸/▶ pauses and resumes, keeping the chosen speed; ‹ and › step through 1×, 2×, 3×, 5×, 10× and 20×, and are disabled at the ends. The current speed shows next to them. They change the real simulation rate, measured at 100 ticks per second at 10× and 200 at 20×.
@@ -148,7 +148,7 @@ You need Node.js 22.12 or newer (Vite 8 and Vitest 5; CI uses 22).
 - World statistics: land share, biome mix, and per species the number alive, born, and deaths by cause.
 
 **Persistence**
-- Three save slots in IndexedDB, with Save, Load and Delete. A save (format v6) holds everything needed for the world to continue exactly as it would have:
+- Three save slots in IndexedDB, with Save, Load and Delete. A save (format v7) holds everything needed for the world to continue exactly as it would have:
   - the full map, including rivers and lakes;
   - current and long-term climate, water memory (dried beds, floods), and burning tiles;
   - weather systems (with ids, storm and snow state, and the wind drift that moves the clouds), meteors in flight, and the weather and disaster settings;
@@ -197,3 +197,9 @@ Known limitations:
 - [docs/ROADMAP.md](docs/ROADMAP.md): milestones from this foundation to civilizations and the space age.
 - [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md): the population-stability investigation: method, measurements and the balance changes they justified.
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): Milestone 5 measurements (world sizes, memory, zoom levels, speeds, populations, minimap, undo), Milestone 4 benchmarks, the Web Worker investigation, and how to reproduce them.
+
+## Technical improvements (passability and performance)
+
+- **Slopes.** Every tile has a slope class derived from the height difference to its neighbours (open water ignored): gentle, steep (≥ 13 units) or sheer cliff (≥ 20). Cliffs block every walker; steep slopes cost double and are closed to lowland species like the hadrosaur; mountains, snow and water keep their rules. Swimmers are unaffected. The class is updated locally whenever height or water changes. *Menu → Mark ground animals cannot cross* shows red for blocked terrain and crossed lines for cliffs.
+- **Detours and stuck animals.** Routes go around blocked ground; an animal that ends up on newly blocked ground (a cliff rises, snow settles) dashes to the nearest open tile; one fully walled in stays put and is counted as trapped. Animals never cut a corner between two blocked tiles. Changing terrain bumps a version, shared navigation is rebuilt at most once per 60 ticks (in a worker in the browser) and routes re-check every step against live terrain.
+- **Frame budget.** The simulation never spends more than about 12 ms of a frame; if the device cannot keep up, it runs slower and the speed label shows the achieved speed in orange. The map is repainted in small budgeted batches, visible chunks first.

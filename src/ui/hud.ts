@@ -1,4 +1,5 @@
-import { CATEGORIES, TOOLS, BRUSH_SIZES, type Tool, type ToolCategory } from '../game/tools';
+import { CATEGORIES, TOOLS, BRUSH_SIZES, SIZE_NAMES, type Tool, type ToolCategory } from '../game/tools';
+import { SHOWER_COUNTS } from '../sim/sky';
 import type { Game, TileReport } from '../game/game';
 import { creatureSprite } from '../render/tileset';
 import { MAX_FILE_BYTES } from '../save/file';
@@ -188,22 +189,41 @@ export class Hud {
       this.game.durationIndex = (this.game.durationIndex + 1) % EFFECT_DURATIONS.length;
       this.syncBrush();
     });
-    $('brush-minus').addEventListener('click', () => {
-      this.game.setBrushIndex(this.game.brushIndex - 1);
+    $('count').addEventListener('click', () => {
+      this.game.setCountIndex((this.game.countIndex + 1) % SHOWER_COUNTS.length);
       this.syncBrush();
+      this.game.showPreview();
     });
-    $('brush-plus').addEventListener('click', () => {
-      this.game.setBrushIndex(this.game.brushIndex + 1);
-      this.syncBrush();
+    // The area size: one round button per radius, from very small to very large.
+    const sizes = $('sizes');
+    BRUSH_SIZES.forEach((r, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'size';
+      b.setAttribute('role', 'radio');
+      b.dataset.index = String(i);
+      b.title = `${SIZE_NAMES[i]}: radius ${r} tile${r > 1 ? 's' : ''}`;
+      b.setAttribute('aria-label', b.title);
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      const d = Math.round(7 + 5.2 * Math.sqrt(r)); // 12 px for radius 1 up to 32 px for radius 24
+      dot.style.width = dot.style.height = `${d}px`;
+      b.appendChild(dot);
+      b.addEventListener('click', () => {
+        this.game.setBrushIndex(i);
+        this.syncBrush();
+      });
+      sizes.appendChild(b);
     });
   }
 
   private syncBrush(): void {
-    $('brush-size').textContent = String(BRUSH_SIZES[this.game.brushIndex]);
     const enabled = this.game.tool.usesBrush;
-    $('brush').classList.toggle('disabled', !enabled);
-    $<HTMLButtonElement>('brush-minus').disabled = !enabled || this.game.brushIndex === 0;
-    $<HTMLButtonElement>('brush-plus').disabled = !enabled || this.game.brushIndex === BRUSH_SIZES.length - 1;
+    $('sizes').classList.toggle('disabled', !enabled);
+    for (const b of $('sizes').querySelectorAll<HTMLButtonElement>('.size')) {
+      b.disabled = !enabled;
+      b.setAttribute('aria-checked', String(enabled && Number(b.dataset.index) === this.game.brushIndex));
+    }
     const pw = $<HTMLButtonElement>('intensity');
     pw.hidden = !this.game.tool.usesIntensity;
     pw.replaceChildren();
@@ -217,6 +237,10 @@ export class Hud {
     const d = EFFECT_DURATIONS[this.game.durationIndex];
     du.textContent = `⏳ ${d.label}`;
     du.setAttribute('aria-label', `Effect duration: ${d.label} (${Math.round(d.ticks / TICKS_PER_DAY)} days)`);
+    const co = $<HTMLButtonElement>('count');
+    co.hidden = !this.game.tool.usesCount;
+    co.textContent = `☄ ×${SHOWER_COUNTS[this.game.countIndex]}`;
+    co.setAttribute('aria-label', `Meteors in the shower: ${SHOWER_COUNTS[this.game.countIndex]}`);
   }
 
   private bindZoom(): void {
@@ -255,12 +279,24 @@ export class Hud {
     p.textContent = t.paused ? '▶' : '⏸';
     p.setAttribute('aria-label', t.paused ? 'Resume' : 'Pause');
     p.classList.toggle('active', t.paused);
-    $('speed-label').textContent = `${t.multiplier}×`;
+    this.syncSpeedLabel();
+  }
+
+  /** "20×" normally; "≈9× of 20×" when the device cannot keep up with the selected speed. */
+  private syncSpeedLabel(): void {
+    const t = this.game.time;
+    const sim = this.game.sim;
+    const el = $('speed-label');
+    const slow = sim.throttled;
+    el.textContent = slow ? `≈${Math.max(1, Math.round(sim.achievedSpeed))}× of ${t.multiplier}×` : `${t.multiplier}×`;
+    el.classList.toggle('throttled', slow);
+    el.title = slow ? 'The simulation cannot keep up with this speed on this device, so it runs slower' : '';
   }
 
   private refreshStatus(): void {
     const sim = this.game.sim;
     const d = sim.date;
+    this.syncSpeedLabel();
     $('date').textContent = `Year ${d.year} · ${d.season} · Day ${d.day}${sim.speed === 0 ? ' · Paused' : ''}`;
     let herb = 0;
     let pred = 0;

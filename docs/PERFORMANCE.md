@@ -113,6 +113,40 @@ The capped scenario got slower on this seed, and that is down to weather luck ra
 
 Four years of the mixed ecosystem on three seeds, sampling every 50 ticks: no animal stood still for 500+ ticks except one grazer in one run, and a single sample in one run showed an animal on terrain its species cannot enter (most likely mid-escape from a flood; not investigated further). Drownings and strandings, which used to appear (1–2 per run), no longer do. Grazer deaths by thirst varied between 15 and 38 per run depending on the weather the random generator produced, so differences of that size between runs are noise.
 
+## Technical Improvement Milestone
+
+Same conditions as above: headless Chromium with iPhone 13 *emulation*, production build, `scene.mjs` scenes run back to back on a baseline build (commit 7b66fe9) and this one. **Not measured on a physical iPhone.** Scenes are reproducible but not identical in population: animals breed, so the same scene holds different counts in each build (noted below).
+
+### Causes of the rare long frames (found by wrapping each frame stage)
+
+| Cause | Cost seen | Fix |
+| --- | --- | --- |
+| Season change dirtied every chunk and the 1 px map; all repainted in one frame | 53–80 ms | budgeted flush (4 ms/frame), visible chunks first |
+| FoodMap full recount | 19–31 ms per 50 ticks on Giant | recount a few bands per tick |
+| Weather climate relaxation (random sampling over the whole map) | ~8 ms per step on Giant | contiguous window with a cursor |
+| Catch-up at 20× (33–40 ticks in one frame) | 130–270 ms | 12 ms simulation budget per frame; speed label shows the achieved speed |
+
+### Before / after (ms per frame, 20× unless noted)
+
+| Scene | Build | avg | p95 | p99 | max | frames > 33 ms | ticks/s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Giant 2048×1280, 1616 animals, weather, panning | before | 125.5 | 292.9 | 326.4 | 326.4 | 75 of 98 | 169 |
+| | after | 15.7 | 23.5 | 26.0 | 30.3 | 0 of 400 | 171 |
+| Medium 512×320, weather (before ~2,770 animals, after ~4,650) | before | 27.7 | 86.1 | 152.9 | 244.6 | 86 of 362 | 200 |
+| | after | 16.6 | 21.9 | 24.5 | 26.8 | 0 of 564 | 163 |
+| Edit: raise brush r=11 every frame, 5× | before | 6.1 | 10.5 | 12.5 | 13.1 | 0 | 50 |
+| | after | 6.8 | 10.4 | 11.9 | 12.5 | 0 | 50 |
+| Sky: 4 weather systems, repeated 16-meteor showers, fire, 5× | before | 3.9 | 8.8 | 11.9 | 32.7 | 0 | 50 |
+| | after | 4.3 | 8.2 | 11.6 | 14.1 | 0 | 50 |
+
+At 20× both builds are CPU-bound; the new build keeps frames short by running fewer ticks per frame rather than skipping frames, so achieved speed is nearly equal on Giant and lower on Medium only because the after scene has 68% more animals. Editing and sky scenes are within noise except the worst frame (32.7 → 14.1 ms, the old repaint spike).
+
+### Slope passability cost
+Natural worlds lose little walkable land: cliffs are 0.2–0.4% of land on medium maps; LAND connectivity is essentially unchanged; the largest LOWLAND region on seed 4 shrinks from 35.5k to 29.4k tiles. `scripts/behavior.ts` on seeds 4, 11 and 21 over 4 years stays healthy. Slope refresh is local to a changed tile and its neighbours.
+
+### Not changed
+The simulation stays on the main thread; the Web Worker analysis above still holds (navigation and generation already run in workers).
+
 ## Earlier milestones
 
 ### Milestone 4: simulation benchmarks (Node, medians of 3 runs)

@@ -1,5 +1,5 @@
 import { World } from '../world/world';
-import { MOVE_CLASSES, passableId, type NavGrid } from './pathfinding';
+import { MOVE_CLASSES, navGridOf, passableId, type NavGrid } from './pathfinding';
 
 /** Side of a region cell in tiles. */
 export const REGION_CELL = 16;
@@ -55,7 +55,7 @@ export class RegionGraph {
 
   build(world: World): void {
     const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
-    this.apply(world, computeRegions(world), world.passVersion);
+    this.apply(world, computeRegions(navGridOf(world)), world.passVersion);
     if (t0) this.lastBuildMs = performance.now() - t0;
   }
 

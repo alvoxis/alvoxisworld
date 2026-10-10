@@ -29,8 +29,9 @@ describe('simulation', () => {
     sim.speed = 0;
     expect(sim.advance(1)).toBe(0);
     sim.speed = 1;
+    sim.step(); // the first tick of a world builds navigation, which can exceed a frame's tick budget
     expect(sim.advance(0.2)).toBe(2);
-    expect(sim.tick).toBe(2);
+    expect(sim.tick).toBe(3);
   });
 
   it('spawns only on land and grazers survive on grass', () => {

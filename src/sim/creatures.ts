@@ -147,6 +147,8 @@ const ESCAPE_RADIUS = 8;
 const ESCAPE_DAMAGE = 0.045;
 /** Animals notice fire this many tiles away and run from it. */
 const FIRE_SIGHT = 3;
+/** How far (tiles) an animal on blocked ground looks for a tile it can use. */
+const UNSTICK_RADIUS = 4;
 
 export const MAX_CREATURES = 6000;
 
@@ -284,6 +286,8 @@ export class Creatures {
   envThirst: ((x: number, y: number) => number) | null = null;
   /** Set by the simulation when any tile is burning; skips fire checks otherwise. */
   anyFire = false;
+  /** Animal-ticks spent standing on blocked ground (statistics and tests). */
+  trapped = 0;
   /** Zones to run from (around meteors about to land), set by Simulation each tick; empty most of the time. */
   dangers: Array<{ x: number; y: number; r: number }> = [];
 
@@ -591,15 +595,13 @@ export class Creatures {
    * field + region graph, throttled) and refreshes the food map periodically.
    */
   private updateNavigation(world: World, tick: number): void {
-    if (this.foodMap.builtTick > tick || tick - this.foodMap.builtTick >= FOOD_MAP_TICKS) {
-      this.foodMap.build(world, tick);
-    }
+    this.foodMap.update(world, tick, FOOD_MAP_TICKS);
     if (this.fieldWorld !== world) {
       // New or loaded world: navigation is needed right away.
       this.nav.cancel();
       this.water.build(world);
       this.regions.build(world);
-      this.navTerrain = world.terrain.slice();
+      this.navTerrain = world.navCodes();
       this.navVersion = world.passVersion;
       this.fieldWorld = world;
       this.lastFieldBuild = tick;
@@ -661,6 +663,12 @@ export class Creatures {
         this.harm[i] = cause;
         if (this.health[i] <= 0) this.kill(i, cause);
         continue; // all of its effort goes into getting out
+      }
+
+      // Standing on ground this species cannot use (new snow cover, a cliff raised underneath…).
+      if (!passable(world, sp.move, cx, cy)) {
+        this.unstick(world, i, sp, cx, cy);
+        continue;
       }
 
       // Fire burns anything standing in it.
@@ -1427,14 +1435,61 @@ export class Creatures {
     return true;
   }
 
-  /** Whether creature i may move to (nx, ny). Animals stranded on blocked ground may walk off it. */
+  /**
+   * Whether creature i may move to (nx, ny): the tile must be passable for its species
+   * (terrain and slope), and a step that changes both tile coordinates at once must not
+   * squeeze through the corner between two blocked tiles. An animal that ends up on
+   * blocked ground is moved off it by unstick() before it can act, never by walking
+   * through more blocked ground.
+   */
   private canMove(world: World, i: number, nx: number, ny: number): boolean {
-    const sp = SPECIES[this.species[i]];
+    const cls = SPECIES[this.species[i]].move;
     const tx = Math.floor(nx);
     const ty = Math.floor(ny);
-    if (passable(world, sp.move, tx, ty)) return true;
-    const here = passable(world, sp.move, Math.floor(this.x[i]), Math.floor(this.y[i]));
-    return !here && habitatOk(world, sp, tx, ty);
+    if (!passable(world, cls, tx, ty)) return false;
+    const cx = Math.floor(this.x[i]);
+    const cy = Math.floor(this.y[i]);
+    if (tx !== cx && ty !== cy) return passable(world, cls, tx, cy) && passable(world, cls, cx, ty);
+    return true;
+  }
+
+  /**
+   * An animal standing on ground it cannot stand on (snow settled under it, a cliff
+   * raised under it, a mountain painted there) scrambles to the nearest tile it can
+   * use within UNSTICK_RADIUS, free of charge. With none in reach it is trapped: it
+   * stays put (it never walks through blocked ground) and hunger or thirst will
+   * eventually decide its fate. Returns true if the animal spent its tick on this.
+   */
+  private unstick(world: World, i: number, sp: SpeciesDef, cx: number, cy: number): boolean {
+    let bx = -1;
+    let by = -1;
+    let bd = Infinity;
+    for (let r = 1; r <= UNSTICK_RADIUS && bx < 0; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r || !Creatures.canEnter(world, sp.id, cx + dx, cy + dy)) continue;
+          const d = dx * dx + dy * dy;
+          if (d < bd) {
+            bd = d;
+            bx = cx + dx;
+            by = cy + dy;
+          }
+        }
+      }
+    }
+    this.clearPath(i);
+    this.state[i] = STATE.WANDER;
+    this.trapped++;
+    if (bx < 0) return true; // trapped: no move this tick
+    const ux = bx + 0.5 - this.x[i];
+    const uy = by + 0.5 - this.y[i];
+    const d = Math.hypot(ux, uy) || 1;
+    const step = Math.min(this.speedOf(i) * 1.25, d);
+    this.dx[i] = ux / d;
+    this.dy[i] = uy / d;
+    this.x[i] += this.dx[i] * step;
+    this.y[i] += this.dy[i] * step;
+    return true;
   }
 
   /** Moves along the current heading. Returns false (without moving) if blocked. */

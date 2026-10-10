@@ -416,6 +416,7 @@ describe('navigation (pathfinding, rivers and lakes)', () => {
     // Hadrosaur (no mountains) in a desert pocket; forest behind a ridge with a gap at the bottom.
     const world = testWorld(40, 30, T.DESERT, [[20, 0, 22, 24, T.MOUNTAIN], [24, 8, 30, 14, T.FOREST], [0, 28, 40, 30, T.SHALLOW_WATER]]);
     const sim = new Simulation(world);
+    sim.weather.config.auto = false; // a chance thunderstorm must not decide a navigation test
     const id = sim.creatures.spawn(HADROSAUR, 15.5, 10.5, sim.rng, { hunger: 70, thirst: 0 });
     let ate = false;
     for (let t = 0; t < 900 && !ate; t++) {

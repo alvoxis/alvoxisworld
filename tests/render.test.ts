@@ -66,7 +66,7 @@ describe('terrain painter', () => {
     expect(shallow[0] + shallow[1] + shallow[2]).toBeGreaterThan(deep[0] + deep[1] + deep[2] + 60);
   });
 
-  it('the passability overlay only changes pixels near mountains and snow', () => {
+  it('the passability overlay only changes pixels near mountains, snow, steep ground and cliffs', () => {
     let cx = -1;
     let cy = -1;
     for (let i = 0; i < world.terrain.length && cx < 0; i++) {
@@ -91,8 +91,9 @@ describe('terrain painter', () => {
         for (let dx = -1; dx <= 1; dx++) {
           const x = Math.min(world.width - 1, Math.max(0, tx + dx));
           const y = Math.min(world.height - 1, Math.max(0, ty + dy));
-          const id = world.terrain[y * world.width + x];
-          if (id === T.MOUNTAIN || id === T.SNOW) near = true;
+          const k = y * world.width + x;
+          const id = world.terrain[k];
+          if (id === T.MOUNTAIN || id === T.SNOW || world.slopeClass[k] > 0) near = true;
         }
       }
       expect(near).toBe(true);

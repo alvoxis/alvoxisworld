@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeNav, navDelay, NavScheduler, navTransferables, type NavRequest, type WorkerLike } from '../src/sim/navjobs';
-import { computeWaterDist } from '../src/sim/pathfinding';
+import { computeWaterDist, navGridOf } from '../src/sim/pathfinding';
 import { computeRegions } from '../src/sim/regions';
 import { Simulation } from '../src/sim/simulation';
 import { GRAZER } from '../src/sim/creatures';
@@ -30,11 +30,11 @@ class FakeWorker implements WorkerLike {
 describe('navigation worker protocol', () => {
   it('computeNav equals the main-thread builders', () => {
     const w = generateWorld(96, 64, 2);
-    const res = computeNav({ id: 1, width: 96, height: 64, terrain: w.terrain.slice(), passVersion: w.passVersion });
+    const res = computeNav({ id: 1, width: 96, height: 64, terrain: w.navCodes(), passVersion: w.passVersion });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.water).toEqual(computeWaterDist(w));
-    expect(res.regions.map((r) => r.count)).toEqual(computeRegions(w).map((r) => r.count));
+    expect(res.water).toEqual(computeWaterDist(navGridOf(w)));
+    expect(res.regions.map((r) => r.count)).toEqual(computeRegions(navGridOf(w)).map((r) => r.count));
     expect(navTransferables(res).length).toBeGreaterThan(0);
   });
 
@@ -65,7 +65,7 @@ describe('navigation worker protocol', () => {
 
   it('falls back to the main thread when the worker crashes, errors, is silent, or is missing', () => {
     const w = generateWorld(64, 64, 4);
-    const expected = computeWaterDist(w);
+    const expected = computeWaterDist(navGridOf(w));
     for (const mode of ['crash', 'error-result', 'silent'] as const) {
       const fake = new FakeWorker(mode);
       const nav = new NavScheduler(() => fake);
@@ -90,7 +90,7 @@ describe('navigation worker protocol', () => {
 
   it('uses the snapshot, not later terrain (deterministic regardless of timing)', () => {
     const w = generateWorld(64, 64, 5);
-    const snapWater = computeWaterDist(w);
+    const snapWater = computeWaterDist(navGridOf(w));
     const nav = new NavScheduler(() => new FakeWorker('silent'));
     nav.request(w, 0);
     for (let x = 0; x < 64; x++) w.setTerrain(x, 30, T.LAKE); // changes after the snapshot

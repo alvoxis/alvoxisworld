@@ -14,7 +14,8 @@ import { checkWorldSize, generateWorld, WORLD_SIZES } from '../world/generator';
 import { generateWorldAsync, type GenWorkerLike } from '../world/genjobs';
 import { SEA_LEVEL, TERRAIN } from '../world/terrain';
 import { World } from '../world/world';
-import { BRUSH_SIZES, toolById, type Tool, type ToolContext } from './tools';
+import { SHOWER_COUNTS } from '../sim/sky';
+import { areaOf, BRUSH_SIZES, toolById, type AreaRing, type Tool, type ToolContext } from './tools';
 import { UndoHistory, type UndoResult } from './undo';
 
 export interface TileReport {
@@ -45,6 +46,8 @@ export class Game {
   intensity = 2;
   /** Index into EFFECT_DURATIONS for buffs/debuffs. */
   durationIndex = 1;
+  /** Index into SHOWER_COUNTS for meteor showers. */
+  countIndex = 1;
   /** Shows a short message (set by the UI). */
   onNotify: (text: string) => void = () => {};
   readonly undo = new UndoHistory();
@@ -60,6 +63,7 @@ export class Game {
   private genWorkerFactory: (() => GenWorkerLike) | null = null;
   private stroke: Stroke | null = null;
   private hoverPos: { x: number; y: number } | null = null;
+  private previewUntil = 0;
   private lastFrame = 0;
   /** CPU time spent per frame (simulation + rendering), for performance measurements. */
   readonly frameStats = new FrameStats();
@@ -101,6 +105,9 @@ export class Game {
       },
       get durationTicks() {
         return EFFECT_DURATIONS[game.durationIndex].ticks;
+      },
+      get count() {
+        return SHOWER_COUNTS[game.countIndex];
       },
       notify: (text) => this.onNotify(text),
       effect: (kind, x, y, radius) => {
@@ -164,8 +171,10 @@ export class Game {
     this.collectSkyEvents(now);
     this.trackSelection();
     let cursor: BrushCursor | null = null;
-    const pos = this.stroke ?? this.hoverPos;
-    if (pos && this.tool.usesBrush) cursor = { x: pos.x, y: pos.y, radius: this.brushRadius };
+    let pos = this.stroke ?? this.hoverPos;
+    // On a touch screen there is no hover: after choosing a tool or a size, show its area at the middle of the view for a moment.
+    if (!pos && now < this.previewUntil) pos = this.camera.screenToWorld(this.camera.viewW / 2, this.camera.viewH / 2);
+    if (pos && this.tool.usesBrush) cursor = { x: pos.x, y: pos.y, rings: this.areaRings() };
     if (this.effects.length && now - this.effects[0].start > 1000) this.effects = this.effects.filter((e) => now - e.start <= 1000);
     this.renderer.render(this.camera, this.sim.creatures, cursor, this.sim.speed === 0 ? 1 : this.sim.alpha, this.selectedId, {
       burning: this.sim.fire.active,
@@ -233,10 +242,26 @@ export class Game {
     this.tool = toolById(id);
     this.stroke = null;
     this.undo.end();
+    this.showPreview();
   }
 
   setIntensity(level: number): void {
     this.intensity = Math.max(1, Math.min(3, Math.round(level)));
+    this.showPreview();
+  }
+
+  setCountIndex(i: number): void {
+    this.countIndex = Math.max(0, Math.min(SHOWER_COUNTS.length - 1, i));
+  }
+
+  /** The circles previewing the current tool's area at the chosen size and power. */
+  areaRings(): AreaRing[] {
+    return areaOf(this.tool, this.brushRadius, this.intensity);
+  }
+
+  /** Shows the area preview at the middle of the view for about two seconds. */
+  showPreview(): void {
+    this.previewUntil = performance.now() + 2000;
   }
 
   /** Reverts the last undoable action (tiles the world changed since are kept). Null if nothing to undo. */
@@ -251,6 +276,7 @@ export class Game {
 
   setBrushIndex(i: number): void {
     this.brushIndex = Math.max(0, Math.min(BRUSH_SIZES.length - 1, i));
+    this.showPreview();
   }
 
   private applyAt(x: number, y: number): void {

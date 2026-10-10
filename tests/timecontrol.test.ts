@@ -48,3 +48,42 @@ describe('time controls (‹ ⏸ ›)', () => {
     expect(sim.advance(1)).toBe(0);
   });
 });
+
+describe('frame time budget', () => {
+  it('runs fewer ticks per frame when ticks are expensive, keeps backlog small, and reports the real speed', () => {
+    const sim = new Simulation(new World(16, 16, 1));
+    sim.speed = 20;
+    const busy = () => {
+      const t = performance.now();
+      while (performance.now() - t < 4) {
+        /* a deliberately slow tick */
+      }
+    };
+    sim.step = () => {
+      busy();
+      sim.tick++;
+    };
+    let max = 0;
+    for (let f = 0; f < 6; f++) {
+      const ran = sim.advance(0.25); // 50 ticks requested per frame
+      max = Math.max(max, ran);
+      expect(ran).toBeGreaterThanOrEqual(1);
+    }
+    expect(max).toBeLessThanOrEqual(5); // ≈12 ms of 4 ms ticks, plus the one that crosses the budget
+    expect(sim.throttled).toBe(true);
+    expect(sim.achievedSpeed).toBeGreaterThan(0);
+    expect(sim.achievedSpeed).toBeLessThan(20 * 0.85);
+    // Paused: nothing runs and the measurement resets.
+    sim.speed = 0;
+    expect(sim.advance(1)).toBe(0);
+    expect(sim.throttled).toBe(false);
+  });
+
+  it('is not throttled when ticks are cheap', () => {
+    const sim = new Simulation(new World(16, 16, 1));
+    sim.speed = 10;
+    for (let f = 0; f < 12; f++) sim.advance(0.1);
+    expect(sim.throttled).toBe(false);
+    expect(sim.achievedSpeed).toBeGreaterThan(8);
+  });
+});

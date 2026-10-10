@@ -10,7 +10,7 @@ export interface GenRequest {
 }
 
 /** Every per-tile layer of a freshly generated world. */
-const LAYERS = ['heights', 'terrain', 'temperature', 'moisture', 'baseTemperature', 'baseMoisture', 'waterFlags'] as const;
+const LAYERS = ['heights', 'terrain', 'temperature', 'moisture', 'baseTemperature', 'baseMoisture', 'waterFlags', 'slopeClass'] as const;
 type Layer = (typeof LAYERS)[number];
 
 export type GenResult =

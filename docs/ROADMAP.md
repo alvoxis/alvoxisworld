@@ -20,6 +20,9 @@ World presets up to Giant (2048×1280) and custom sizes, with continents, ranges
 ## ✅ Milestone 5b: Sky and disasters (done)
 Visible drifting clouds with shadows; rain, snow and thunderstorms with lightning that really kills and ignites; snow cover on tundra that melts; rain that greens bare soil. Meteors that fly, land and leave craters, blast zones, fires and smoke, in small/medium/large sizes, plus meteor showers. Wind- and slope-driven fire. Natural disasters (meteors, earthquakes, wildfires) that are off by default and configurable. Animals that scramble out of floods and run from meteors and fire. Save format v6. Measured in docs/PERFORMANCE.md.
 
+## ✅ Technical Improvement Milestone (done)
+Slope-aware passability (gentle / steep / cliff) with detours and unsticking; time-budgeted simulation and map repainting; incremental food map and weather relaxation; a separate meteor-shower tool with count and power; round area-size buttons with on-map previews. Save format v7. Measured in docs/PERFORMANCE.md.
+
 ## Milestone 6: Richer nature (next)
 - More fauna as data: sauropods, pterosaurs, crocodiles (amphibious habitat), small mammals. Herds, nesting and eggs, sexes, seasonal migration.
 - Snow cover beyond tundra, erosion and rivers carving new courses.

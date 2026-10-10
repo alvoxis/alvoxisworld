@@ -124,6 +124,7 @@ export function generateWorld(width: number, height: number, seed: number, optio
       : DEFAULT_HYDROLOGY;
     addHydrology(world, opts);
   }
+  world.recomputeSlopes();
   world.markAllDirty();
   return world;
 }

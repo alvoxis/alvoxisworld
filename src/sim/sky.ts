@@ -22,6 +22,23 @@ export interface MeteorInFlight {
   natural: boolean;
 }
 
+/**
+ * A meteor shower being fired: `remaining` meteors still to launch, one every `gap`
+ * ticks, each at a random point within `spread` tiles of (x, y), from its own random
+ * direction. Meteor sizes depend on `intensity` (1: small stones; 2: some medium; 3: medium and the odd large one).
+ */
+export interface Shower {
+  id: number;
+  x: number;
+  y: number;
+  spread: number;
+  intensity: number;
+  remaining: number;
+  gap: number;
+  /** Ticks until the next launch. */
+  wait: number;
+}
+
 export interface DisasterConfig {
   /** Disasters strike by themselves. Off by default so a world only changes when you ask. */
   auto: boolean;
@@ -42,6 +59,13 @@ export type SkyEvent =
 
 /** Most meteors that can be in the air at once. */
 export const MAX_METEORS = 24;
+/** Showers firing at once, and meteors still to be launched across all of them (bounds the work and the effects on screen). */
+export const MAX_SHOWERS = 4;
+export const MAX_QUEUED_METEORS = 120;
+/** Meteor counts a shower tool offers. */
+export const SHOWER_COUNTS = [6, 12, 24, 48] as const;
+/** Ticks over which a shower spreads its meteors (about 5 s at 1×). */
+export const SHOWER_TICKS = 50;
 /** Ticks of flight of a normal meteor (about 2 s at 1×). */
 export const FLIGHT_TICKS = 20;
 /** Ticks between natural-disaster rolls (a year is 480 ticks). */
@@ -55,7 +79,9 @@ export const DISASTER_RATES = {
 
 export class Sky {
   meteors: MeteorInFlight[] = [];
+  showers: Shower[] = [];
   nextId = 1;
+  nextShowerId = 1;
   config: DisasterConfig = { auto: false, frequency: 1, meteors: true, quakes: true, wildfires: true };
   /** Events for the renderer. Capped so nothing piles up if nobody drains it (tests, headless runs). */
   events: SkyEvent[] = [];
@@ -72,6 +98,27 @@ export class Sky {
     };
     this.meteors.push(m);
     return m;
+  }
+
+  /** Meteors still waiting to be launched by active showers. */
+  get queued(): number {
+    let n = 0;
+    for (const s of this.showers) n += s.remaining;
+    return n;
+  }
+
+  /**
+   * Starts a shower of `count` meteors. Returns how many were accepted (fewer than
+   * asked, or none, if too many showers or queued meteors already exist).
+   */
+  startShower(x: number, y: number, spread: number, count: number, intensity: number): number {
+    if (this.showers.length >= MAX_SHOWERS) return 0;
+    const n = Math.min(count, MAX_QUEUED_METEORS - this.queued);
+    if (n <= 0) return 0;
+    this.showers.push({
+      id: this.nextShowerId++, x, y, spread, intensity, remaining: n, gap: Math.max(1, Math.round(SHOWER_TICKS / n)), wait: 0,
+    });
+    return n;
   }
 
   /** Advances one tick; returns the meteors that land now (removed from the sky, in launch order). */
@@ -113,8 +160,10 @@ export class Sky {
   /** Clears the sky (new world or load); settings are kept. */
   reset(): void {
     this.meteors = [];
+    this.showers = [];
     this.events = [];
     this.nextId = 1;
+    this.nextShowerId = 1;
     this.stats = { meteors: 0, lightning: 0, quakes: 0, wildfires: 0 };
   }
 }

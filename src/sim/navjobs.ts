@@ -2,7 +2,7 @@ import { World } from '../world/world';
 import { computeWaterDist } from './pathfinding';
 import { computeRegions, type ClassRegions } from './regions';
 
-/** Snapshot of the terrain sent to a navigation worker. */
+/** Snapshot of the navigation codes (terrain and slope class per tile) sent to a navigation worker. */
 export interface NavRequest {
   id: number;
   width: number;
@@ -136,7 +136,7 @@ export class NavScheduler {
       id: this.nextId++,
       width: world.width,
       height: world.height,
-      terrain: world.terrain.slice(),
+      terrain: world.navCodes(),
       passVersion: world.passVersion,
     };
     this.pending = { req, due: tick + navDelay(world.width, world.height), result: null };
