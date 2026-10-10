@@ -204,7 +204,11 @@ export class Renderer {
     return canvas;
   }
 
-  render(camera: Camera, creatures: Creatures, cursor: BrushCursor | null): void {
+  /**
+   * @param alpha  interpolation (0..1) between each creature's previous and current tick position
+   * @param selectedId  creature id to highlight (0 = none)
+   */
+  render(camera: Camera, creatures: Creatures, cursor: BrushCursor | null, alpha = 1, selectedId = 0): void {
     this.flushDirty();
     const ctx = this.ctx;
     const w = this.world;
@@ -252,7 +256,8 @@ export class Renderer {
       }
     }
 
-    this.drawCreatures(camera, creatures, s, ox, oy);
+    this.drawCreatures(camera, creatures, s, ox, oy, alpha);
+    if (selectedId) this.drawSelection(creatures, selectedId, s, ox, oy, alpha);
 
     if (cursor) {
       ctx.strokeStyle = 'rgba(255,255,255,0.9)';
@@ -263,29 +268,59 @@ export class Renderer {
     }
   }
 
-  private drawCreatures(camera: Camera, cr: Creatures, s: number, ox: number, oy: number): void {
+  private drawCreatures(camera: Camera, cr: Creatures, s: number, ox: number, oy: number, alpha: number): void {
     const ctx = this.ctx;
-    const minX = camera.x - 1;
-    const minY = camera.y - 1;
-    const maxX = camera.x + this.canvas.width / s + 1;
-    const maxY = camera.y + this.canvas.height / s + 1;
+    const minX = camera.x - 2;
+    const minY = camera.y - 2;
+    const maxX = camera.x + this.canvas.width / s + 2;
+    const maxY = camera.y + this.canvas.height / s + 2;
     const big = camera.zoom >= 3;
-    const size = Math.round(s * 1.1);
     for (let i = 0; i < cr.count; i++) {
-      const x = cr.x[i];
-      const y = cr.y[i];
+      const x = cr.px[i] + (cr.x[i] - cr.px[i]) * alpha;
+      const y = cr.py[i] + (cr.y[i] - cr.py[i]) * alpha;
       if (x < minX || y < minY || x > maxX || y > maxY) continue;
       const sp = cr.species[i];
       const px = Math.round(ox + x * s);
       const py = Math.round(oy + y * s);
+      const juvenile = cr.age[i] < SPECIES[sp].adultAge;
       if (big) {
-        const sprite = cr.dx[i] >= 0 ? this.sprites[sp].right : this.sprites[sp].left;
-        ctx.drawImage(sprite, px - (size >> 1), py - (size >> 1), size, size);
+        const set = this.sprites[sp];
+        const sprite = cr.dx[i] >= 0 ? set.right : set.left;
+        // One sprite pixel = 1/8 tile, like terrain; juveniles are drawn smaller.
+        const scale = (s / TILE_PX) * (juvenile ? 0.7 : 1);
+        const w = Math.max(2, Math.round(sprite.width * scale));
+        const h = Math.max(2, Math.round(sprite.height * scale));
+        ctx.drawImage(sprite, px - (w >> 1), py - h + Math.round(h * 0.25), w, h);
       } else {
-        const d = Math.max(2, Math.round(this.dpr * 1.5));
+        const d = Math.max(2, Math.round(this.dpr * (SPECIES[sp].size > 1.2 ? 2.5 : 1.5)));
         ctx.fillStyle = SPECIES[sp].color;
         ctx.fillRect(px - (d >> 1), py - (d >> 1), d, d);
       }
     }
+  }
+
+  private drawSelection(cr: Creatures, id: number, s: number, ox: number, oy: number, alpha: number): void {
+    const i = cr.indexOf(id);
+    if (i < 0) return;
+    const ctx = this.ctx;
+    const sp = SPECIES[cr.species[i]];
+    const x = ox + (cr.px[i] + (cr.x[i] - cr.px[i]) * alpha) * s;
+    const y = oy + (cr.py[i] + (cr.y[i] - cr.py[i]) * alpha) * s;
+    const r = Math.max(8 * this.dpr, s * sp.size * 0.7);
+    ctx.lineWidth = Math.max(1.5, this.dpr * 1.5);
+    ctx.strokeStyle = '#f2c14e';
+    ctx.beginPath();
+    ctx.arc(x, y - r * 0.2, r, 0, Math.PI * 2);
+    ctx.stroke();
+    // Health bar above the creature.
+    const bw = Math.max(20 * this.dpr, r * 1.6);
+    const bh = Math.max(3, 3 * this.dpr);
+    const bx = x - bw / 2;
+    const by = y - r * 1.4 - bh;
+    const frac = Math.max(0, Math.min(1, cr.health[i] / sp.maxHealth));
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+    ctx.fillStyle = frac > 0.5 ? '#5fd35f' : frac > 0.25 ? '#f2c14e' : '#e0533a';
+    ctx.fillRect(bx, by, bw * frac, bh);
   }
 }

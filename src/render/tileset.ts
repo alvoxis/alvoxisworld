@@ -177,8 +177,76 @@ export class Tileset {
   }
 }
 
-/** 8×8 creature sprites drawn in code, facing right. */
+type PixelArt = { rows: readonly string[]; palette: Record<string, string> };
+
+/**
+ * Original pixel-art sprites as character maps (one char = one pixel, '.' = clear),
+ * facing right. Sprite pixels are 1/8 of a tile, the same scale as terrain pixels.
+ */
+const PIXEL_ART: Record<number, PixelArt> = {
+  2: {
+    // Hadrosaur: crested plant-eater, 12×12 (1.5 tiles).
+    rows: [
+      '..........c.',
+      '.........cc.',
+      '........gggg',
+      '........gegg',
+      '.......ggg..',
+      'd.....gggg..',
+      'ddgggggggg..',
+      '.dggggggggg.',
+      '..gbbbbbbgg.',
+      '...l....l...',
+      '...l....l...',
+      '..ll...ll...',
+    ],
+    palette: { g: '#6f8f4a', d: '#4e6a33', b: '#a9b979', c: '#c8643a', e: '#111111', l: '#3f5528' },
+  },
+  3: {
+    // Tyrant: big two-legged predator, 14×14 (1.75 tiles).
+    rows: [
+      '.........rrrr.',
+      '........rrrerr',
+      '........rrrrrr',
+      '........rrttt.',
+      '........rrrr..',
+      '.......rrr....',
+      'd.....rrrr.a..',
+      'dd..rrrrrrra..',
+      '.ddrrrrrrrr...',
+      '..drrrbbbrr...',
+      '....rrbbrr....',
+      '.....d...d....',
+      '.....d...d....',
+      '....dd..dd....',
+    ],
+    palette: { r: '#7a3b2a', d: '#552618', b: '#b0705a', t: '#f2efe6', e: '#f2c14e', a: '#6a3022' },
+  },
+  4: {
+    // Fish, 6×6 (0.75 tiles).
+    rows: ['......', '.d.ss.', 'ddsses', 'ddssss', '.d.ss.', '......'],
+    palette: { s: '#9fc4d8', d: '#5f8fae', e: '#102030' },
+  },
+};
+
+/** Creature sprites drawn in code, facing right. */
 export function creatureSprite(species: number): HTMLCanvasElement {
+  const art = PIXEL_ART[species];
+  if (art) {
+    const c = document.createElement('canvas');
+    c.width = art.rows[0].length;
+    c.height = art.rows.length;
+    const ctx = c.getContext('2d')!;
+    art.rows.forEach((row, y) => {
+      for (let x = 0; x < row.length; x++) {
+        const color = art.palette[row[x]];
+        if (!color) continue;
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    });
+    return c;
+  }
   const c = document.createElement('canvas');
   c.width = 8;
   c.height = 8;
