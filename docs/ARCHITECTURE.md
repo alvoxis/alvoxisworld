@@ -20,10 +20,11 @@
 ```
 src/
   core/        Pure utilities: seeded RNG (mulberry32), coordinate hash, simplex noise + fBm
-  world/       World data model (typed-array grids, dirty-chunk tracking), terrain catalogue +
-               biome classification, procedural generator, terrain brushes
+  world/       World data model (typed-array grids, dirty-chunk tracking, passability version),
+               terrain catalogue + biome classification, procedural generator, hydrology
+               (rivers/lakes), terrain brushes
   sim/         Fixed-timestep Simulation, calendar/seasons, vegetation (random ticks),
-               creatures (structure-of-arrays + spatial hash)
+               creatures (structure-of-arrays + spatial hash), pathfinding (A*, BFS, water field)
   render/      Camera (pan/zoom maths), procedural pixel-art tileset & sprites, Renderer
   input/       Unified pointer (touch/mouse/pen), pinch, wheel and keyboard handling
   game/        Game controller (loop, strokes, actions) and the tool catalogue
@@ -49,12 +50,38 @@ The map is split into 32×32-tile **chunks**. Every mutation goes through `setTe
 
 Creatures use a structure-of-arrays layout (one typed array per field: `id`, `species`, position and previous position, heading, `health`, `hunger`, `thirst`, `age`, `state`, target, timers) with a fixed capacity of 6,000 and swap-remove. IDs are unique and never reused, so the UI can track a creature by ID even though its array index changes. This keeps thousands of animals cache-friendly and makes them trivial to serialise.
 
+### Hydrology (`src/world/hydrology.ts`)
+
+Runs once at generation, after biome classification, and is deterministic from heights and moisture:
+1. **Priority-flood** from the sea and the map border, using a binary heap. This fills closed basins and gives every land tile a downstream neighbour that leads to the sea.
+2. **Lakes**: tiles where `filled − height ≥ lakeDepth`, in connected groups of at least `minLakeSize` tiles.
+3. **Rivers**: rain is accumulated downstream, from the highest filled tile to the lowest (`0.4 + moisture` per tile). Tiles above `riverThreshold` become `RIVER`, and diagonal steps get an extra orthogonal tile so rivers stay 4-connected.
+
+Rivers and lakes are ordinary terrain ids (`T.RIVER`, `T.LAKE`, both `isWater`), so saves, rendering and brushes need no extra layer. `generateWorld(w, h, seed, { hydrology: false })` turns it off, which tests and comparisons use.
+
+### Pathfinding (`src/sim/pathfinding.ts`)
+
+- **Movement classes**: `LAND` walks land and wades rivers (3× cost in A*, 0.6× speed); `LOWLAND` is the same but can't climb mountains or snow; `WATER` swims in any water. Species declare a class (`SpeciesDef.move`), and `passable(world, cls, x, y)` is the single source of truth for movement.
+- **`Pathfinder.astar`**: 8-way A* with an octile heuristic and no corner cutting. Scratch arrays are allocated once per map size and reused via a generation stamp, so searches allocate nothing.
+- **`Pathfinder.nearest`**: a breadth-first search for the nearest *reachable* tile that matches a predicate (used for food).
+- **Budgets**: every search has its own node limit, and all searches in one tick share `NODE_BUDGET` (40,000 expansions). When the budget is spent a search returns `NO_BUDGET` and the creature retries on a later decision, so search work can never stall the tick.
+- **`WaterField`**: a multi-source BFS distance map, per land class, to the nearest drink spot. Thirsty animals walk down it one step at a time. It is rebuilt when `World.passVersion` has changed, at most every 10 ticks. `passVersion` is bumped by `setTerrain` only when a tile changes movement class (land, sea or lake, river, mountain or snow). Grazing grass into soil, for example, doesn't trigger a rebuild.
+- **Routes** are stored per creature: up to `PATH_MAX` (32) tile indices, plus position and goal. Each waypoint is re-checked with `passable` before use, so terrain edits invalidate routes lazily, and longer routes are re-planned when the stored part runs out.
+
 ### Creature simulation (`src/sim/creatures.ts`)
 
 - **Species are data.** `SPECIES` holds diet, habitat (`land` or `water`), impassable terrain, speed, size, lifespan, need rates, food tiles or prey species, attack, sight, breeding cooldown, litter size and population limits. `PREDATORS_OF` is derived from it.
 - **Each tick, per creature:** ageing and needs, then the habitat check (drowned or stranded), then health (starvation and thirst damage, regeneration when fed), then death (attributed to the last cause of harm or to old age). After that come **think**, **act** and **try to breed**.
 - **Think** runs every 4 ticks per creature, staggered by ID. It picks a state in priority order: flee from a predator nearby, keep eating or drinking until sated, satisfy the greater need (water or food/prey), seek a mate, otherwise wander.
-- **Act** runs every tick and moves or eats according to the state. Food and water targets come from `findTile` (nearest match in straight-line distance, scanned ring by ring). A failed search sets a short cooldown so animals far from water stay cheap.
+- **Act** runs every tick and moves or eats according to the state:
+  - Herbivores walk a BFS route to the nearest reachable food.
+  - Thirsty animals follow the water field.
+  - Predators chase in the open when the line to the prey is clear and it's within 6 tiles; otherwise they follow an A* route that is re-planned when the prey drifts from the route's end. They pounce within 2.5 tiles, and give up after 250 ticks or if the prey is unreachable.
+  - Predators with no prey in sight prowl toward prey-dense cells.
+  - Mates walk to each other and wait together.
+  - Fleeing and wandering animals pick an open heading from 16 candidates, scored by free run ahead, direction away from the threat and continuity, and hold it.
+
+  A failed search sets a short cooldown so animals with no options stay cheap.
 - **Spatial hash** (8×8-tile cells) is rebuilt each tick. It answers nearest-prey, nearest-predator and mate queries, and holds per-cell, per-species counts for carrying capacity.
 - **Deaths** are counted per species and cause (`deathStats`) and also queued (`drainDeaths`), so the UI can report what happened to a selected creature.
 - **Rendering** interpolates each creature between its previous and current tick position using `Simulation.alpha`, so movement looks smooth at 10 ticks/s without simulating per frame.
@@ -83,5 +110,5 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
 ## Adding things
 
 - **New terrain:** add an id to `T` and a `TERRAIN` entry, handle it in `classify` and `Tileset.draw`, then (optionally) add `paintTool(id)` in `game/tools.ts`.
-- **New species:** add a `SPECIES` entry (plus a constant for its id) and a pixel-art entry in `PIXEL_ART` (`render/tileset.ts`, one character per pixel, 1/8 tile per pixel), then a `spawnTool` line in `game/tools.ts`. Shared behaviour comes from the species data. Truly new behaviour (flying, amphibious) needs a new habitat rule in `Creatures.canEnter`.
+- **New species:** add a `SPECIES` entry (plus a constant for its id) and a pixel-art entry in `PIXEL_ART` (`render/tileset.ts`, one character per pixel, 1/8 tile per pixel), then a `spawnTool` line in `game/tools.ts`. Shared behaviour comes from the species data. Truly new movement (flying, amphibious) needs a new movement class in `pathfinding.ts` (`MOVE`, `passableId`, and a `WaterField` entry if it drinks).
 - **New tool:** add an object to `TOOLS`. The UI picks it up automatically.
