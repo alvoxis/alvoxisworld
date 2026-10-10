@@ -47,7 +47,17 @@ Dependencies only point downward: `ui → game → (render, input, save) → sim
 
 The map is split into 32×32-tile **chunks**. Every mutation goes through `setTerrain` or a brush, which calls `markDirty(x, y)` and also flags neighbouring chunks, because hill shading reads neighbour heights. The renderer consumes `dirtyChunks` once per frame.
 
-Creatures use a structure-of-arrays layout (`Float32Array` positions, energy and age; `Uint8Array` species) with a fixed capacity and swap-remove. This keeps 6,000 animals cache-friendly and makes them trivial to serialise.
+Creatures use a structure-of-arrays layout (one typed array per field: `id`, `species`, position and previous position, heading, `health`, `hunger`, `thirst`, `age`, `state`, target, timers) with a fixed capacity of 6,000 and swap-remove. IDs are unique and never reused, so the UI can track a creature by ID even though its array index changes. This keeps thousands of animals cache-friendly and makes them trivial to serialise.
+
+### Creature simulation (`src/sim/creatures.ts`)
+
+- **Species are data.** `SPECIES` holds diet, habitat (`land` or `water`), impassable terrain, speed, size, lifespan, need rates, food tiles or prey species, attack, sight, breeding cooldown, litter size and population limits. `PREDATORS_OF` is derived from it.
+- **Each tick, per creature:** ageing and needs, then the habitat check (drowned or stranded), then health (starvation and thirst damage, regeneration when fed), then death (attributed to the last cause of harm or to old age). After that come **think**, **act** and **try to breed**.
+- **Think** runs every 4 ticks per creature, staggered by ID. It picks a state in priority order: flee from a predator nearby, keep eating or drinking until sated, satisfy the greater need (water or food/prey), seek a mate, otherwise wander.
+- **Act** runs every tick and moves or eats according to the state. Food and water targets come from `findTile` (nearest match in straight-line distance, scanned ring by ring). A failed search sets a short cooldown so animals far from water stay cheap.
+- **Spatial hash** (8×8-tile cells) is rebuilt each tick. It answers nearest-prey, nearest-predator and mate queries, and holds per-cell, per-species counts for carrying capacity.
+- **Deaths** are counted per species and cause (`deathStats`) and also queued (`drainDeaths`), so the UI can report what happened to a selected creature.
+- **Rendering** interpolates each creature between its previous and current tick position using `Simulation.alpha`, so movement looks smooth at 10 ticks/s without simulating per frame.
 
 ## Simulation loop
 
@@ -73,5 +83,5 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
 ## Adding things
 
 - **New terrain:** add an id to `T` and a `TERRAIN` entry, handle it in `classify` and `Tileset.draw`, then (optionally) add `paintTool(id)` in `game/tools.ts`.
-- **New species:** add a `SPECIES` entry and a sprite in `creatureSprite`. Behaviour lives in `Creatures.tick` (to become per-species behaviour modules as the roster grows).
+- **New species:** add a `SPECIES` entry (plus a constant for its id) and a pixel-art entry in `PIXEL_ART` (`render/tileset.ts`, one character per pixel, 1/8 tile per pixel), then a `spawnTool` line in `game/tools.ts`. Shared behaviour comes from the species data. Truly new behaviour (flying, amphibious) needs a new habitat rule in `Creatures.canEnter`.
 - **New tool:** add an object to `TOOLS`. The UI picks it up automatically.
