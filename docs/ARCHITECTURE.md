@@ -83,17 +83,23 @@ Rivers and lakes are ordinary terrain ids (`T.RIVER`, `T.LAKE`, both `isWater`),
 - **`WaterField`**: a multi-source BFS distance map, per land class, to the nearest drink spot. Thirsty animals walk down it one step at a time. It is rebuilt when `World.passVersion` has changed, at most every 10 ticks. `passVersion` is bumped by `setTerrain` only when a tile changes movement class (land, sea or lake, river, mountain or snow). Grazing grass into soil, for example, doesn't trigger a rebuild.
 - **Routes** are stored per creature: up to `PATH_MAX` (32) tile indices, plus position and goal. Each waypoint is re-checked with `passable` before use, so terrain edits invalidate routes lazily, and longer routes are re-planned when the stored part runs out.
 
-### Weather, fire and disasters (`src/sim/weather.ts`, `fire.ts`, `disasters.ts`)
+### Weather, fire and disasters (`src/sim/weather.ts`, `fire.ts`, `disasters.ts`, `sky.ts`)
 
-- **Order in each tick:** `Simulation.step` runs weather, then fire, then vegetation, then creatures. Everything uses the simulation RNG, so it's deterministic and stops when paused.
-- **Weather** keeps a short list of moving systems (rain or drought, with position, radius, intensity and lifetime). Every 10 ticks it:
-  - may form new automatic systems (by season and severity, capped);
-  - moves them with the wind;
-  - applies effects to a sample of the tiles under each system (about 6% of the area);
-  - relaxes 2% of the map's tiles back toward long-term climate, where floods also drain and dried beds refill.
+- **Order in each tick:** `Simulation.step` runs weather, then resolves lightning strikes, then (if enabled) the natural-disaster roll, then meteors in flight (advance, land), then fire, then vegetation, then creatures. Everything uses the simulation RNG, so it's deterministic and stops when paused.
+- **Weather** keeps a short list of moving systems (`id`, `kind` rain or drought, position, radius, intensity, lifetime, and the flags `storm`, `snow`, `forceSnow`). Every 10 ticks it:
+  - may form new automatic systems (rain, drought or thunderstorm, by season and severity, capped);
+  - moves them with the wind (and accumulates the total `drift`, which decorative clouds follow);
+  - recomputes each rain system's `snow` flag from the temperature under its centre;
+  - applies effects to a sample of the tiles under each system (about 6% of the area): per tile, `rainOn`, `snowOn` (temperature below `SNOW_TEMPERATURE`, or forced) or `droughtOn`;
+  - lets each storm decide lightning strikes (`weather.strikes`, at most 6 per step), which `Simulation` resolves right away;
+  - relaxes 2% of the map's tiles back toward long-term climate, where floods drain, snow cover melts (outside winter) and dried beds refill.
   It also keeps a coarse wetness grid (16×16-tile cells) for O(1) lookups: animals' thirst and fire suppression.
-- **Fire** keeps a list of burning tiles plus `world.fire`. Each tick a burning tile can ignite its four neighbours (probability is fuel × dryness², higher in drought) and burns down. Burned land becomes soil. An exact counter enforces `MAX_BURNING` (3,000).
-- **Disasters** are plain functions that edit terrain through the world setters (so undo covers them) and hurt creatures through `Creatures.hurtInCircle` with their own causes of death.
+- **Snow cover** reuses the flood pattern: the tile becomes `SNOW`, `waterFlags` gets `SNOWCOVER`, and `under` remembers the terrain to restore. Melting restores it only if the tile is still snow (a repainted tile just loses the flag).
+- **Fire** keeps a list of burning tiles plus `world.fire`. Each tick a burning tile can ignite its four neighbours (probability is fuel × dryness² × drought boost × wind factor × slope factor) and burns down. Burned land becomes soil. An exact counter enforces `MAX_BURNING` (3,000).
+- **Sky** (`Sky` in `sky.ts`) holds the meteors in flight (`ttl`, `total`, impact point, crater radius, energy, approach angle, and whether it fell naturally), the disaster settings, and a small queue of visual events for the renderer. `Simulation.launchMeteor` adds a meteor; when `ttl` reaches 0, `Simulation.impact` calls `meteorStrike`. A meteor the player launched is wrapped by `impactRecorder` (set by `Game` to `UndoHistory.record`) so its terrain change is one undo step; natural ones are not. `Creatures.dangers` (zones around meteors about to land) makes animals flee.
+- **Natural disasters** are rolled in `Simulation.naturalDisasters` every `DISASTER_STEP` (40) ticks from `DISASTER_RATES`, scaled by map size, only when switched on.
+- **Disasters** (`meteorStrike`, `earthquake`, `lightningStrike`) are plain functions that edit terrain through the world setters (so undo covers them when recorded) and hurt creatures through `Creatures.hurtInCircle` with their own causes of death. `meteorStrike` also flattens vegetation in a blast zone out to 2.2 crater radii.
+- **Escaping uninhabitable ground.** A creature standing where its species cannot live (flooded land, a dried pond) looks for the nearest habitable tile within the distance it can cover before its health runs out (health drains 4.5% of max per tick), and moves there ignoring the usual terrain rules for that dash. With none in reach it dies at once, as before.
 
 ### Undo and redo (`src/game/undo.ts`)
 
@@ -181,7 +187,11 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
   - Trees, conifers, acacias, mountain peaks (big ones on ridge crests, snow-capped when high or cold) and reeds are **sprites** that may overlap neighbouring tiles. Chunks read a one-tile margin, and decoration checks its neighbours, so `World.markDirty` invalidates chunks within two tiles of a change.
   - The optional overlay hatches mountains and snow, the terrain lowland animals cannot cross.
 - Dirty chunks are marked **stale**, not dropped: the old image stays on screen until it is repainted in place. Painting runs centre-first within a 6 ms budget per frame, with at least one chunk per frame.
-- Overlays: water glints (at most 500 per frame), pixel flame sprites up close, rain and drought systems, impact effects, creatures (culled to the viewport; dots far away, sprites close up) and the selection ring.
+- **Sky layer** (`src/render/skyfx.ts`, `SkyRenderer`), drawn after the creatures and before the selection ring. It only reads simulation state:
+  - Cloud sprites are pre-rendered once (4 shapes × 4 palettes: fair, rain, storm, snow, plus a shadow silhouette per shape), so each cloud is one `drawImage`. Fair-weather clouds (about one per 2,500 tiles, at most 120, positions wrapped around the world from the wind drift) are skipped when the camera is close; weather clouds are 4–12 puffs per system.
+  - Rain and snow particles are generated per frame inside the on-screen part of each system from a hash (no particle state), capped at 90 and 110.
+  - Lightning bolts, meteors with trails and landing markers, smoke from a bounded sample of burning tiles, and impact dust and rings are drawn from small lists that `Game` keeps for a second or so after the simulation emits events.
+- Other overlays: water glints (at most 500 per frame), pixel flame sprites up close, creatures (culled to the viewport; dots far away, sprites close up) and the selection ring.
 - Chunk edges are snapped to whole device pixels to avoid seams.
 
 ## Input

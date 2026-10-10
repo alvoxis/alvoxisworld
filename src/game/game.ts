@@ -86,7 +86,11 @@ export class Game {
     this.sim.log(`World ${seed} was formed.`);
     this.sim.onSeasonChange = (s) => this.renderer.setWinter(s === 3);
     // A meteor the player launched is one undo step when it lands (natural ones are not recorded).
-    this.sim.impactRecorder = (label, run) => this.undo.record(this.sim.world, label, run);
+    // If a brush stroke is open when it lands, that stroke is closed first so the two never merge into one step.
+    this.sim.impactRecorder = (label, run) => {
+      this.undo.end();
+      this.undo.record(this.sim.world, label, run);
+    };
     this.attachWorld(this.sim.world);
     this.setupWorkers();
 
@@ -217,6 +221,10 @@ export class Game {
     this.renderer.setWinter(this.sim.date.seasonIndex === 3);
     this.camera.setWorldSize(world.width, world.height);
     world.markAllDirty();
+    // Visual leftovers of the previous world (bolts, dust, rings) must not appear over the new one.
+    this.bolts = [];
+    this.dust = [];
+    this.effects = [];
   }
 
   // ---- tools -------------------------------------------------------------

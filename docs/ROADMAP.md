@@ -1,6 +1,6 @@
 # Roadmap
 
-Each milestone ends with something playable, plus tests for the new rules. Milestones 1–5 are done.
+Each milestone ends with something playable, plus tests for the new rules. Milestones 1–5 and 5b are done.
 
 ## ✅ Milestone 1: Living map foundation (done)
 Seeded world generation with biomes and climate. Two-level pixel-art renderer. Touch and mouse camera. Terrain, biome and life brushes. Seasons and time controls. Vegetation succession. Grazer/raptor food chain. IndexedDB save slots. Stats and history. CI and GitHub Pages deploy.
@@ -17,9 +17,12 @@ Moving rain and drought systems that change moisture and temperature, fill and d
 ## ✅ Milestone 5: Expanded world, visuals and god-game UI (done)
 World presets up to Giant (2048×1280) and custom sizes, with continents, ranges and rivers scaled to the map. Lighter navigation memory. Painted map chunks at two resolutions: organic biome edges, slope shading, depth-shaded sea with foam, smooth rivers, tree and peak sprites, water glints, flame sprites, a passability overlay. Creatures / Biomes / God Powers / Buffs & Debuffs tabs. Flood, Drain, Extinguish. Eight buffs and debuffs with duration and strength (save format v5). Arrow time controls. Redo with conflict-aware undo. Save export/import as files. Measured in docs/PERFORMANCE.md.
 
+## ✅ Milestone 5b: Sky and disasters (done)
+Visible drifting clouds with shadows; rain, snow and thunderstorms with lightning that really kills and ignites; snow cover on tundra that melts; rain that greens bare soil. Meteors that fly, land and leave craters, blast zones, fires and smoke, in small/medium/large sizes, plus meteor showers. Wind- and slope-driven fire. Natural disasters (meteors, earthquakes, wildfires) that are off by default and configurable. Animals that scramble out of floods and run from meteors and fire. Save format v6. Measured in docs/PERFORMANCE.md.
+
 ## Milestone 6: Richer nature (next)
 - More fauna as data: sauropods, pterosaurs, crocodiles (amphibious habitat), small mammals. Herds, nesting and eggs, sexes, seasonal migration.
-- Seasonal snow cover that spreads and melts, erosion and rivers carving new courses.
+- Snow cover beyond tundra, erosion and rivers carving new courses.
 - Consider moving the whole simulation tick into a worker (see PERFORMANCE.md).
 
 ## Milestone 7: Peoples

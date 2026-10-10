@@ -84,6 +84,35 @@ On a Giant map, scaling the 1 px map to the minimap with `imageSmoothingQuality 
 - Long-route times rose from 4.9 ms (measured earlier the same day) after the toolchain upgrade. The Milestone 4 code measured the same way is just as slow, so that is the toolchain or machine, not this milestone's code.
 - Large maps now generate differently, so expansions per route changed (1,426 → 1,540).
 
+## Milestone 5b: sky and disasters
+
+Same conditions as above (headless Chromium with iPhone 13 emulation, production build; Node 22 for the simulation benchmarks). **Not measured on a physical iPhone.**
+
+### Browser frame cost (60–100 herds spawned, 5×, zoom 4 unless noted)
+
+| Scene | Medium 512×320 | Giant 2048×1280 |
+|---|---|---|
+| Clear sky, decorative clouds off | avg 1.00 ms, p95 5.2 | avg 2.51, p95 8.2 |
+| Decorative clouds on | avg 0.59, p95 1.2 | avg 2.45, p95 7.8 |
+| Worst case in view: 3 storms + 1 snowfall (each 24 tiles wide), 10 meteors in flight, a fire (10-tile radius), constant lightning | avg 2.32, p95 8.2, max 24.7 | avg 4.76, p95 13.1, max 77.9 |
+| Same scene at zoom 12 | avg 1.19, p95 3.9 | avg 4.54, p95 13.1 |
+| Same scene, whole world in view | avg 1.17, p95 2.1 | avg 5.07, p95 13.4 |
+
+(The first two rows differ by noise rather than by the clouds themselves: clouds are about 10–25 `drawImage` calls per frame. The first row also includes the chunk repaints after the world was generated.) Frame cost is CPU time inside the frame, as in the Milestone 5 tables.
+
+### Simulation benchmarks
+
+| Scenario | Before (`1a6efd4`) | Now |
+|---|---|---|
+| Mixed ecosystem, weather on, seeds 4 / 11 (6th year) | 2.46 / 2.13 ms per tick | 2.35 / 2.06 |
+| Capped herbivores (5,163 animals; interleaved runs, 3 each) | 3.00–3.01 ms (p95 4.9–5.3) | 3.87–4.03 (p95 6.3–6.7) |
+
+The capped scenario got slower on this seed, and that is down to weather luck rather than per-creature cost. With storms disabled it was just as slow (3.87–3.98 ms), the old `creatures.ts` with the new weather was just as slow (3.8–4.0), and the old `weather.ts` and `fire.ts` brought it back to 3.2. The new weather caused 9 navigation rebuilds in the first 700 ticks of that scenario (about 38 ms each on the main thread in Node) against none before. Across six world seeds over 2,400 ticks, rebuild requests went from 32.7 to 36.0 on average (the limit is 40, one per 60 ticks), i.e. weather already asked for rebuilds almost constantly, and snow cover on tundra adds a few more. In the browser those rebuilds run in the navigation worker.
+
+### Behaviour diagnostics (`npx vite-node scripts/behavior.ts 4,11,21 4`)
+
+Four years of the mixed ecosystem on three seeds, sampling every 50 ticks: no animal stood still for 500+ ticks except one grazer in one run, and a single sample in one run showed an animal on terrain its species cannot enter (most likely mid-escape from a flood; not investigated further). Drownings and strandings, which used to appear (1–2 per run), no longer do. Grazer deaths by thirst varied between 15 and 38 per run depending on the weather the random generator produced, so differences of that size between runs are noise.
+
 ## Earlier milestones
 
 ### Milestone 4: simulation benchmarks (Node, medians of 3 runs)
@@ -145,6 +174,7 @@ It's possible, but a large rewrite that would collide with the planned UI milest
 
 ## Known limits
 
+- **Sky drawing** is cheap but unbounded in one way: very large weather systems cover the whole screen, so rain or snow particles are capped (90 / 110) rather than scaled with area, and look sparse at high zoom. Everything is capped per frame.
 - **Chunk painting** runs on the main thread. A single 8 px chunk costs a few milliseconds in desktop Chromium, so a fast zoom or a large weather change can cost a few frames while chunks catch up. It could move to a worker with OffscreenCanvas if phone measurements show stalls.
 - **Giant maps** take about 3.5 s to generate here (in a worker, so the page stays responsive) and keep about 80 MB in the simulation plus 20 MB for the map image. Older iPhones may run out of memory; this is untested.
 - The creature tick itself (about 0.5 µs per animal per tick in Node) still runs on the main thread. At 10× with about 5,500 animals that's an *estimated* 25–30% of a 60 fps frame, derived from the Node per-tick cost rather than measured in the browser. Phones will be slower.
