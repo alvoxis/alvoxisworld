@@ -4,5 +4,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   base: './',
   build: { target: 'es2020', outDir: 'dist' },
-  test: { include: ['tests/**/*.test.ts'], environment: 'node' },
+  // Long deterministic scenarios (years of simulation, large maps) take several seconds,
+  // more when test files run in parallel; the default 5 s limit made them flaky.
+  test: { include: ['tests/**/*.test.ts'], environment: 'node', testTimeout: 30_000 },
 });

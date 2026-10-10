@@ -168,5 +168,5 @@ describe('world sizes', () => {
       }
     }
     expect(wide).toBeGreaterThan(20);
-  }, 30_000); // generates three maps, two of them large
+  });
 });
