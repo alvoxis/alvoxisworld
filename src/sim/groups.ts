@@ -101,12 +101,23 @@ export class Groups {
   }
 
   onDeath(id: number): void {
+    this.release(id);
+  }
+
+  /** Takes a creature out of its group (it died, or it joined or founded a settlement). */
+  release(id: number): void {
     const gid = this.groupOf.get(id);
     this.groupOf.delete(id);
     this.goals.delete(id);
     if (!gid) return;
     const g = this.get(gid);
-    if (g) g.members.splice(g.members.indexOf(id), 1);
+    if (!g) return;
+    g.members.splice(g.members.indexOf(id), 1);
+    if (g.members.length < 2) {
+      // Too few left to be a group: dissolve it now, as the group step would.
+      for (const m of g.members) this.groupOf.delete(m);
+      this.list = this.list.filter((x) => x !== g);
+    }
   }
 
   /** Makes a group from given people (used when part of a settlement leaves). They start by looking for a new home. */

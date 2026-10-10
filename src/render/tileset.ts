@@ -295,6 +295,11 @@ const PIXEL_ART: Record<number, PixelArt> = {
     rows: ['..hhh...', '..hhh...', '...h....', '.tttttt.', 'ahtttth.', '..tttt..', '..l..l..', '..l..l..'].map((r) => r.slice(0, 8)),
     palette: { h: '#e8b98a', t: '#3f6fb5', a: '#e8b98a', l: '#4a3a2a' },
   },
+  6: {
+    // Elf, 8×8 (one tile): pale hair, pointed ears, green hooded cloak with a gold clasp, slim dark legs.
+    rows: ['..yyy...', '.ehhhe..', '..yhy...', '.gggggg.', 'hggbggh.', '..gggg..', '..l..l..', '..l..l..'],
+    palette: { y: '#f3e7a6', h: '#f1d3b3', e: '#f1d3b3', g: '#2f7d45', b: '#e0b84a', l: '#3b4a2e' },
+  },
   4: {
     // Fish, 6×6 (0.75 tiles).
     rows: ['......', '.d.ss.', 'ddsses', 'ddssss', '.d.ss.', '......'],

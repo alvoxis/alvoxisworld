@@ -57,6 +57,8 @@ export interface SpeciesDef {
   color: string;
   /** Intelligent species (people): kept apart from animal settlements; later stages build civilizations on this. */
   sentient?: boolean;
+  /** Colour of the dot that marks a person when zoomed far out (people only). */
+  marker?: string;
   /** How a sentient species chooses where to live and who it lives with. A new people (elves, ...) is a new SpeciesDef with its own profile. */
   civ?: CivProfile;
 }
@@ -74,7 +76,15 @@ export interface CivProfile {
   groupMax: number;
   /** Other species that may live in its settlements and groups. Empty today: settlements and groups are single-species. */
   compatible: readonly number[];
+  /** Weights of the site score (sites.ts): edible land, liked terrain, trees, rock and free land within reach. */
+  weights: Readonly<{ food: number; like: number; trees: number; rock: number; space: number }>;
+  /** Least distance (tiles) from a new home to the centre of any existing settlement. */
+  gap: number;
+  /** Building style of its settlements (render/architecture.ts); the rules of buildings are shared by all peoples. */
+  architecture: Architecture;
 }
+
+export type Architecture = 'human' | 'elven';
 
 export const GRAZER = 0;
 export const RAPTOR = 1;
@@ -82,6 +92,7 @@ export const HADROSAUR = 2;
 export const TYRANT = 3;
 export const FISH = 4;
 export const HUMAN = 5;
+export const ELF = 6;
 
 export const SPECIES: readonly SpeciesDef[] = [
   {
@@ -94,7 +105,7 @@ export const SPECIES: readonly SpeciesDef[] = [
   {
     id: RAPTOR, key: 'raptor', name: 'Raptor', plural: 'Raptors', diet: 'carnivore', habitat: 'land',
     speed: 0.18, size: 1, adultAge: 400, maxAge: 2600, maxHealth: 60, hungerRate: 0.15, thirstRate: 0.14,
-    food: [], biteGain: 0, prey: [GRAZER, HUMAN], attack: 8, meat: 90,
+    food: [], biteGain: 0, prey: [GRAZER, HUMAN, ELF], attack: 8, meat: 90,
     move: MOVE.LAND, sight: 14, breedCooldown: 420, breedChance: 0.02, litter: 1, crowdLimit: 2, maxShare: 0.15,
     color: '#c8502e',
   },
@@ -108,7 +119,7 @@ export const SPECIES: readonly SpeciesDef[] = [
   {
     id: TYRANT, key: 'tyrant', name: 'Tyrant', plural: 'Tyrants', diet: 'carnivore', habitat: 'land',
     speed: 0.14, size: 1.8, adultAge: 900, maxAge: 4000, maxHealth: 220, hungerRate: 0.14, thirstRate: 0.12,
-    food: [], biteGain: 0, prey: [HADROSAUR, GRAZER, HUMAN], attack: 25, meat: 100,
+    food: [], biteGain: 0, prey: [HADROSAUR, GRAZER, HUMAN, ELF], attack: 25, meat: 100,
     move: MOVE.LOWLAND, sight: 13, breedCooldown: 600, breedChance: 0.015, litter: 1, crowdLimit: 3,
     maxShare: 0.05, color: '#7a3b2a',
   },
@@ -126,7 +137,7 @@ export const SPECIES: readonly SpeciesDef[] = [
     speed: 0.12, size: 1, adultAge: 600, maxAge: 3000, maxHealth: 50, hungerRate: 0.17, thirstRate: 0.14,
     food: [T.GRASS, T.FOREST, T.JUNGLE, T.SAVANNA, T.HILLS], biteGain: 3, prey: [], attack: 0, meat: 0,
     move: MOVE.LOWLAND, sight: 12, breedCooldown: 500, breedChance: 0.02, litter: 1, crowdLimit: 3, maxShare: 0.2,
-    color: '#e0a878', sentient: true,
+    color: '#e0a878', sentient: true, marker: '#6fa8ff',
     civ: {
       affinity: { [T.GRASS]: 1, [T.SAVANNA]: 0.8, [T.FOREST]: 0.7, [T.HILLS]: 0.5, [T.JUNGLE]: 0.5, [T.SAND]: 0.3, [T.TUNDRA]: 0.3, [T.SWAMP]: 0.2, [T.SOIL]: 0.4 },
       avoid: [T.DESERT, T.MOUNTAIN, T.SNOW, T.SWAMP],
@@ -134,6 +145,30 @@ export const SPECIES: readonly SpeciesDef[] = [
       minFounders: 4,
       groupMax: 24,
       compatible: [],
+      weights: { food: 0.45, like: 0.3, trees: 0.1, rock: 0.05, space: 0.1 },
+      gap: 16,
+      architecture: 'human',
+    },
+  },
+  {
+    // Elves: a second people. The same needs, dangers, life cycle and settlement rules as humans; what differs is data:
+    // they forage the woods, live longer but have children more rarely, travel in smaller groups, look for forest
+    // with water and trees around it (rock matters little to them) and keep more distance from other settlements.
+    id: ELF, key: 'elf', name: 'Elf', plural: 'Elves', diet: 'herbivore', habitat: 'land',
+    speed: 0.13, size: 1, adultAge: 700, maxAge: 3800, maxHealth: 45, hungerRate: 0.16, thirstRate: 0.14,
+    food: [T.FOREST, T.JUNGLE, T.GRASS, T.SAVANNA], biteGain: 3, prey: [], attack: 0, meat: 0,
+    move: MOVE.LOWLAND, sight: 13, breedCooldown: 650, breedChance: 0.015, litter: 1, crowdLimit: 3, maxShare: 0.15,
+    color: '#8fd08a', sentient: true, marker: '#7fe08a',
+    civ: {
+      affinity: { [T.FOREST]: 1, [T.JUNGLE]: 0.8, [T.GRASS]: 0.6, [T.HILLS]: 0.3, [T.SAVANNA]: 0.3, [T.TUNDRA]: 0.2, [T.SOIL]: 0.2, [T.SAND]: 0.1 },
+      avoid: [T.DESERT, T.MOUNTAIN, T.SNOW, T.SWAMP],
+      needsWater: true,
+      minFounders: 4,
+      groupMax: 16,
+      compatible: [],
+      weights: { food: 0.35, like: 0.3, trees: 0.25, rock: 0, space: 0.1 },
+      gap: 20,
+      architecture: 'elven',
     },
   },
 ];

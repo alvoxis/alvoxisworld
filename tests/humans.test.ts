@@ -44,13 +44,13 @@ function humans(sim: Simulation): number[] {
 
 describe('humans as a species', () => {
   it('are a sixth, sentient species and every earlier species is unchanged', () => {
-    expect(SPECIES.length).toBe(6);
+    expect(SPECIES.length).toBeGreaterThanOrEqual(6); // elves came later as the seventh
     expect(SPECIES[HUMAN]).toMatchObject({ key: 'human', sentient: true, habitat: 'land', move: MOVE.LOWLAND });
     expect(SPECIES.slice(0, 5).map((s) => s.key)).toEqual(['grazer', 'raptor', 'hadrosaur', 'tyrant', 'fish']);
     expect(SPECIES.slice(0, 5).some((s) => s.sentient)).toBe(false);
     // Predators may hunt people, and still hunt what they hunted before.
-    expect(SPECIES[RAPTOR].prey).toEqual([GRAZER, HUMAN]);
-    expect(SPECIES[TYRANT].prey).toEqual([HADROSAUR, GRAZER, HUMAN]);
+    expect(SPECIES[RAPTOR].prey.slice(0, 2)).toEqual([GRAZER, HUMAN]);
+    expect(SPECIES[TYRANT].prey.slice(0, 3)).toEqual([HADROSAUR, GRAZER, HUMAN]);
   });
 
   it('can be added from the first moment, through the same spawn tool as every species', () => {
@@ -219,7 +219,8 @@ describe('saving, loading and old saves', () => {
     expect(other.creatures.deathsBy(FISH, 2)).toBe(4 * 100 + 3);
     expect(other.creatures.deathsBy(GRAZER, 0)).toBe(1);
     expect(other.creatures.deathsBy(HUMAN, 0)).toBe(0);
-    expect(Array.from(other.creatures.birthStats)).toEqual([7, 6, 5, 4, 3, 0]);
+    expect(Array.from(other.creatures.birthStats).slice(0, 6)).toEqual([7, 6, 5, 4, 3, 0]);
+    expect(Array.from(other.creatures.birthStats).slice(6).every((n) => n === 0)).toBe(true);
     expect(other.creatures.countSpecies(GRAZER)).toBe(sim.creatures.countSpecies(GRAZER));
     run(other, 100); // the food map is rebuilt, nothing throws
     other.spawnInCircle(HUMAN, 20, 20, 3, 5);

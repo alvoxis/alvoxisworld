@@ -44,6 +44,9 @@ Residents take jobs (construction, field work, woodcutting, quarrying), walk to 
 ## ✅ Housing Evolution 0.16 (done)
 Houses go from huts to wooden, reinforced and urban houses with the settlement's stage and Better building; upgrades cost resources, take builders and time and add room; visible on the map and in the card. Save format still 11. Next logical step: architecture per people, more building types growing the same way.
 
+## ✅ Elves and Race Identity 0.17 (done)
+Elves as a second people through the species data: their own needs balance, site preferences, group size, settlement distance and an elven house style at all four levels; shared rules for everything else. Save format 12. Next logical step: relations between peoples, buildings of other kinds per architecture.
+
 ## Milestone 6: Richer nature (next)
 - More fauna as data: sauropods, pterosaurs, crocodiles (amphibious habitat), small mammals. Herds, nesting and eggs, sexes, seasonal migration.
 - Snow cover beyond tundra, erosion and rivers carving new courses.

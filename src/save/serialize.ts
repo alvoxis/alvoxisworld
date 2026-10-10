@@ -23,9 +23,11 @@ import { WATER_FLAG, World } from '../world/world';
  *     so older saves (5 species) keep their death statistics. Creatures already carry species ids, so nothing else changes,
  * 10 = human settlements: optional `civ` per settlement (stock, buildings, technologies) and `auto` in the settlements block;
  *      absent = none / defaults, so saves 1–9 load unchanged,
- * 11 = groups of free people (optional `groups` block), settlement `stress`/`lastEmigration` and `bans`; absent = none / defaults.
+ * 11 = groups of free people (optional `groups` block), settlement `stress`/`lastEmigration` and `bans`; absent = none / defaults,
+ * 12 = elves (a seventh species, id 6). Nothing in the format changes (species ids and `statSpecies` already cover it);
+ *      the bump only makes older builds refuse saves that may contain elves. Saves 1–11 load unchanged.
  */
-export const SAVE_VERSION = 11;
+export const SAVE_VERSION = 12;
 
 /** Version 6 additions. Everything in it is optional in a save and validated on load. */
 export interface SkySave {

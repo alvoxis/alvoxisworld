@@ -83,6 +83,8 @@ export class Simulation {
     this.settlements.onEmigrate = (ids, st, tick) => this.groups.createGroup(this.world, this.creatures, ids, tick, st.id, tick + EMIGRATE_BAN_TICKS);
     this.creatures.breedBlock = (id) => this.settlements.breedBlocked(id);
     this.settlements.onEvent = (text, code, p) => this.log(text, code, p);
+    // A person who joins or founds a settlement leaves its group at once (never in both, not even between group steps).
+    this.settlements.onJoin = (id) => this.groups.release(id);
   }
 
   get date(): WorldDate {

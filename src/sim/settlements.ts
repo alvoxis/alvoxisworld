@@ -148,6 +148,8 @@ export class Settlements {
   bans = new Map<number, { sid: number; until: number }>();
   /** Told when part of a settlement leaves (the groups system takes them in). */
   onEmigrate: ((ids: number[], s: Settlement, tick: number) => void) | null = null;
+  /** Told when a free creature becomes a member (joins or founds), so the groups system lets it go at once. */
+  onJoin: ((id: number) => void) | null = null;
   /** Called for every history-worthy event (the simulation adds it to the world history). */
   onEvent: ((text: string, code: string, p: Record<string, string | number>) => void) | null = null;
 
@@ -265,6 +267,7 @@ export class Settlements {
       this.recomputeTerritory(world);
       return 'ground';
     }
+    for (const m of s.members) this.onJoin?.(m);
     this.event(s, tick, `${name} was founded (${SPECIES[s.species].plural.toLowerCase()}, ${pop}).`, 'settlement_founded', { name, species: s.species, n: pop });
     return s;
   }
@@ -373,6 +376,7 @@ export class Settlements {
       if (best) {
         best.members.push(cid);
         this.memberOf.set(cid, best.id);
+        this.onJoin?.(cid);
         best.joined++;
       }
     }

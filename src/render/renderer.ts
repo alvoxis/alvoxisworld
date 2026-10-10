@@ -10,6 +10,7 @@ import type { MeteorInFlight } from '../sim/sky';
 import { COLORS, type Settlement } from '../sim/settlements';
 import type { Building, BuildingType, JobKind } from '../sim/civ';
 import { Tileset, TILE_PX, creatureSprite } from './tileset';
+import { HOUSE_STYLES, type HouseStyle } from './architecture';
 
 /** Device pixels per tile at which 8-px-per-tile detail chunks are used. */
 export const DETAIL_SCALE = 9;
@@ -529,7 +530,10 @@ export class Renderer {
       ctx.lineWidth = Math.max(1.5, 1.6 * this.dpr);
       ctx.stroke();
       // Buildings of a human settlement (finished ones solid, under construction faded).
-      if (st.civ) for (const b of st.civ.buildings) this.drawBuilding(b, st.color, s, ox, oy, x0, y0, x1, y1);
+      if (st.civ) {
+        const style = HOUSE_STYLES[SPECIES[st.species].civ?.architecture ?? 'human'];
+        for (const b of st.civ.buildings) this.drawBuilding(b, st.color, style, s, ox, oy, x0, y0, x1, y1);
+      }
       // Centre marker.
       const cx = ox + (st.x + 0.5) * s;
       const cy = oy + (st.y + 0.5) * s;
@@ -570,7 +574,7 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawBuilding(b: Building, color: number, s: number, ox: number, oy: number, x0: number, y0: number, x1: number, y1: number): void {
+  private drawBuilding(b: Building, color: number, style: HouseStyle, s: number, ox: number, oy: number, x0: number, y0: number, x1: number, y1: number): void {
     if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) return;
     const ctx = this.ctx;
     const px = Math.round(ox + b.x * s);
@@ -580,7 +584,7 @@ export class Renderer {
     ctx.globalAlpha = a * (b.done ? 1 : 0.45);
     if (s < 3) {
       // Far away: a coloured dot per building (houses by level, so towns read lighter and larger).
-      ctx.fillStyle = b.type === 'house' ? HOUSE_DOTS[Math.min(4, Math.max(1, b.level))] : BUILDING_COLORS[b.type];
+      ctx.fillStyle = b.type === 'house' ? style.dots[Math.min(4, Math.max(1, b.level))] : BUILDING_COLORS[b.type];
       ctx.fillRect(px, py, w, w);
       if (b.type === 'house' && b.level >= 3 && b.done) ctx.fillRect(px, py - w, w, w);
     } else {
@@ -591,7 +595,7 @@ export class Renderer {
       };
       switch (b.type) {
         case 'house':
-          drawHouse(r, b.done ? b.level : 1, COLORS[color]);
+          style.draw(r, b.done ? b.level : 1, COLORS[color]);
           break;
         case 'storehouse':
           r(0, 2, 8, 5, '#8d8579');
@@ -699,7 +703,7 @@ export class Renderer {
         const d = Math.max(2, Math.round(this.dpr * (def.sentient ? 4 : def.size > 1.2 ? 3.5 : 3)));
         ctx.fillStyle = 'rgba(0,0,0,0.7)';
         ctx.fillRect(px - (d >> 1) - 1, py - (d >> 1) - 1, d + 2, d + 2);
-        ctx.fillStyle = def.sentient ? '#6fa8ff' : def.color;
+        ctx.fillStyle = def.marker ?? def.color;
         ctx.fillRect(px - (d >> 1), py - (d >> 1), d, d);
       }
     }
@@ -728,60 +732,6 @@ export class Renderer {
     ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
     ctx.fillStyle = frac > 0.5 ? '#5fd35f' : frac > 0.25 ? '#f2c14e' : '#e0533a';
     ctx.fillRect(bx, by, bw * frac, bh);
-  }
-}
-
-/** Far-away dot colour of a house by level. */
-const HOUSE_DOTS = ['', '#b8964f', '#c9a36b', '#a7a39b', '#e4ded2'];
-
-type Rect = (x: number, y: number, w: number, h: number, c: string) => void;
-
-/**
- * Houses by level on the 8×8 building grid; higher levels rise above their tile (negative y), so a town's skyline
- * is visible at the normal zoom. 1 thatched hut, 2 timber house with a coloured roof, 3 stone base with a timber
- * upper floor, 4 two-storey pale stone town house with windows and a chimney.
- */
-function drawHouse(r: Rect, level: number, roof: string): void {
-  switch (level) {
-    case 1:
-      r(2, 2, 4, 1, '#d9b765'); // thatch, stepped like a cone
-      r(1, 3, 6, 2, '#c4a052');
-      r(0, 5, 8, 2, '#a98a45');
-      r(3, 5, 2, 2, '#3b2817');
-      r(4, 1, 1, 1, roof); // a small pennant in the settlement colour
-      break;
-    case 2:
-      r(1, 3, 6, 4, '#a8783e'); // log walls
-      r(1, 4, 6, 0.5, '#7c5428');
-      r(1, 5.5, 6, 0.5, '#7c5428');
-      r(0, 1, 8, 2, roof);
-      r(1, 0, 6, 1, roof);
-      r(3, 5, 2, 2, '#3b2817');
-      r(5.5, 3.5, 1, 1, '#ffd98a'); // lit window
-      break;
-    case 3:
-      r(0, 3, 8, 4, '#8f8b84'); // stone ground floor
-      r(1, 4, 2, 0.5, '#6f6b65');
-      r(5, 5, 2, 0.5, '#6f6b65');
-      r(1, 0, 6, 3, '#a8783e'); // timber upper floor
-      r(1, 1.2, 6, 0.4, '#5e3f1e');
-      r(0, -2, 8, 2, roof);
-      r(2, -3, 4, 1, roof);
-      r(3, 5, 2, 2, '#3b2817');
-      r(2, 0.8, 1, 1, '#ffd98a');
-      r(5, 0.8, 1, 1, '#ffd98a');
-      break;
-    default:
-      r(0, -2, 8, 9, '#e1dbcd'); // two storeys of pale stone
-      r(0, 2.5, 8, 0.5, '#b9b2a2');
-      r(0, -4, 8, 2, roof);
-      r(1, -5, 6, 1, roof);
-      r(6, -6, 1, 2, '#6d5d4f'); // chimney
-      for (const x of [1, 3.5, 6]) {
-        r(x, -1, 1, 1.5, '#5b86b8');
-        r(x, 3.5, 1, 1.5, '#5b86b8');
-      }
-      r(3.5, 5, 1.5, 2, '#3b2817');
   }
 }
 

@@ -318,3 +318,28 @@ Houses now grow with their settlement. A house keeps its id, tile and place in t
 - **Saves.** Still format **11**: `level` and `up` are optional building fields; houses from older saves load as level 1 huts with no upgrade; invalid levels or upgrades are cleaned up on load. Saving during an upgrade keeps the paid cost, progress and builders.
 
 Limits: one house type for every people (the levels are a table, so another people could get its own later); advanced houses burn like huts; costs, capacities and the auto rule are first guesses checked in tests and one browser scenario, not tuned by long play. The project has no Latvian translation; the new texts exist in English, Russian and Simplified Chinese.
+
+## Elves and race identity (v0.17.0)
+
+Elves are a second people, added through the same species list as every creature (`SPECIES[6]`, key `elf`). They use the shared creature rules (needs, eating, drinking, fleeing, breeding, ageing, death), the shared groups, settling, settlement, economy, jobs and housing rules. Only data and look differ.
+
+| | Humans | Elves |
+| --- | --- | --- |
+| Food | grass, forest, jungle, savanna, hills | forest, jungle, grass, savanna |
+| Life | adult at 600 ticks, up to 3000 | adult at 700, up to 3800, but fewer children (cooldown 650, chance 0.015 vs 500 / 0.02) and a smaller share of the world (15% vs 20%) |
+| Body | 50 health, speed 0.12 | 45 health, speed 0.13, sight 13 |
+| Groups | up to 24 | up to 16 |
+| Site score weights (food / liked land / trees / rock / free land) | 0.45 / 0.3 / 0.1 / 0.05 / 0.1 (unchanged) | 0.35 / 0.3 / 0.25 / 0 / 0.1 |
+| Liked land | grass first | forest first, then jungle and grass |
+| Distance to other settlements | 16 tiles | 20 tiles |
+| Architecture | `human` | `elven` |
+
+- **Real effect on choices.** The weights, the liked terrain and the distance are read by `assessSite`, which both groups and autonomous founding use. On a test map, a forest spot by a lake scores much higher than open grassland for elves, while for humans both score about the same; an elven group 18 tiles from another settlement is refused (too close), a human one is not. Raptors and tyrants hunt elves as they hunt humans, so elves flee and avoid predator land the same way.
+- **Balance check (not a test).** Runs of 10 game years with 8 humans and 8 elves (scratch script, single seeds): on identical grassland both peoples end near each other (humans 25, elves 27); on a forest-and-grass map the people placed in the forest (with wood) grows larger whichever it is (elves in the forest 43 vs humans 26; swapped: humans 48 vs elves 33). On one generated map (seed 77) the elves reached 84 and the humans 41, with the humans placed on a poorer spot. Elf longevity and birth rate were lowered once after the first runs (3800 and 0.015, from 4200 and 0.016) because elves outgrew humans on equal land. Not tuned by long play.
+- **Architecture.** House art lives in `src/render/architecture.ts` (no DOM): one style per `CivProfile.architecture`, each with four levels and far-away dot colours. Elven houses: 1 *Elven shelter* (a dome of leaves), 2 *Elven dwelling* (round wooden walls under a rounded leaf roof, green-lit window), 3 *Tree house* (a house on a platform in a tree under a wide canopy), 4 *Elven hall* (a tall pale-wood spire hall with leaf wings). Capacity, costs, upgrade rules, builders and saves are the shared 0.16 rules; the style comes from the settlement's species, so a building never needs its own race field and cannot render in the wrong style.
+- **One people per settlement and group.** Groups, joining, founding and the found tool keep one species per settlement or group (the found tool takes the more numerous people at the spot). Humans and elves meeting each other follow the existing rules: no hostility, no trade or diplomacy.
+- **Fix found on the way.** A person who joined or founded a settlement stayed listed in its group until the next group step (up to 30 ticks); a save in that window loaded slightly differently. Now the person leaves the group at once (`Groups.release`), and a group left with one member is dissolved at once, as the group step would.
+- **UI.** The Elf spawn tool sits with the other creatures; cards, statistics and history name elves; the "Found settlement of a people" tool and the automatic-settlement setting now mention both peoples; elven house names in the settlement card.
+- **Saves: format 12.** Nothing in the format changed (species ids and `statSpecies` already cover a new species); the bump only makes older builds refuse saves that may contain elves. Saves 1–11 load unchanged; houses keep their levels and upgrades.
+
+Limits: elves have no buildings of their own besides houses (farms, lumber camps, quarries and storehouses look the same for both peoples); elves fell trees for wood like humans; no relations between peoples yet.

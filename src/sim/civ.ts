@@ -430,8 +430,8 @@ export function civStep(host: CivHost, s: Settlement): number {
         const firstOfTier = !c.buildings.some((o) => o !== b && o.type === 'house' && o.done && o.level >= b.up);
         b.level = b.up;
         b.up = 0;
-        host.event(s, `${s.name}: a house became level ${b.level}.`, 'settlement_house_upgraded', { name: s.name, level: b.level });
-        if (firstOfTier) host.event(s, `${s.name} has its first level ${b.level} house.`, 'settlement_housing_tier', { name: s.name, level: b.level });
+        host.event(s, `${s.name}: a house became level ${b.level}.`, 'settlement_house_upgraded', { name: s.name, level: b.level, species: s.species });
+        if (firstOfTier) host.event(s, `${s.name} has its first level ${b.level} house.`, 'settlement_housing_tier', { name: s.name, level: b.level, species: s.species });
         continue;
       }
       b.done = true;

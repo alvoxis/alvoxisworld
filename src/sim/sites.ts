@@ -43,7 +43,7 @@ export function assessSite(world: World, creatures: Creatures, settlements: Sett
   const here = world.terrain[ty * W + tx];
   if (isWater(here) || prof.avoid.includes(here) || !passable(world, sp.move, tx, ty)) return bad('ground');
   if (settlements.ownerAt(tx, ty)) return bad('claimed');
-  for (const s of settlements.list) if (Math.hypot(s.x - tx, s.y - ty) < MIN_GAP) return bad('gap');
+  for (const s of settlements.list) if (Math.hypot(s.x - tx, s.y - ty) < Math.max(MIN_GAP, prof.gap)) return bad('gap');
 
   const R = Math.max(SITE_RADIUS, WATER_REACH, DANGER_REACH);
   let land = 0;
@@ -94,8 +94,9 @@ export function assessSite(world: World, creatures: Creatures, settlements: Sett
       }
     }
   }
+  const k = prof.weights;
   const score =
-    0.45 * Math.min(1, foodShare / 0.6) + 0.3 * Math.min(1, like / Math.max(1, land)) + 0.1 * Math.min(1, trees / 30) + 0.05 * Math.min(1, rock / 15) +
-    0.1 * Math.min(1, free / 150) - Math.min(0.3, predators * 0.1);
+    k.food * Math.min(1, foodShare / 0.6) + k.like * Math.min(1, like / Math.max(1, land)) + k.trees * Math.min(1, trees / 30) + k.rock * Math.min(1, rock / 15) +
+    k.space * Math.min(1, free / 150) - Math.min(0.3, predators * 0.1);
   return { ok: true, score, capacity: Math.max(3, Math.min(16, Math.floor(edible8 / 12))) };
 }
