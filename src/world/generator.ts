@@ -71,6 +71,8 @@ export function generateWorld(width: number, height: number, seed: number, optio
       world.terrain[i] = classify(h, temperature, moisture);
     }
   }
+  world.baseTemperature.set(world.temperature);
+  world.baseMoisture.set(world.moisture);
   if (options.hydrology !== false) addHydrology(world);
   world.markAllDirty();
   return world;

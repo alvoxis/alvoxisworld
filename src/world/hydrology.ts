@@ -1,5 +1,5 @@
 import { SEA_LEVEL, T, isWater } from './terrain';
-import { World } from './world';
+import { WATER_FLAG, World } from './world';
 
 /** Tunables for river and lake generation. */
 export interface HydrologyOptions {
@@ -156,6 +156,7 @@ export function addHydrology(world: World, opts: HydrologyOptions = DEFAULT_HYDR
     for (let k = 0; k < tail; k++) {
       lake[queue[k]] = 1;
       world.terrain[queue[k]] = T.LAKE;
+      world.waterFlags[queue[k]] |= WATER_FLAG.LAKE_BED;
     }
     lakeTiles += tail;
   }
@@ -174,6 +175,7 @@ export function addHydrology(world: World, opts: HydrologyOptions = DEFAULT_HYDR
     const id = world.terrain[i];
     if (isWater(id) || heights[i] < SEA_LEVEL) return;
     world.terrain[i] = T.RIVER;
+    world.waterFlags[i] |= WATER_FLAG.RIVER_BED;
     riverTiles++;
   };
   for (let i = 0; i < n; i++) {

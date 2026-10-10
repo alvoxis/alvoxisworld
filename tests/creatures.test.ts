@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { Rng } from '../src/core/rng';
-import { deserializeInto, serialize, type SaveData } from '../src/save/serialize';
+import { SAVE_VERSION, deserializeInto, serialize, type SaveData } from '../src/save/serialize';
 import { TICKS_PER_SECOND } from '../src/sim/clock';
 import {
   CAUSE, Creatures, FISH, GRAZER, HADROSAUR, MAX_CREATURES, RAPTOR, SPECIES, STATE, TYRANT, findTile,
 } from '../src/sim/creatures';
 import { Simulation } from '../src/sim/simulation';
 import { SEA_LEVEL, T } from '../src/world/terrain';
-import { World } from '../src/world/world';
+import { WATER_FLAG, World } from '../src/world/world';
 
 /**
  * Hand-built test world: everything is `fill` terrain on flat land, then optional
@@ -239,7 +239,7 @@ describe('predators and prey', () => {
     }
     run(sim, 600);
     expect(sim.creatures.deathsBy(HADROSAUR, CAUSE.PREDATION)).toBeGreaterThan(0);
-    expect(sim.creatures.countSpecies(TYRANT)).toBe(2);
+    expect(sim.creatures.countSpecies(TYRANT)).toBeGreaterThanOrEqual(2); // both alive (they may also breed)
   });
 });
 
@@ -484,6 +484,7 @@ describe('navigation (pathfinding, rivers and lakes)', () => {
     let fleeTicks = 0;
     let prevDx = 0;
     let prevDy = 0;
+    let fled = 0;
     const start = [sim.creatures.x[0], sim.creatures.y[0]];
     for (let t = 0; t < 80; t++) {
       sim.step();
@@ -496,11 +497,11 @@ describe('navigation (pathfinding, rivers and lakes)', () => {
       prevDx = dx;
       prevDy = dy;
       expect(world.isWaterAt(Math.floor(sim.creatures.x[i]), Math.floor(sim.creatures.y[i]))).toBe(false);
+      fled = Math.max(fled, Math.hypot(sim.creatures.x[i] - start[0], sim.creatures.y[i] - start[1]));
     }
-    const i = sim.creatures.indexOf(prey);
     expect(fleeTicks).toBeGreaterThan(10);
     expect(reversals).toBeLessThanOrEqual(2);
-    expect(Math.hypot(sim.creatures.x[i] - start[0], sim.creatures.y[i] - start[1])).toBeGreaterThan(3);
+    expect(fled).toBeGreaterThan(3); // got clear while fleeing (it may wander back afterwards)
   });
 
   it('re-plans when the terrain on its route changes', () => {
@@ -529,7 +530,7 @@ describe('navigation (pathfinding, rivers and lakes)', () => {
     expect(ate).toBe(true); // found the way round the new lake
   });
 
-  it('save v3 keeps routes, so a loaded world continues identically', () => {
+  it('saves keep routes, so a loaded world continues identically', () => {
     const world = testWorld(64, 40, T.DESERT, [[44, 0, 64, 40, T.GRASS], [30, 0, 33, 30, T.MOUNTAIN], [0, 38, 64, 40, T.SHALLOW_WATER]]);
     const sim = new Simulation(world);
     sim.spawnInCircle(HADROSAUR, 12, 15, 5, 6);
@@ -539,7 +540,7 @@ describe('navigation (pathfinding, rivers and lakes)', () => {
     run(sim, 60);
     expect(Array.from(sim.creatures.pathLen.slice(0, sim.creatures.count)).some((n) => n > 0)).toBe(true);
     const data = serialize(sim);
-    expect(data.version).toBe(3);
+    expect(data.version).toBe(SAVE_VERSION);
     const other = new Simulation(testWorld(8, 8, T.GRASS));
     deserializeInto(other, data);
     run(sim, 200);
@@ -562,6 +563,59 @@ describe('navigation (pathfinding, rivers and lakes)', () => {
     deserializeInto(other, data);
     expect(other.creatures.count).toBe(sim.creatures.count);
     expect(Array.from(other.creatures.pathLen.slice(0, other.creatures.count)).every((n) => n === 0)).toBe(true);
+    run(other, 50);
+  });
+});
+
+describe('save format v4', () => {
+  it('round-trips weather, fire, water memory and long-term climate', () => {
+    const world = testWorld(80, 60, T.FOREST, [[0, 0, 80, 3, T.SHALLOW_WATER], [30, 20, 40, 30, T.LAKE]]);
+    world.baseMoisture.fill(110);
+    world.baseTemperature.fill(140);
+    const sim = new Simulation(world);
+    sim.summonWeather(0, 20, 20, 15, 2);
+    sim.summonWeather(1, 60, 40, 15, 3);
+    sim.igniteArea(60, 40, 3);
+    sim.spawnInCircle(HADROSAUR, 20, 40, 5, 6);
+    run(sim, 120);
+    const data = serialize(sim);
+    expect(data.version).toBe(SAVE_VERSION);
+    const other = new Simulation(testWorld(8, 8, T.GRASS));
+    deserializeInto(other, data);
+    expect(other.weather.systems).toEqual(sim.weather.systems);
+    expect(other.fire.burning).toBe(sim.fire.burning);
+    expect(other.world.fire).toEqual(sim.world.fire);
+    expect(other.world.waterFlags).toEqual(sim.world.waterFlags);
+    expect(other.world.baseMoisture).toEqual(sim.world.baseMoisture);
+    run(sim, 150);
+    run(other, 150);
+    expect(other.world.terrain).toEqual(sim.world.terrain);
+    expect(other.fire.burning).toBe(sim.fire.burning);
+    expect(Array.from(other.creatures.x.slice(0, other.creatures.count))).toEqual(
+      Array.from(sim.creatures.x.slice(0, sim.creatures.count)),
+    );
+  });
+
+  it('migrates v3 saves: base climate from current climate, lakes and rivers remember their beds', () => {
+    const world = testWorld(40, 30, T.GRASS, [[5, 5, 10, 10, T.LAKE], [20, 0, 21, 30, T.RIVER]]);
+    const sim = new Simulation(world);
+    sim.spawnInCircle(GRAZER, 30, 15, 4, 5);
+    run(sim, 20);
+    const data = serialize(sim);
+    data.version = 3;
+    delete data.v4;
+    // v3 had 8 death causes per species.
+    const c = data.creatures as unknown as { deathStats: Uint32Array };
+    c.deathStats = new Uint32Array(SPECIES.length * 8).fill(1);
+    const other = new Simulation(testWorld(8, 8, T.GRASS));
+    deserializeInto(other, data);
+    const w = other.world;
+    expect(w.baseMoisture).toEqual(w.moisture);
+    expect(w.waterFlags[w.idx(6, 6)]).toBe(WATER_FLAG.LAKE_BED);
+    expect(w.waterFlags[w.idx(20, 4)]).toBe(WATER_FLAG.RIVER_BED);
+    expect(other.weather.systems).toEqual([]);
+    expect(other.creatures.deathsBy(GRAZER, CAUSE.STARVATION)).toBe(1);
+    expect(other.creatures.deathsBy(GRAZER, CAUSE.FIRE)).toBe(0);
     run(other, 50);
   });
 });
@@ -594,5 +648,25 @@ describe('performance budget', () => {
     expect(sim.creatures.count).toBeGreaterThan(2000);
     // Generous bound so slow CI machines don't flake; typical desktop result is far lower.
     expect(msPerTick).toBeLessThan(40);
+  });
+
+  it('herbivores pinned at their caps do not keep re-running failing food searches', async () => {
+    const { generateWorld } = await import('../src/world/generator');
+    const world = generateWorld(256, 160, 4);
+    const sim = new Simulation(world);
+    sim.weather.config.auto = false;
+    const r = new Rng(9);
+    for (let a = 0; a < 100000 && sim.creatures.countSpecies(GRAZER) < 1500; a++) {
+      sim.spawnInCircle(GRAZER, r.next() * 256, r.next() * 160, 1, 1);
+    }
+    for (let t = 0; t < 300; t++) sim.step(); // overgraze
+    const pf = sim.creatures.pathfinder;
+    const s0 = pf.searches;
+    const e0 = pf.expansions;
+    for (let t = 0; t < 200; t++) sim.step();
+    const n = sim.creatures.count;
+    // Food searches per animal per tick stay low (failed searches back off; no food in sight skips the search).
+    expect((pf.searches - s0) / (n * 200)).toBeLessThan(0.05);
+    expect((pf.expansions - e0) / 200).toBeLessThan(40000);
   });
 });

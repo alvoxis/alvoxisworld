@@ -1,5 +1,5 @@
 import { classify, SEA_LEVEL, T, TERRAIN, isWater, MOUNTAIN_LEVEL, HILLS_LEVEL } from './terrain';
-import { World } from './world';
+import { WATER_FLAG, World } from './world';
 
 export type TerrainToolKind = 'raise' | 'lower' | 'smooth' | 'paint';
 
@@ -35,19 +35,25 @@ export function forEachInCircle(
   }
 }
 
-function reclassify(world: World, x: number, y: number): void {
+/**
+ * Re-derives a tile's terrain from its height and climate after a height edit.
+ *
+ * Water rule: rivers and lakes (including temporary flood water) keep their
+ * terrain while the tile stays at or above sea level, so Raise/Lower/Smooth never
+ * silently erase them. A fresh-water tile pushed below sea level becomes sea, and
+ * its lake/river memory is cleared. Painting a biome over water replaces it.
+ */
+export function reclassify(world: World, x: number, y: number): void {
   const i = world.idx(x, y);
+  const cur = world.terrain[i];
+  if ((cur === T.RIVER || cur === T.LAKE) && world.heights[i] >= SEA_LEVEL) return;
   const id = classify(world.heights[i], world.temperature[i] / 255, world.moisture[i] / 255);
+  if (cur === T.RIVER || cur === T.LAKE) world.setWaterFlags(i, 0);
   world.setTerrain(x, y, id);
 }
 
 function setHeight(world: World, x: number, y: number, h: number): void {
-  const i = world.idx(x, y);
-  const v = Math.max(0, Math.min(255, Math.round(h)));
-  if (world.heights[i] !== v) {
-    world.heights[i] = v;
-    world.markDirty(x, y);
-  }
+  world.setHeight(x, y, h);
 }
 
 /** Raises (sign 1) or lowers (sign -1) terrain with a soft falloff, then re-derives biomes. */
@@ -99,9 +105,13 @@ export function applyPaintBrush(world: World, s: BrushStroke, terrainId: number)
       // Fresh water sits above sea level; on the sea floor it would just be ocean.
       if (h < SEA_LEVEL) setHeight(world, x, y, SEA_LEVEL + 1);
       else if (h >= MOUNTAIN_LEVEL) setHeight(world, x, y, HILLS_LEVEL - 4);
+      // Painted water is permanent: it remembers its bed so droughts can only dry it temporarily.
+      world.setWaterFlags(i, terrainId === T.LAKE ? WATER_FLAG.LAKE_BED : WATER_FLAG.RIVER_BED);
       world.setTerrain(x, y, terrainId);
       return;
     }
+    // Any other paint replaces water features, including their bed memory.
+    if (world.waterFlags[i]) world.setWaterFlags(i, 0);
     if (def.water) {
       const target = terrainId === T.DEEP_WATER ? SEA_LEVEL - 26 : SEA_LEVEL - 6;
       if (terrainId === T.DEEP_WATER ? h > target : h >= SEA_LEVEL || h < target) setHeight(world, x, y, target);
@@ -120,8 +130,7 @@ export function applyPaintBrush(world: World, s: BrushStroke, terrainId: number)
       setHeight(world, x, y, HILLS_LEVEL - 4);
     }
     if (def.climate) {
-      world.temperature[i] = Math.round(def.climate.temperature * 255);
-      world.moisture[i] = Math.round(def.climate.moisture * 255);
+      world.setClimate(x, y, Math.round(def.climate.temperature * 255), Math.round(def.climate.moisture * 255));
     }
     world.setTerrain(x, y, terrainId);
   });

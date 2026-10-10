@@ -176,3 +176,79 @@ describe('water field', () => {
     expect(f.isStale(w)).toBe(true);
   });
 });
+
+import { RegionGraph, LEG } from '../src/sim/regions';
+import { Creatures } from '../src/sim/creatures';
+import { generateWorld } from '../src/world/generator';
+
+describe('region graph (long routes)', () => {
+  /** A long serpentine: walls with alternating gaps force a route many times the straight distance. */
+  function serpentine(): World {
+    const rows: string[] = [];
+    for (let y = 0; y < 60; y++) {
+      let row = '';
+      for (let x = 0; x < 200; x++) {
+        const wall = x % 20 === 10 && (Math.floor(x / 20) % 2 === 0 ? y < 55 : y > 4);
+        row += wall ? '^' : '.';
+      }
+      rows.push(row);
+    }
+    return mapOf(rows);
+  }
+
+  it('knows reachability instantly and gives waypoints within a leg', () => {
+    const w = serpentine();
+    const g = new RegionGraph();
+    g.build(w);
+    const s = 30 * w.width + 2;
+    const goal = 30 * w.width + 197;
+    expect(g.connected(MOVE.LOWLAND, s, goal)).toBe(true);
+    const wp = g.waypoint(w, MOVE.LOWLAND, s, goal);
+    expect(wp).toBeGreaterThanOrEqual(0);
+    const dx = Math.abs((wp % w.width) - 2);
+    const dy = Math.abs(Math.floor(wp / w.width) - 30);
+    expect(Math.max(dx, dy)).toBeLessThanOrEqual(LEG + 16);
+    expect(passable(w, MOVE.LOWLAND, wp % w.width, Math.floor(wp / w.width))).toBe(true);
+  });
+
+  it('routes across a maze far beyond the single-search cap', () => {
+    const w = serpentine();
+    const c = new Creatures();
+    // Plain A* with the old prowling cap cannot find it…
+    const pf = new Pathfinder();
+    pf.beginTick(1e9);
+    expect(pf.astar(w, MOVE.LOWLAND, 2, 30, 197, 30, 1500, out, 0, 64)).toBe(NOT_FOUND);
+    // …the hierarchical planner can, leg by leg.
+    expect(c.planLongRoute(MOVE.LOWLAND, 2, 30, 197, 30, w)).toBe(true);
+  });
+
+  it('reports unreachable goals without searching the map', () => {
+    const w = mapOf(['....LLLL....', '....LLLL....', '....LLLL....']);
+    const g = new RegionGraph();
+    g.build(w);
+    expect(g.connected(MOVE.LAND, 1, 10)).toBe(false);
+    expect(g.waypoint(w, MOVE.LAND, 1, 10)).toBe(-1);
+    expect(g.connected(MOVE.WATER, 5, 6)).toBe(true);
+  });
+
+  it('plans long routes on a generated large map', () => {
+    const w = generateWorld(512, 320, 7);
+    const c = new Creatures();
+    const g = new RegionGraph();
+    g.build(w);
+    // Pick far-apart reachable land tiles.
+    let found = 0;
+    let tried = 0;
+    for (let a = 1; a < w.terrain.length && tried < 10; a += 7919) {
+      const b = (a * 31 + 12345) % w.terrain.length;
+      if (!g.connected(MOVE.LAND, a, b)) continue;
+      const ax = a % w.width;
+      const bx = b % w.width;
+      if (Math.abs(ax - bx) < 100) continue;
+      tried++;
+      if (c.planLongRoute(MOVE.LAND, ax, Math.floor(a / w.width), bx, Math.floor(b / w.width), w)) found++;
+    }
+    expect(tried).toBeGreaterThan(3);
+    expect(found).toBe(tried);
+  });
+});

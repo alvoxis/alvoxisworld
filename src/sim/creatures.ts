@@ -1,6 +1,9 @@
 import { Rng } from '../core/rng';
 import { T, isWater } from '../world/terrain';
+import { FOOD_CELL, FoodMap } from './foodmap';
 import { MOVE, NO_BUDGET, NOT_FOUND, Pathfinder, UNREACHABLE, WaterField, isDrinkSpot, passable, type MoveClass } from './pathfinding';
+import { NavScheduler, computeNav } from './navjobs';
+import { LEG, RegionGraph } from './regions';
 import { World } from '../world/world';
 
 // ---------------------------------------------------------------------------
@@ -125,9 +128,17 @@ export const CAUSE = {
   DROWNED: 5,
   STRANDED: 6,
   REMOVED: 7,
+  FIRE: 8,
+  METEOR: 9,
+  EARTHQUAKE: 10,
 } as const;
-export const CAUSE_NAMES = ['unknown', 'starvation', 'thirst', 'predators', 'old age', 'drowning', 'stranding', 'divine removal'];
-const CAUSE_COUNT = CAUSE_NAMES.length;
+export const CAUSE_NAMES = [
+  'unknown', 'starvation', 'thirst', 'predators', 'old age', 'drowning', 'stranding', 'divine removal', 'fire',
+  'meteor', 'earthquake',
+];
+export const CAUSE_COUNT = CAUSE_NAMES.length;
+/** Damage per tick to an animal standing in fire, as a share of its max health. */
+const FIRE_DAMAGE = 0.08;
 
 export const MAX_CREATURES = 6000;
 
@@ -141,10 +152,18 @@ const ATTACK_RANGE = 0.8;
 export const PATH_MAX = 32;
 /** Total search node expansions allowed per simulation tick (shared by all creatures). */
 export const NODE_BUDGET = 40000;
-/** Minimum ticks between water-field rebuilds after terrain edits. */
-const FIELD_REBUILD_TICKS = 10;
+/**
+ * Minimum ticks between navigation rebuilds (water field + region graph) after
+ * passability changes. Weather changes terrain often; routes are re-validated
+ * step by step, so slightly stale navigation data is safe.
+ */
+const FIELD_REBUILD_TICKS = 60;
 /** Radius (in 8×8 grid cells) a hungry predator scans for prey-rich areas. */
 const PROWL_CELLS = 6;
+/** Ticks between food-map rebuilds. */
+const FOOD_MAP_TICKS = 50;
+/** How far (in food-map cells) a hungry herbivore looks for somewhere to migrate. */
+const MIGRATE_RINGS = 16;
 /** Prey needed within sight per predator before predators breed. */
 const PREY_PER_PREDATOR = 3;
 /** Thirst above which water beats food, however hungry the animal is. */
@@ -246,11 +265,25 @@ export class Creatures {
   /** Deaths since the last call to drainDeaths() (for UI/history). */
   private recentDeaths: DeathRecord[] = [];
 
+  /** Optional thirst multiplier by position (weather: drought makes animals thirstier). */
+  envThirst: ((x: number, y: number) => number) | null = null;
+  /** Set by the simulation when any tile is burning; skips fire checks otherwise. */
+  anyFire = false;
+
   /** Shared grid search and water-distance field (see pathfinding.ts). */
   readonly pathfinder = new Pathfinder();
   readonly water = new WaterField();
+  /** Coarse region graph for long routes and instant reachability checks. */
+  readonly regions = new RegionGraph();
+  /** Off-thread (worker) navigation rebuilds with a deterministic delivery tick. */
+  readonly nav = new NavScheduler();
+  /** Coarse food availability per diet. */
+  readonly foodMap = new FoodMap(SPECIES.map((s) => s.food));
   private fieldWorld: World | null = null;
   private lastFieldBuild = -Infinity;
+  /** Terrain snapshot the installed navigation data was built from (saved, for exact reloads). */
+  private navTerrain: Uint8Array | null = null;
+  private navVersion = 0;
 
   // Spatial hash of all creatures, rebuilt every tick (linked lists in typed arrays).
   private gridHead = new Int32Array(0);
@@ -404,6 +437,43 @@ export class Creatures {
     return removed;
   }
 
+  /**
+   * Damages every creature within radius r of (cx, cy). damage(d) gives the share
+   * of max health lost at normalised distance d (0 at the centre, 1 at the edge).
+   * Returns how many died.
+   */
+  hurtInCircle(cx: number, cy: number, r: number, damage: (d: number) => number, cause: number): number {
+    let killed = 0;
+    for (let i = 0; i < this.count; i++) {
+      if (this.dead[i]) continue;
+      const d = Math.hypot(this.x[i] - cx, this.y[i] - cy) / r;
+      if (d > 1) continue;
+      const sp = SPECIES[this.species[i]];
+      this.health[i] -= sp.maxHealth * damage(d);
+      this.harm[i] = cause;
+      if (this.health[i] <= 0) {
+        this.kill(i, cause);
+        killed++;
+      }
+    }
+    this.compact();
+    return killed;
+  }
+
+  /** A burning tile within 2 tiles of creature i, or -1. */
+  private nearbyFire(world: World, i: number): number {
+    const tx = Math.floor(this.x[i]);
+    const ty = Math.floor(this.y[i]);
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const x = tx + dx;
+        const y = ty + dy;
+        if (world.inBounds(x, y) && world.fire[y * world.width + x]) return y * world.width + x;
+      }
+    }
+    return -1;
+  }
+
   removeById(id: number): boolean {
     const i = this.indexOf(id);
     if (i < 0) return false;
@@ -423,21 +493,48 @@ export class Creatures {
     this.byId.clear();
     this.fieldWorld = null;
     this.lastFieldBuild = -Infinity;
+    this.foodMap.builtTick = -Infinity;
+    this.navTerrain = null;
+    this.nav.cancel();
   }
 
   // ---- simulation ------------------------------------------------------
 
   /** Rebuilds the shared water field if the map's passability changed (throttled). */
-  private updateWaterField(world: World, tick: number): void {
-    if (!this.water.isStale(world)) return;
-    if (this.fieldWorld === world && tick - this.lastFieldBuild < FIELD_REBUILD_TICKS) return;
-    this.water.build(world);
-    this.fieldWorld = world;
-    this.lastFieldBuild = tick;
+  /**
+   * Rebuilds shared navigation data when the map's passability changed (water
+   * field + region graph, throttled) and refreshes the food map periodically.
+   */
+  private updateNavigation(world: World, tick: number): void {
+    if (this.foodMap.builtTick > tick || tick - this.foodMap.builtTick >= FOOD_MAP_TICKS) {
+      this.foodMap.build(world, tick);
+    }
+    if (this.fieldWorld !== world) {
+      // New or loaded world: navigation is needed right away.
+      this.nav.cancel();
+      this.water.build(world);
+      this.regions.build(world);
+      this.navTerrain = world.terrain.slice();
+      this.navVersion = world.passVersion;
+      this.fieldWorld = world;
+      this.lastFieldBuild = tick;
+      return;
+    }
+    const due = this.nav.takeDue(tick);
+    if (due) {
+      this.water.apply(world, due.result.water, due.result.passVersion);
+      this.regions.apply(world, due.result.regions, due.result.passVersion);
+      this.navTerrain = due.snapshot;
+      this.navVersion = due.result.passVersion;
+    }
+    if (!this.nav.busy && this.water.isStale(world) && tick - this.lastFieldBuild >= FIELD_REBUILD_TICKS) {
+      this.nav.request(world, tick);
+      this.lastFieldBuild = tick;
+    }
   }
 
   tick(world: World, rng: Rng, tick: number): void {
-    this.updateWaterField(world, tick);
+    this.updateNavigation(world, tick);
     this.pathfinder.beginTick(NODE_BUDGET);
     this.buildGrid(world);
     const n = this.count; // newborns appended this tick act next tick
@@ -455,7 +552,8 @@ export class Creatures {
       if (this.searchCd[i] > 0) this.searchCd[i]--;
       const exertion = this.state[i] === STATE.FLEE || this.state[i] === STATE.HUNT ? 1.5 : 1;
       this.hunger[i] = Math.min(100, this.hunger[i] + sp.hungerRate * exertion);
-      this.thirst[i] = Math.min(100, this.thirst[i] + sp.thirstRate * exertion);
+      const env = this.envThirst && sp.thirstRate > 0 ? this.envThirst(this.x[i], this.y[i]) : 1;
+      this.thirst[i] = Math.min(100, this.thirst[i] + sp.thirstRate * exertion * env);
 
       // Habitat check (the player may have flooded or drained the tile).
       const cx = Math.floor(this.x[i]);
@@ -463,6 +561,12 @@ export class Creatures {
       if (!habitatOk(world, sp, cx, cy)) {
         this.kill(i, sp.move === MOVE.WATER ? CAUSE.STRANDED : CAUSE.DROWNED);
         continue;
+      }
+
+      // Fire burns anything standing in it.
+      if (world.fire[world.idx(cx, cy)]) {
+        this.health[i] -= sp.maxHealth * FIRE_DAMAGE;
+        this.harm[i] = CAUSE.FIRE;
       }
 
       // Health: starvation and thirst hurt, being fed heals.
@@ -499,6 +603,18 @@ export class Creatures {
     const s = this.state[i];
 
     // 1. Danger first. Keep the current escape heading for a while to avoid dithering.
+    const fire = this.anyFire ? this.nearbyFire(world, i) : -1;
+    if (fire >= 0) {
+      const fx = (fire % world.width) + 0.5;
+      const fy = Math.floor(fire / world.width) + 0.5;
+      this.tx[i] = fx;
+      this.ty[i] = fy;
+      this.clearPath(i);
+      this.state[i] = STATE.FLEE;
+      this.chooseHeading(world, rng, i, fx, fy);
+      this.timer[i] = 12;
+      return;
+    }
     const threats = PREDATORS_OF[sp.id];
     if (threats.length) {
       const p = this.nearestOf(threats, this.x[i], this.y[i], Math.min(sp.sight, 6), i, 0);
@@ -608,10 +724,14 @@ export class Creatures {
           this.state[i] = STATE.EAT;
           break;
         }
-        // Herbivores walk to the food tile; predators prowl toward prey-rich ground.
-        if (this.followPath(world, i, speed) !== 'moving') {
-          this.clearPath(i);
-          this.state[i] = STATE.WANDER;
+        // Herbivores walk to (or migrate toward) food; predators prowl toward prey-rich ground.
+        {
+          const res = this.followPath(world, i, speed);
+          if (res === 'done' && this.continueRoute(world, i)) break;
+          if (res !== 'moving') {
+            this.clearPath(i);
+            this.state[i] = STATE.WANDER;
+          }
         }
         break;
       case STATE.SEEK_WATER: {
@@ -634,7 +754,10 @@ export class Creatures {
         break;
       case STATE.SEEK_MATE:
         // With no route left the pair is together (courtship): wait for the breeding roll.
-        if (this.pathPos[i] >= this.pathLen[i]) break;
+        if (this.pathPos[i] >= this.pathLen[i]) {
+          if (this.pathGoal[i] >= 0 && !this.continueRoute(world, i)) this.pathGoal[i] = -1;
+          break;
+        }
         if (this.followPath(world, i, speed * 0.8) === 'blocked') this.clearPath(i);
         break;
       case STATE.FLEE:
@@ -808,10 +931,15 @@ export class Creatures {
     const ty = Math.floor(this.y[i]);
     const terrain = world.terrain;
     const food = sp.food;
-    const r = this.pathfinder.nearest(
-      world, sp.move, tx, ty, (2 * sp.sight + 1) ** 2, (t) => food.includes(terrain[t]),
-      this.path, i * PATH_MAX, PATH_MAX,
-    );
+    const group = this.foodMap.groupOf[sp.id];
+    // Nothing edible anywhere in sight (coarse check): skip the search and migrate.
+    const r = this.foodMap.around(group, this.x[i], this.y[i], sp.sight) === 0
+      ? NOT_FOUND
+      : this.pathfinder.nearest(
+        world, sp.move, tx, ty, (2 * sp.sight + 1) ** 2, (t) => food.includes(terrain[t]),
+        this.path, i * PATH_MAX, PATH_MAX,
+      );
+    if (r === NOT_FOUND && this.migrateToFood(world, i)) return;
     if (r === 0) {
       this.clearPath(i);
       this.state[i] = STATE.EAT;
@@ -822,10 +950,44 @@ export class Creatures {
       this.state[i] = STATE.SEEK_FOOD;
     } else if (r === NOT_FOUND) {
       this.clearPath(i);
-      this.searchCd[i] = 16;
-      this.state[i] = STATE.WANDER; // nothing reachable in sight: roam and look again later
+      this.searchCd[i] = 40;
+      this.state[i] = STATE.WANDER; // no reachable food anywhere near: roam and look again later
     }
     // NO_BUDGET: keep the current state and retry on a later think.
+  }
+
+  /**
+   * Heads for the nearest food-map cell with reachable food (beyond sight). Returns
+   * true if a route was planned (or will be retried when the search budget allows).
+   */
+  private migrateToFood(world: World, i: number): boolean {
+    if (this.fieldWorld !== world) return false;
+    const sp = SPECIES[this.species[i]];
+    const group = this.foodMap.groupOf[sp.id];
+    const w = world.width;
+    const here = Math.floor(this.y[i]) * w + Math.floor(this.x[i]);
+    let target = -1;
+    const cell = this.foodMap.nearestCell(group, this.x[i], this.y[i], MIGRATE_RINGS, (c) => {
+      const cx0 = (c % this.foodMap.w) * FOOD_CELL;
+      const cy0 = Math.floor(c / this.foodMap.w) * FOOD_CELL;
+      for (let y = cy0; y < Math.min(world.height, cy0 + FOOD_CELL); y++) {
+        for (let x = cx0; x < Math.min(w, cx0 + FOOD_CELL); x++) {
+          const t = y * w + x;
+          if (sp.food.includes(world.terrain[t]) && this.regions.connected(sp.move, here, t)) {
+            target = t;
+            return true;
+          }
+        }
+      }
+      return false;
+    });
+    if (cell < 0 || target < 0) return false;
+    const r = this.planTo(world, i, target % w, Math.floor(target / w), 4000);
+    if (r > 0 || r === NO_BUDGET) {
+      this.state[i] = STATE.SEEK_FOOD;
+      return r > 0;
+    }
+    return false;
   }
 
   /** Land animals follow the shared water field, which only leads to reachable water. */
@@ -947,20 +1109,106 @@ export class Creatures {
   }
 
   /** A* to a tile; stores the route. Returns path length or NOT_FOUND / NO_BUDGET. */
+  /**
+   * Plans a route to a tile and stores it. Goals further than LEG tiles go through
+   * the region graph: unreachable goals fail instantly, and the stored path is one
+   * leg toward an intermediate waypoint; pathGoal keeps the final goal so the walk
+   * continues (continueRoute) when the leg is used up.
+   * Returns the stored path length, or NOT_FOUND / NO_BUDGET.
+   */
   private planTo(world: World, i: number, gx: number, gy: number, maxNodes: number): number {
     const sp = SPECIES[this.species[i]];
-    const r = this.pathfinder.astar(
-      world, sp.move, Math.floor(this.x[i]), Math.floor(this.y[i]), gx, gy, maxNodes,
-      this.path, i * PATH_MAX, PATH_MAX,
-    );
+    const sx = Math.floor(this.x[i]);
+    const sy = Math.floor(this.y[i]);
+    const goal = gy * world.width + gx;
+    let tx = gx;
+    let ty = gy;
+    if (Math.max(Math.abs(gx - sx), Math.abs(gy - sy)) > LEG && this.fieldWorld === world) {
+      const wp = this.regions.waypoint(world, sp.move, sy * world.width + sx, goal);
+      if (wp < 0) {
+        this.clearPath(i);
+        return NOT_FOUND;
+      }
+      tx = wp % world.width;
+      ty = Math.floor(wp / world.width);
+    }
+    const r = this.pathfinder.astar(world, sp.move, sx, sy, tx, ty, Math.min(maxNodes, 4000), this.path, i * PATH_MAX, PATH_MAX);
     if (r >= 0) {
       this.pathLen[i] = r;
       this.pathPos[i] = 0;
-      this.pathGoal[i] = gy * world.width + gx;
+      this.pathGoal[i] = goal;
     } else if (r === NOT_FOUND) {
       this.clearPath(i);
     }
     return r;
+  }
+
+  /**
+   * After a leg is used up: plans the next leg toward pathGoal if it hasn't been
+   * reached. Returns true if the route continues (or will retry next tick).
+   */
+  private continueRoute(world: World, i: number): boolean {
+    const g = this.pathGoal[i];
+    if (g < 0) return false;
+    const w = world.width;
+    const tx = Math.floor(this.x[i]);
+    const ty = Math.floor(this.y[i]);
+    if (Math.max(Math.abs((g % w) - tx), Math.abs(Math.floor(g / w) - ty)) <= 1) return false;
+    const r = this.planTo(world, i, g % w, Math.floor(g / w), 4000);
+    if (r === NO_BUDGET) {
+      this.pathLen[i] = this.pathPos[i] = 0;
+      this.pathGoal[i] = g; // keep the goal; try again next tick
+      return true;
+    }
+    return r > 0;
+  }
+
+  /** Navigation state for saves (snapshot-based, so a reload rebuilds identical data). */
+  exportNav(): { terrain: Uint8Array; passVersion: number; lastFieldBuild: number; pending: ReturnType<NavScheduler['exportPending']> } | null {
+    if (!this.navTerrain) return null;
+    return {
+      terrain: this.navTerrain.slice(),
+      passVersion: this.navVersion,
+      lastFieldBuild: this.lastFieldBuild,
+      pending: this.nav.exportPending(),
+    };
+  }
+
+  /** Rebuilds navigation exactly as it was when saved (from the saved snapshot). */
+  importNav(world: World, s: NonNullable<ReturnType<Creatures['exportNav']>>): void {
+    const res = computeNav({ id: 0, width: world.width, height: world.height, terrain: s.terrain, passVersion: s.passVersion });
+    if (!res.ok) return;
+    this.water.apply(world, res.water, s.passVersion);
+    this.regions.apply(world, res.regions, s.passVersion);
+    this.navTerrain = s.terrain.slice();
+    this.navVersion = s.passVersion;
+    this.fieldWorld = world;
+    this.lastFieldBuild = s.lastFieldBuild;
+    this.nav.importPending(world, s.pending);
+  }
+
+  /**
+   * Plans a complete long route leg by leg without moving anything (benchmarks and
+   * tests): true if the goal is reachable this way.
+   */
+  planLongRoute(cls: number, sx: number, sy: number, gx: number, gy: number, world?: World): boolean {
+    const wld = world ?? this.fieldWorld;
+    if (!wld) return false;
+    if (this.regions.isStale(wld)) this.regions.build(wld);
+    const w = wld.width;
+    const goal = gy * w + gx;
+    const out = new Int32Array(8192);
+    let cur = sy * w + sx;
+    for (let legs = 0; legs < 500; legs++) {
+      if (cur === goal) return true;
+      const wp = this.regions.waypoint(wld, cls, cur, goal);
+      if (wp < 0) return false;
+      this.pathfinder.beginTick(1e9);
+      const n = this.pathfinder.astar(wld, cls, cur % w, Math.floor(cur / w), wp % w, Math.floor(wp / w), 4000, out, 0, out.length);
+      if (n < 0) return false;
+      cur = n > 0 ? out[n - 1] : wp;
+    }
+    return false;
   }
 
   /**

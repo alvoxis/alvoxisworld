@@ -2,6 +2,9 @@ import { Rng } from '../core/rng';
 import { World } from '../world/world';
 import { dateFromTick, SEASON_GROWTH, TICKS_PER_SECOND, type WorldDate } from './clock';
 import { Creatures, SPECIES } from './creatures';
+import { meteorStrike, earthquake, type DisasterResult } from './disasters';
+import { Fire } from './fire';
+import { Weather, WEATHER_KIND, type WeatherKind } from './weather';
 import { vegetationTick } from './vegetation';
 
 export const SPEEDS = [0, 1, 3, 10] as const;
@@ -19,6 +22,8 @@ export interface HistoryEntry {
 export class Simulation {
   world: World;
   readonly creatures = new Creatures();
+  readonly weather = new Weather();
+  readonly fire = new Fire();
   rng: Rng;
   tick = 0;
   speed: Speed = 1;
@@ -34,6 +39,7 @@ export class Simulation {
     this.world = world;
     this.rng = new Rng(world.seed ^ 0x51ed270b);
     this.lastSeason = this.date.seasonIndex;
+    this.creatures.envThirst = (x, y) => this.weather.thirstFactor(x, y);
   }
 
   get date(): WorldDate {
@@ -44,6 +50,10 @@ export class Simulation {
   reset(world: World, tick = 0, rngState?: number): void {
     this.world = world;
     this.creatures.clear();
+    this.fire.clear();
+    this.weather.systems = [];
+    this.weather.wind = 0;
+    this.weather.refresh(world);
     this.rng = new Rng(world.seed ^ 0x51ed270b);
     if (rngState !== undefined) this.rng.state = rngState;
     this.tick = tick;
@@ -82,6 +92,9 @@ export class Simulation {
 
   step(): void {
     const date = this.date;
+    this.weather.step(this.world, this.rng, this.tick, date.seasonIndex);
+    this.fire.step(this.world, this.rng, this.weather);
+    this.creatures.anyFire = this.fire.burning > 0;
     vegetationTick(this.world, this.rng, SEASON_GROWTH[date.season]);
     const before = this.creatures.countAll();
     this.creatures.tick(this.world, this.rng, this.tick);
@@ -96,6 +109,41 @@ export class Simulation {
     SPECIES.forEach((s, k) => {
       if (before[k] > 0 && after[k] === 0) this.log(`${s.plural} went extinct.`);
     });
+  }
+
+  // ---- god powers (each changes real simulation state) --------------------
+
+  /** Rain or drought centred on a point. intensity 1..3. */
+  summonWeather(kind: WeatherKind, x: number, y: number, radius: number, intensity: number): void {
+    this.weather.addManual(kind, x, y, radius, 0.35 + 0.25 * intensity);
+    this.log(kind === WEATHER_KIND.RAIN ? 'The gods sent rain.' : 'The gods sent a drought.');
+  }
+
+  /** Sets burnable tiles alight within a radius. Returns how many caught. */
+  igniteArea(x: number, y: number, radius: number): number {
+    let n = 0;
+    const r = Math.max(0.5, radius);
+    for (let ty = Math.floor(y - r); ty <= Math.ceil(y + r); ty++) {
+      for (let tx = Math.floor(x - r); tx <= Math.ceil(x + r); tx++) {
+        if (Math.hypot(tx + 0.5 - x, ty + 0.5 - y) > r) continue;
+        if (this.fire.ignite(this.world, tx, ty)) n++;
+      }
+    }
+    this.creatures.anyFire = this.fire.burning > 0;
+    return n;
+  }
+
+  meteor(x: number, y: number, radius: number, intensity: number): DisasterResult {
+    const r = meteorStrike(this.world, this.creatures, this.fire, this.rng, x, y, radius, intensity);
+    this.creatures.anyFire = this.fire.burning > 0;
+    this.log(`A meteor struck${r.killed ? `, killing ${r.killed}` : ''}.`);
+    return r;
+  }
+
+  earthquake(x: number, y: number, radius: number, intensity: number): DisasterResult {
+    const r = earthquake(this.world, this.creatures, this.rng, x, y, radius, intensity);
+    this.log(`An earthquake shook the land${r.killed ? `, killing ${r.killed}` : ''}.`);
+    return r;
   }
 
   /**

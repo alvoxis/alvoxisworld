@@ -77,3 +77,26 @@ export class Camera {
     this.y = cy - halfH;
   }
 }
+
+/**
+ * Minimap ↔ world conversions (pure, so they can be unit-tested). The minimap
+ * shows the whole world scaled to mmW × mmH pixels.
+ */
+export function minimapToWorld(mx: number, my: number, mmW: number, mmH: number, worldW: number, worldH: number) {
+  return {
+    x: Math.min(worldW, Math.max(0, (mx / mmW) * worldW)),
+    y: Math.min(worldH, Math.max(0, (my / mmH) * worldH)),
+  };
+}
+
+/** The camera's visible area as a rectangle in minimap pixels. */
+export function viewportOnMinimap(camera: Camera, mmW: number, mmH: number) {
+  const sx = mmW / camera.worldW;
+  const sy = mmH / camera.worldH;
+  return {
+    x: camera.x * sx,
+    y: camera.y * sy,
+    w: (camera.viewW / camera.zoom) * sx,
+    h: (camera.viewH / camera.zoom) * sy,
+  };
+}

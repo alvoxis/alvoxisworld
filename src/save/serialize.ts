@@ -1,12 +1,31 @@
 import { CAUSE, Creatures, MAX_CREATURES, PATH_MAX, SPECIES, STATE } from '../sim/creatures';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
-import { World } from '../world/world';
+import type { WeatherConfig, WeatherSystem } from '../sim/weather';
+import { T } from '../world/terrain';
+import { WATER_FLAG, World } from '../world/world';
 
 /**
  * Save versions: 1 = Milestone 1 (energy only), 2 = creature ids/needs/states,
- * 3 = adds routes and remaining behaviour fields so a loaded world continues exactly.
+ * 3 = adds routes and remaining behaviour fields so a loaded world continues exactly,
+ * 4 = weather, fire, long-term climate and water memory (dried lakes/rivers, floods).
  */
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
+
+/** Version 4 world/simulation additions (absent in older saves; migrated on load). */
+export interface SaveV4 {
+  baseTemperature: Uint8Array;
+  baseMoisture: Uint8Array;
+  waterFlags: Uint8Array;
+  under: Uint8Array;
+  fire: Uint8Array;
+  fireActive: Int32Array;
+  weather: { systems: WeatherSystem[]; config: WeatherConfig; wind: number };
+  foodMap?: { builtTick: number; w: number; h: number; counts: Uint16Array[] };
+  /** world.passVersion at save time. */
+  passVersion?: number;
+  /** Navigation snapshot + pending rebuild, so a reload rebuilds identical navigation data. */
+  nav?: ReturnType<Creatures['exportNav']>;
+}
 
 /** Creature fields stored in a save (one typed array per field, length = count). */
 export interface CreatureSave {
@@ -73,6 +92,7 @@ export interface SaveData {
   moisture: Uint8Array;
   creatures: CreatureSave | CreatureSaveV1;
   history: HistoryEntry[];
+  v4?: SaveV4;
 }
 
 const COPIED = [
@@ -110,6 +130,22 @@ export function serialize(sim: Simulation): SaveData {
     moisture: w.moisture.slice(),
     creatures,
     history: sim.history.map((h) => ({ ...h })),
+    v4: {
+      baseTemperature: w.baseTemperature.slice(),
+      baseMoisture: w.baseMoisture.slice(),
+      waterFlags: w.waterFlags.slice(),
+      under: w.under.slice(),
+      fire: w.fire.slice(),
+      fireActive: Int32Array.from(sim.fire.active),
+      weather: {
+        systems: sim.weather.systems.map((sys) => ({ ...sys })),
+        config: { ...sim.weather.config },
+        wind: sim.weather.wind,
+      },
+      foodMap: c.foodMap.exportState(),
+      nav: c.exportNav(),
+      passVersion: w.passVersion,
+    },
   };
 }
 
@@ -134,7 +170,17 @@ function loadCreatures(c: Creatures, src: CreatureSave): void {
   c.nextId = src.nextId;
   c.births = src.births;
   c.deaths = src.deaths;
-  if (src.deathStats?.length === c.deathStats.length) c.deathStats.set(src.deathStats);
+  // Older saves have fewer death causes: copy what exists (cause ids never change meaning).
+  if (src.deathStats) {
+    const oldCauses = src.deathStats.length / SPECIES.length;
+    const newCauses = c.deathStats.length / SPECIES.length;
+    c.deathStats.fill(0);
+    if (Number.isInteger(oldCauses)) {
+      for (let sp = 0; sp < SPECIES.length; sp++) {
+        for (let k = 0; k < Math.min(oldCauses, newCauses); k++) c.deathStats[sp * newCauses + k] = src.deathStats[sp * oldCauses + k];
+      }
+    }
+  }
   if (src.birthStats?.length === c.birthStats.length) c.birthStats.set(src.birthStats);
 }
 
@@ -172,7 +218,7 @@ function loadCreaturesV1(c: Creatures, src: CreatureSaveV1): void {
 
 /** Validates a snapshot and loads it into the simulation, replacing the current world. */
 export function deserializeInto(sim: Simulation, data: SaveData): World {
-  if (!data || ![1, 2, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
+  if (!data || ![1, 2, 3, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
   const n = data.width * data.height;
   for (const arr of [data.heights, data.terrain, data.temperature, data.moisture]) {
     if (!(arr instanceof Uint8Array) || arr.length !== n) throw new Error('Corrupt save: map size mismatch');
@@ -182,9 +228,38 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
   world.terrain.set(data.terrain);
   world.temperature.set(data.temperature);
   world.moisture.set(data.moisture);
+  const v4 = data.version >= 4 ? data.v4 : undefined;
+  if (v4) {
+    for (const k of ['baseTemperature', 'baseMoisture', 'waterFlags', 'under', 'fire'] as const) {
+      if (!(v4[k] instanceof Uint8Array) || v4[k].length !== n) throw new Error(`Corrupt save: ${k}`);
+      world[k].set(v4[k]);
+    }
+  } else {
+    // Older saves: today's climate becomes the long-term climate; existing lakes and
+    // rivers remember their beds so droughts can only dry them temporarily.
+    world.baseTemperature.set(world.temperature);
+    world.baseMoisture.set(world.moisture);
+    for (let i = 0; i < n; i++) {
+      if (world.terrain[i] === T.LAKE) world.waterFlags[i] = WATER_FLAG.LAKE_BED;
+      else if (world.terrain[i] === T.RIVER) world.waterFlags[i] = WATER_FLAG.RIVER_BED;
+    }
+  }
   world.markAllDirty();
 
   sim.reset(world, data.tick, data.rngState);
+  if (v4) {
+    sim.fire.restore(Array.from(v4.fireActive));
+    sim.weather.systems = v4.weather.systems.map((sys) => ({ ...sys }));
+    sim.weather.config = { ...v4.weather.config };
+    sim.weather.wind = v4.weather.wind;
+    sim.weather.refresh(world);
+    sim.creatures.foodMap.importState(v4.foodMap);
+    // Passability version continues from the saved one so snapshots compare correctly.
+    if (v4.nav && v4.nav.terrain.length === n) {
+      world.passVersion = Math.max(world.passVersion, v4.nav.passVersion, v4.nav.pending?.passVersion ?? 0, v4.passVersion ?? 0);
+      sim.creatures.importNav(world, v4.nav);
+    }
+  }
   if (data.version === 1) loadCreaturesV1(sim.creatures, data.creatures as CreatureSaveV1);
   else loadCreatures(sim.creatures, data.creatures as CreatureSave);
   sim.creatures.reindex();

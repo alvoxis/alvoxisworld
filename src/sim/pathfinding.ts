@@ -303,61 +303,115 @@ export const UNREACHABLE = 0xffff;
  * walk downhill on this field, so finding the nearest *reachable* water costs O(1)
  * per step and is shared by every animal. Rebuilt only when passability changes.
  */
+/** The part of a world that navigation data depends on (lets it be built from a snapshot). */
+export interface NavGrid {
+  width: number;
+  height: number;
+  terrain: Uint8Array;
+  passVersion: number;
+}
+
+/**
+ * Pure computation of the water-distance field (see WaterField). Depends only on
+ * the grid, so it can run on a terrain snapshot in a worker with identical results.
+ */
+export function computeWaterDist(grid: NavGrid): Uint16Array[] {
+  const w = grid.width;
+  const h = grid.height;
+  const n = w * h;
+  const t = grid.terrain;
+  const queue = new Int32Array(n);
+  const pass = new Uint8Array(n);
+  // Drink spots (class-independent): on a river or swamp, or next to any water.
+  const drink = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const id = t[i];
+    if (id === T.RIVER || id === T.SWAMP) drink[i] = 1;
+    if (!isWater(id)) continue;
+    const x = i % w;
+    const y = (i - x) / w;
+    for (let oy = -1; oy <= 1; oy++) {
+      const ny = y + oy;
+      if (ny < 0 || ny >= h) continue;
+      for (let ox = -1; ox <= 1; ox++) {
+        const nx = x + ox;
+        if (nx >= 0 && nx < w) drink[ny * w + nx] = 1;
+      }
+    }
+  }
+  const out: Uint16Array[] = [];
+  for (const cls of [MOVE.LAND, MOVE.LOWLAND]) {
+    const dist = new Uint16Array(n).fill(UNREACHABLE);
+    out[cls] = dist;
+    let tail = 0;
+    for (let i = 0; i < n; i++) {
+      pass[i] = passableId(cls, t[i]) ? 1 : 0;
+      if (pass[i] && drink[i]) {
+        dist[i] = 0;
+        queue[tail++] = i;
+      }
+    }
+    let head = 0;
+    while (head < tail) {
+      const c = queue[head++];
+      const cx = c % w;
+      const cy = (c - cx) / w;
+      const d = dist[c] + 1;
+      if (d >= UNREACHABLE) continue;
+      const pl = cx > 0 && pass[c - 1];
+      const pr = cx < w - 1 && pass[c + 1];
+      const pu = cy > 0 && pass[c - w];
+      const pd = cy < h - 1 && pass[c + w];
+      if (pl && dist[c - 1] === UNREACHABLE) { dist[c - 1] = d; queue[tail++] = c - 1; }
+      if (pr && dist[c + 1] === UNREACHABLE) { dist[c + 1] = d; queue[tail++] = c + 1; }
+      if (pu && dist[c - w] === UNREACHABLE) { dist[c - w] = d; queue[tail++] = c - w; }
+      if (pd && dist[c + w] === UNREACHABLE) { dist[c + w] = d; queue[tail++] = c + w; }
+      // Diagonals only where both orthogonal neighbours are passable (no corner cutting).
+      if (pl && pu && pass[c - w - 1] && dist[c - w - 1] === UNREACHABLE) { dist[c - w - 1] = d; queue[tail++] = c - w - 1; }
+      if (pr && pu && pass[c - w + 1] && dist[c - w + 1] === UNREACHABLE) { dist[c - w + 1] = d; queue[tail++] = c - w + 1; }
+      if (pl && pd && pass[c + w - 1] && dist[c + w - 1] === UNREACHABLE) { dist[c + w - 1] = d; queue[tail++] = c + w - 1; }
+      if (pr && pd && pass[c + w + 1] && dist[c + w + 1] === UNREACHABLE) { dist[c + w + 1] = d; queue[tail++] = c + w + 1; }
+    }
+  }
+  return out;
+}
+
+/**
+ * Distance (in steps) from every tile to the nearest drink spot, per land movement
+ * class, computed by a multi-source BFS over passable tiles. Thirsty animals just
+ * walk downhill on this field, so finding the nearest *reachable* water costs O(1)
+ * per step and is shared by every animal. Rebuilt only when passability changes.
+ */
 export class WaterField {
   /** dist[cls] for MOVE.LAND and MOVE.LOWLAND (water animals never need to drink). */
-  readonly dist: Uint16Array[] = [new Uint16Array(0), new Uint16Array(0)];
+  dist: Uint16Array[] = [new Uint16Array(0), new Uint16Array(0)];
   /** world.passVersion the field was built for (-1 = never built). */
   version = -1;
-  private world: World | null = null;
+  private owner: World | null = null;
   builds = 0;
   lastBuildMs = 0;
 
   isStale(world: World): boolean {
-    return this.world !== world || this.version !== world.passVersion;
+    return this.owner !== world || this.version !== world.passVersion;
+  }
+
+  /** True if the field has ever been built for this world (possibly from an older version). */
+  builtFor(world: World): boolean {
+    return this.owner === world;
   }
 
   build(world: World): void {
     const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
-    const n = world.width * world.height;
-    const queue = new Int32Array(n);
-    for (const cls of [MOVE.LAND, MOVE.LOWLAND]) {
-      let dist = this.dist[cls];
-      if (dist.length !== n) dist = this.dist[cls] = new Uint16Array(n);
-      dist.fill(UNREACHABLE);
-      let tail = 0;
-      for (let y = 0; y < world.height; y++) {
-        for (let x = 0; x < world.width; x++) {
-          if (passable(world, cls, x, y) && isDrinkSpot(world, x, y)) {
-            const i = y * world.width + x;
-            dist[i] = 0;
-            queue[tail++] = i;
-          }
-        }
-      }
-      let head = 0;
-      const w = world.width;
-      while (head < tail) {
-        const c = queue[head++];
-        const cx = c % w;
-        const cy = (c - cx) / w;
-        const d = dist[c] + 1;
-        if (d >= UNREACHABLE) continue;
-        for (let k = 0; k < 8; k++) {
-          const nx = cx + DX[k];
-          const ny = cy + DY[k];
-          if (!passable(world, cls, nx, ny)) continue;
-          if (k >= 4 && (!passable(world, cls, nx, cy) || !passable(world, cls, cx, ny))) continue;
-          const nb = ny * w + nx;
-          if (dist[nb] !== UNREACHABLE) continue;
-          dist[nb] = d;
-          queue[tail++] = nb;
-        }
-      }
-    }
-    this.world = world;
-    this.version = world.passVersion;
-    this.builds++;
+    this.apply(world, computeWaterDist(world), world.passVersion);
     if (t0) this.lastBuildMs = performance.now() - t0;
+  }
+
+  /** Installs a field computed elsewhere (e.g. a worker) for a given passVersion. */
+  apply(world: World, dist: Uint16Array[], version: number): void {
+    this.dist = dist;
+    this.owner = world;
+    this.version = version;
+    this.builds++;
   }
 
   distanceAt(world: World, cls: number, x: number, y: number): number {
