@@ -17,6 +17,10 @@ export const T = {
   HILLS: 11,
   MOUNTAIN: 12,
   SOIL: 13,
+  /** Fresh running water above sea level. Fordable: land animals can wade across. */
+  RIVER: 14,
+  /** Fresh standing water above sea level (filled depressions). Not fordable. */
+  LAKE: 15,
 } as const;
 
 export type TerrainId = (typeof T)[keyof typeof T];
@@ -55,12 +59,30 @@ export const TERRAIN: readonly TerrainDef[] = [
   { id: T.HILLS, key: 'hills', name: 'Hills', color: [110, 140, 70], water: false, edible: true },
   { id: T.MOUNTAIN, key: 'mountain', name: 'Mountain', color: [120, 116, 112], water: false, edible: false },
   { id: T.SOIL, key: 'soil', name: 'Bare soil', color: [128, 96, 64], water: false, edible: false },
+  { id: T.RIVER, key: 'river', name: 'River', color: [70, 150, 214], water: true, edible: false },
+  { id: T.LAKE, key: 'lake', name: 'Lake', color: [52, 124, 170], water: true, edible: false },
 ];
 
 export const TERRAIN_COUNT = TERRAIN.length;
 
 export function isWater(id: number): boolean {
-  return id === T.DEEP_WATER || id === T.SHALLOW_WATER;
+  return id === T.DEEP_WATER || id === T.SHALLOW_WATER || id === T.RIVER || id === T.LAKE;
+}
+
+/** Fresh inland water (rivers and lakes), as opposed to the sea. */
+export function isFreshWater(id: number): boolean {
+  return id === T.RIVER || id === T.LAKE;
+}
+
+/**
+ * Movement-relevant class of a terrain id. Changing a tile between classes changes
+ * where animals can go, so the world bumps its passability version.
+ */
+export function passClass(id: number): number {
+  if (id === T.RIVER) return 2;
+  if (isWater(id)) return 1;
+  if (id === T.MOUNTAIN || id === T.SNOW) return 3;
+  return 0;
 }
 
 /**

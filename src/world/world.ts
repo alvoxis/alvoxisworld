@@ -1,4 +1,4 @@
-import { T, TERRAIN, isWater } from './terrain';
+import { T, TERRAIN, isWater, passClass } from './terrain';
 
 export const CHUNK = 32;
 
@@ -19,6 +19,11 @@ export class World {
   readonly chunksY: number;
   /** Chunks changed since the renderer last consumed them. */
   readonly dirtyChunks = new Set<number>();
+  /**
+   * Incremented whenever a tile changes between movement classes (land, water,
+   * fordable river, mountain/snow). Pathfinding caches compare against it.
+   */
+  passVersion = 0;
 
   constructor(width: number, height: number, seed: number) {
     this.width = width;
@@ -66,8 +71,10 @@ export class World {
 
   setTerrain(x: number, y: number, id: number): void {
     const i = this.idx(x, y);
-    if (this.terrain[i] === id) return;
+    const old = this.terrain[i];
+    if (old === id) return;
     this.terrain[i] = id;
+    if (passClass(old) !== passClass(id)) this.passVersion++;
     this.markDirty(x, y);
   }
 

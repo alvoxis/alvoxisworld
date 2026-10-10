@@ -1,0 +1,388 @@
+import { T, isWater } from '../world/terrain';
+import { World } from '../world/world';
+
+/**
+ * Movement classes. Every species maps to one; passability depends only on the
+ * class, so search results and the water field can be shared between species.
+ */
+export const MOVE = {
+  /** Walks anywhere on land and wades through rivers. */
+  LAND: 0,
+  /** Like LAND, but cannot climb mountains or snowfields. */
+  LOWLAND: 1,
+  /** Swims in any water (sea, lakes, rivers); never leaves it. */
+  WATER: 2,
+} as const;
+export type MoveClass = (typeof MOVE)[keyof typeof MOVE];
+export const MOVE_CLASSES = 3;
+
+/** Whether a movement class may stand on tile (x, y). */
+export function passable(world: World, cls: number, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= world.width || y >= world.height) return false;
+  return passableId(cls, world.terrain[y * world.width + x]);
+}
+
+export function passableId(cls: number, id: number): boolean {
+  if (cls === MOVE.WATER) return isWater(id);
+  if (isWater(id) && id !== T.RIVER) return false;
+  if (cls === MOVE.LOWLAND && (id === T.MOUNTAIN || id === T.SNOW)) return false;
+  return true;
+}
+
+/** Movement cost multiplier: land animals wade slowly through rivers. */
+export function tileCost(cls: number, id: number): number {
+  return cls !== MOVE.WATER && id === T.RIVER ? 3 : 1;
+}
+
+/** A tile where a land animal can drink: on a river or swamp, or next to any water. */
+export function isDrinkSpot(world: World, x: number, y: number): boolean {
+  const w = world.width;
+  const t = world.terrain;
+  const id = t[y * w + x];
+  if (id === T.RIVER || id === T.SWAMP) return true;
+  for (let oy = -1; oy <= 1; oy++) {
+    const ny = y + oy;
+    if (ny < 0 || ny >= world.height) continue;
+    for (let ox = -1; ox <= 1; ox++) {
+      const nx = x + ox;
+      if (nx < 0 || nx >= w) continue;
+      if (isWater(t[ny * w + nx])) return true;
+    }
+  }
+  return false;
+}
+
+const DX = [1, -1, 0, 0, 1, 1, -1, -1];
+const DY = [0, 0, 1, -1, 1, -1, 1, -1];
+const SQRT2 = Math.SQRT2;
+
+/** Result codes (non-negative results are path lengths). */
+export const NOT_FOUND = -1;
+export const NO_BUDGET = -2;
+
+/**
+ * Grid search shared by all creatures. Scratch arrays are allocated once per map
+ * size and reused via a generation stamp, so searches allocate nothing.
+ *
+ * A per-tick node budget (`beginTick`) bounds the total search work in one
+ * simulation tick; when it runs out, searches return NO_BUDGET and the caller
+ * retries on a later tick instead of stalling the simulation.
+ */
+export class Pathfinder {
+  private w = 0;
+  private h = 0;
+  private g = new Float32Array(0);
+  private came = new Int32Array(0);
+  private stamp = new Uint32Array(0);
+  private closed = new Uint32Array(0);
+  private gen = 0;
+  private heapKey = new Float32Array(0);
+  private heapVal = new Int32Array(0);
+  private heapSize = 0;
+  private queue = new Int32Array(0);
+  private scratch = new Int32Array(0);
+
+  /** Node expansions left in this tick. */
+  budget = 0;
+  /** Stats since creation (for performance reporting). */
+  searches = 0;
+  expansions = 0;
+  deferred = 0;
+
+  private ensure(world: World): void {
+    if (world.width === this.w && world.height === this.h) return;
+    this.w = world.width;
+    this.h = world.height;
+    const n = this.w * this.h;
+    this.g = new Float32Array(n);
+    this.came = new Int32Array(n);
+    this.stamp = new Uint32Array(n);
+    this.closed = new Uint32Array(n);
+    this.heapKey = new Float32Array(n);
+    this.heapVal = new Int32Array(n);
+    this.queue = new Int32Array(n);
+    this.scratch = new Int32Array(n);
+    this.gen = 0;
+  }
+
+  beginTick(budget: number): void {
+    this.budget = budget;
+  }
+
+  private nextGen(): void {
+    this.gen++;
+    if (this.gen === 0xffffffff) {
+      this.stamp.fill(0);
+      this.closed.fill(0);
+      this.gen = 1;
+    }
+  }
+
+  /** True if moving from c to its neighbour k is allowed (no corner cutting). */
+  private canStep(world: World, cls: number, cx: number, cy: number, k: number): boolean {
+    const nx = cx + DX[k];
+    const ny = cy + DY[k];
+    if (!passable(world, cls, nx, ny)) return false;
+    if (k >= 4) return passable(world, cls, cx + DX[k], cy) && passable(world, cls, cx, cy + DY[k]);
+    return true;
+  }
+
+  /**
+   * A* from (sx, sy) to (gx, gy). Writes up to `outMax` tile indices of the path
+   * (excluding the start, ending at the goal unless truncated) into out[off..].
+   * Returns the number written, NOT_FOUND if unreachable within maxNodes, or
+   * NO_BUDGET if this tick's search budget is spent.
+   */
+  astar(
+    world: World, cls: number, sx: number, sy: number, gx: number, gy: number, maxNodes: number,
+    out: Int32Array, off: number, outMax: number,
+  ): number {
+    this.ensure(world);
+    if (!passable(world, cls, gx, gy)) return NOT_FOUND;
+    if (this.budget < 64) {
+      this.deferred++;
+      return NO_BUDGET;
+    }
+    const limit = Math.min(maxNodes, this.budget);
+    this.searches++;
+    this.nextGen();
+    const w = this.w;
+    const start = sy * w + sx;
+    const goal = gy * w + gx;
+    if (start === goal) return 0;
+    const gen = this.gen;
+    this.heapSize = 0;
+    this.g[start] = 0;
+    this.stamp[start] = gen;
+    this.came[start] = -1;
+    this.heapPush(octile(sx, sy, gx, gy), start);
+    let expanded = 0;
+    let found = false;
+    while (this.heapSize > 0) {
+      const c = this.heapPop();
+      if (this.closed[c] === gen) continue;
+      this.closed[c] = gen;
+      if (c === goal) {
+        found = true;
+        break;
+      }
+      if (++expanded > limit) break;
+      const cx = c % w;
+      const cy = (c - cx) / w;
+      const gc = this.g[c];
+      for (let k = 0; k < 8; k++) {
+        if (!this.canStep(world, cls, cx, cy, k)) continue;
+        const nx = cx + DX[k];
+        const ny = cy + DY[k];
+        const nb = ny * w + nx;
+        if (this.closed[nb] === gen) continue;
+        const cost = (k >= 4 ? SQRT2 : 1) * tileCost(cls, world.terrain[nb]);
+        const ng = gc + cost;
+        if (this.stamp[nb] === gen && this.g[nb] <= ng) continue;
+        this.stamp[nb] = gen;
+        this.g[nb] = ng;
+        this.came[nb] = c;
+        this.heapPush(ng + octile(nx, ny, gx, gy), nb);
+      }
+    }
+    this.budget -= expanded;
+    this.expansions += expanded;
+    if (!found) return NOT_FOUND;
+    return this.writePath(start, goal, out, off, outMax);
+  }
+
+  /**
+   * Breadth-first search for the nearest reachable tile (in steps) satisfying
+   * `match`, exploring at most maxNodes tiles. Writes the path like astar().
+   * Returns the path length, 0 if the start already matches, or NOT_FOUND / NO_BUDGET.
+   */
+  nearest(
+    world: World, cls: number, sx: number, sy: number, maxNodes: number, match: (i: number) => boolean,
+    out: Int32Array, off: number, outMax: number,
+  ): number {
+    this.ensure(world);
+    const w = this.w;
+    const start = sy * w + sx;
+    if (match(start)) return 0;
+    if (this.budget < 32) {
+      this.deferred++;
+      return NO_BUDGET;
+    }
+    const limit = Math.min(maxNodes, this.budget);
+    this.searches++;
+    this.nextGen();
+    const gen = this.gen;
+    const q = this.queue;
+    let head = 0;
+    let tail = 0;
+    q[tail++] = start;
+    this.stamp[start] = gen;
+    this.came[start] = -1;
+    let found = -1;
+    while (head < tail && head < limit) {
+      const c = q[head++];
+      const cx = c % w;
+      const cy = (c - cx) / w;
+      for (let k = 0; k < 8; k++) {
+        if (!this.canStep(world, cls, cx, cy, k)) continue;
+        const nb = (cy + DY[k]) * w + cx + DX[k];
+        if (this.stamp[nb] === gen) continue;
+        this.stamp[nb] = gen;
+        this.came[nb] = c;
+        if (match(nb)) {
+          found = nb;
+          break;
+        }
+        q[tail++] = nb;
+      }
+      if (found >= 0) break;
+    }
+    this.budget -= head;
+    this.expansions += head;
+    if (found < 0) return NOT_FOUND;
+    return this.writePath(start, found, out, off, outMax);
+  }
+
+  private writePath(start: number, goal: number, out: Int32Array, off: number, outMax: number): number {
+    // Walk back from the goal, then copy the first outMax steps from the start side.
+    let len = 0;
+    for (let c = goal; c !== start && c >= 0; c = this.came[c]) this.scratch[len++] = c;
+    const n = Math.min(len, outMax);
+    for (let k = 0; k < n; k++) out[off + k] = this.scratch[len - 1 - k];
+    return n;
+  }
+
+  private heapPush(key: number, val: number): void {
+    let i = this.heapSize++;
+    const hk = this.heapKey;
+    const hv = this.heapVal;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (hk[p] <= key) break;
+      hk[i] = hk[p];
+      hv[i] = hv[p];
+      i = p;
+    }
+    hk[i] = key;
+    hv[i] = val;
+  }
+
+  private heapPop(): number {
+    const hk = this.heapKey;
+    const hv = this.heapVal;
+    const top = hv[0];
+    const key = hk[--this.heapSize];
+    const val = hv[this.heapSize];
+    let i = 0;
+    for (;;) {
+      let c = 2 * i + 1;
+      if (c >= this.heapSize) break;
+      if (c + 1 < this.heapSize && hk[c + 1] < hk[c]) c++;
+      if (hk[c] >= key) break;
+      hk[i] = hk[c];
+      hv[i] = hv[c];
+      i = c;
+    }
+    hk[i] = key;
+    hv[i] = val;
+    return top;
+  }
+}
+
+function octile(x0: number, y0: number, x1: number, y1: number): number {
+  const dx = Math.abs(x1 - x0);
+  const dy = Math.abs(y1 - y0);
+  return dx + dy + (SQRT2 - 2) * Math.min(dx, dy);
+}
+
+export const UNREACHABLE = 0xffff;
+
+/**
+ * Distance (in steps) from every tile to the nearest drink spot, per land movement
+ * class, computed by a multi-source BFS over passable tiles. Thirsty animals just
+ * walk downhill on this field, so finding the nearest *reachable* water costs O(1)
+ * per step and is shared by every animal. Rebuilt only when passability changes.
+ */
+export class WaterField {
+  /** dist[cls] for MOVE.LAND and MOVE.LOWLAND (water animals never need to drink). */
+  readonly dist: Uint16Array[] = [new Uint16Array(0), new Uint16Array(0)];
+  /** world.passVersion the field was built for (-1 = never built). */
+  version = -1;
+  private world: World | null = null;
+  builds = 0;
+  lastBuildMs = 0;
+
+  isStale(world: World): boolean {
+    return this.world !== world || this.version !== world.passVersion;
+  }
+
+  build(world: World): void {
+    const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+    const n = world.width * world.height;
+    const queue = new Int32Array(n);
+    for (const cls of [MOVE.LAND, MOVE.LOWLAND]) {
+      let dist = this.dist[cls];
+      if (dist.length !== n) dist = this.dist[cls] = new Uint16Array(n);
+      dist.fill(UNREACHABLE);
+      let tail = 0;
+      for (let y = 0; y < world.height; y++) {
+        for (let x = 0; x < world.width; x++) {
+          if (passable(world, cls, x, y) && isDrinkSpot(world, x, y)) {
+            const i = y * world.width + x;
+            dist[i] = 0;
+            queue[tail++] = i;
+          }
+        }
+      }
+      let head = 0;
+      const w = world.width;
+      while (head < tail) {
+        const c = queue[head++];
+        const cx = c % w;
+        const cy = (c - cx) / w;
+        const d = dist[c] + 1;
+        if (d >= UNREACHABLE) continue;
+        for (let k = 0; k < 8; k++) {
+          const nx = cx + DX[k];
+          const ny = cy + DY[k];
+          if (!passable(world, cls, nx, ny)) continue;
+          if (k >= 4 && (!passable(world, cls, nx, cy) || !passable(world, cls, cx, ny))) continue;
+          const nb = ny * w + nx;
+          if (dist[nb] !== UNREACHABLE) continue;
+          dist[nb] = d;
+          queue[tail++] = nb;
+        }
+      }
+    }
+    this.world = world;
+    this.version = world.passVersion;
+    this.builds++;
+    if (t0) this.lastBuildMs = performance.now() - t0;
+  }
+
+  distanceAt(world: World, cls: number, x: number, y: number): number {
+    if (cls === MOVE.WATER || !world.inBounds(x, y)) return UNREACHABLE;
+    return this.dist[cls][y * world.width + x] ?? UNREACHABLE;
+  }
+
+  /** Neighbouring tile index one step closer to water, or -1 if none. */
+  nextStep(world: World, cls: number, x: number, y: number): number {
+    if (cls === MOVE.WATER) return -1;
+    const dist = this.dist[cls];
+    const w = world.width;
+    let best = -1;
+    let bestD = this.distanceAt(world, cls, x, y);
+    for (let k = 0; k < 8; k++) {
+      const nx = x + DX[k];
+      const ny = y + DY[k];
+      if (!passable(world, cls, nx, ny)) continue;
+      if (k >= 4 && (!passable(world, cls, nx, y) || !passable(world, cls, x, ny))) continue;
+      const d = dist[ny * w + nx];
+      if (d < bestD) {
+        bestD = d;
+        best = ny * w + nx;
+      }
+    }
+    return best;
+  }
+}
