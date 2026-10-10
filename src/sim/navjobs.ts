@@ -50,8 +50,17 @@ export interface WorkerLike {
   terminate(): void;
 }
 
-/** Ticks between taking a terrain snapshot and installing its navigation data. */
+/** Minimum ticks between taking a terrain snapshot and installing its navigation data. */
 export const NAV_DELAY = 20;
+
+/**
+ * Delivery delay for a map: bigger maps take longer to rebuild, so the worker gets
+ * more ticks (≈33 on medium, ≈131 on large: 1.3 s even at 10× speed). Depends only
+ * on the map size, never on timing, so results stay deterministic.
+ */
+export function navDelay(width: number, height: number): number {
+  return Math.min(150, Math.max(NAV_DELAY, Math.ceil((width * height) / 5000)));
+}
 
 /**
  * Runs navigation rebuilds (water field + region graph) off the main thread while
@@ -130,7 +139,7 @@ export class NavScheduler {
       terrain: world.terrain.slice(),
       passVersion: world.passVersion,
     };
-    this.pending = { req, due: tick + NAV_DELAY, result: null };
+    this.pending = { req, due: tick + navDelay(world.width, world.height), result: null };
     this.stats.requests++;
     const w = this.ensureWorker();
     if (!w) return;

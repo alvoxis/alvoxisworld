@@ -141,7 +141,7 @@ These are planned (see [docs/ROADMAP.md](docs/ROADMAP.md)) but **do not exist in
 
 Known limitations:
 - **Simulation thread.** The simulation tick itself still runs on the main thread; only world generation and navigation rebuilds use workers. Moving the whole tick is not done yet; see [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for why and what it would take.
-- **Navigation lags terrain.** After weather or brushes change where animals can walk, the water map and region graph follow within 60–80 ticks. Animals check each step of their route meanwhile, so they never walk into water, but they may briefly head for water that has just dried up.
+- **Navigation lags terrain.** After weather or brushes change where animals can walk, the water map and region graph follow within about 60 ticks plus a delivery delay of 20–150 ticks (by map size). Animals check each step of their route meanwhile, so they never walk into water, but they may briefly head for water that has just dried up.
 - **Long routes.** Routes are planned in legs of about 24 tiles over a coarse region graph, so routes of any length work, but they're not perfectly shortest. Food is found within sight, or by migrating to the nearest reachable food within about 128 tiles.
 - **Weather and water levels** are tile-based: lakes shrink and grow from the shore, rivers dry and refill tile by tile, and floods cover low land beside rivers and lakes. There is no water volume or depth simulation.
 - Populations still rise and fall, and a species can die out; that's a valid outcome (see [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md)). Tyrants are a small population and the most likely to die out (in 1 of 3 test worlds after about 10 years). Herbivores with plenty of food reach their population caps.

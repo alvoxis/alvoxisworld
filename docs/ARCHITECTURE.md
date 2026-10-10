@@ -108,7 +108,7 @@ Both workers follow the same pattern:
 2. A tiny worker entry file, bundled by Vite through `new Worker(new URL(...), { type: 'module' })`.
 3. A main-thread client that falls back to running the same function locally.
 
-Navigation rebuilds are installed at a fixed tick (request + `NAV_DELAY`), so results never depend on timing. See docs/PERFORMANCE.md for the investigation.
+Navigation rebuilds are installed at a fixed tick: the request tick plus `navDelay(width, height)`, which is 20 to 150 ticks depending only on map size. Results therefore never depend on timing. See docs/PERFORMANCE.md for the investigation.
 
 ### Long routes and food (`src/sim/regions.ts`, `src/sim/foodmap.ts`)
 

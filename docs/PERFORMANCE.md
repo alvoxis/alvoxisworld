@@ -40,7 +40,7 @@ Without weather, cost per animal is unchanged; the small differences are run-to-
 | Measurement | Main thread | Web Worker |
 |---|---|---|
 | Generate a Large (1024×640) world: longest frozen frame | 850–917 ms (2 runs) | **67–83 ms** (2 runs) |
-| Navigation rebuilds during play with weather | about 37 ms per rebuild on the main thread (Node fallback figure) | 6 of 6 rebuilds served by the worker, 0 fallbacks, 0 errors |
+| Navigation rebuilds during play with weather | about 37 ms (medium) / about 275 ms (large, in Chromium) per rebuild on the main thread | Medium: 6 of 6 rebuilds served by the worker. Large at 10×: 9 of 9 after scaling the delivery delay with map size (it was 5 of 9 with a fixed 20-tick delay, the rest falling back to the main thread). 0 errors. |
 | 5,476 animals, 4 weather systems, 10× speed | n/a | 60 fps, p95 frame 16.7 ms, worst 33 ms, 100 ticks/s |
 
 ## Web Worker investigation
@@ -62,7 +62,7 @@ It's possible, but a large rewrite that would collide with the planned UI milest
 - **World generation** (`src/world/gen.worker.ts`). Same deterministic generator; the result is transferred. If the worker fails, errors, times out (20 s) or doesn't exist, generation runs on the main thread with the same result.
 - **Navigation rebuilds** (`src/sim/nav.worker.ts`: water map and region graph):
   - When passability changes, the simulation copies the terrain and sends it to the worker.
-  - The result is installed exactly 20 ticks later. If the worker hasn't answered by then, crashed, or doesn't exist (tests, old browsers), the identical result is computed from the same snapshot on the main thread.
+  - The result is installed a fixed number of ticks later, set only by map size: 20 to 150 ticks (about 33 on medium, 131 on large, so 1.3 s even at 10×). If the worker hasn't answered by then, crashed, or doesn't exist (tests, old browsers), the identical result is computed from the same snapshot on the main thread.
   - The simulation is therefore **deterministic regardless of worker timing**. A test runs the same world with and without a worker and compares positions tick for tick.
   - Saves include the snapshot behind the current navigation data, so a loaded world continues identically.
 

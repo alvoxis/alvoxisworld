@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeNav, NAV_DELAY, NavScheduler, navTransferables, type NavRequest, type WorkerLike } from '../src/sim/navjobs';
+import { computeNav, navDelay, NavScheduler, navTransferables, type NavRequest, type WorkerLike } from '../src/sim/navjobs';
 import { computeWaterDist } from '../src/sim/pathfinding';
 import { computeRegions } from '../src/sim/regions';
 import { Simulation } from '../src/sim/simulation';
@@ -38,19 +38,26 @@ describe('navigation worker protocol', () => {
     expect(navTransferables(res).length).toBeGreaterThan(0);
   });
 
+  it('gives bigger maps more delivery time, depending only on size', () => {
+    expect(navDelay(64, 64)).toBe(20);
+    expect(navDelay(512, 320)).toBe(33);
+    expect(navDelay(1024, 640)).toBe(132);
+    expect(navDelay(4000, 4000)).toBe(150);
+  });
+
   it('reports bad snapshots as errors instead of throwing', () => {
     const res = computeNav({ id: 7, width: 10, height: 10, terrain: new Uint8Array(3), passVersion: 0 });
     expect(res).toMatchObject({ id: 7, ok: false });
   });
 
-  it('installs the worker result exactly NAV_DELAY ticks after the request', () => {
+  it('installs the worker result exactly navDelay() ticks after the request', () => {
     const fake = new FakeWorker('ok');
     const nav = new NavScheduler(() => fake);
     const w = generateWorld(64, 64, 3);
     nav.request(w, 100);
     expect(fake.posted.length).toBe(1);
-    expect(nav.takeDue(100 + NAV_DELAY - 1)).toBeNull();
-    const res = nav.takeDue(100 + NAV_DELAY);
+    expect(nav.takeDue(100 + navDelay(64, 64) - 1)).toBeNull();
+    const res = nav.takeDue(100 + navDelay(64, 64));
     expect(res?.result.passVersion).toBe(w.passVersion);
     expect(nav.stats.workerResults).toBe(1);
     expect(nav.stats.syncFallbacks).toBe(0);
@@ -63,7 +70,7 @@ describe('navigation worker protocol', () => {
       const fake = new FakeWorker(mode);
       const nav = new NavScheduler(() => fake);
       nav.request(w, 0);
-      const res = nav.takeDue(NAV_DELAY);
+      const res = nav.takeDue(navDelay(64, 64));
       expect(res?.result.water).toEqual(expected);
       expect(nav.stats.syncFallbacks).toBe(1);
       if (mode !== 'silent') {
@@ -73,12 +80,12 @@ describe('navigation worker protocol', () => {
     }
     const none = new NavScheduler(null);
     none.request(w, 0);
-    expect(none.takeDue(NAV_DELAY)?.result.water).toEqual(expected);
+    expect(none.takeDue(navDelay(64, 64))?.result.water).toEqual(expected);
     const throwing = new NavScheduler(() => {
       throw new Error('no workers here');
     });
     throwing.request(w, 0);
-    expect(throwing.takeDue(NAV_DELAY)?.result.water).toEqual(expected);
+    expect(throwing.takeDue(navDelay(64, 64))?.result.water).toEqual(expected);
   });
 
   it('uses the snapshot, not later terrain (deterministic regardless of timing)', () => {
@@ -87,7 +94,7 @@ describe('navigation worker protocol', () => {
     const nav = new NavScheduler(() => new FakeWorker('silent'));
     nav.request(w, 0);
     for (let x = 0; x < 64; x++) w.setTerrain(x, 30, T.LAKE); // changes after the snapshot
-    expect(nav.takeDue(NAV_DELAY)?.result.water).toEqual(snapWater);
+    expect(nav.takeDue(navDelay(64, 64))?.result.water).toEqual(snapWater);
   });
 
   it('a simulation with a worker matches one without, tick for tick', () => {
