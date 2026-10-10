@@ -59,7 +59,7 @@ function camp(n = 10, world: World = civWorld(), auto = false): { sim: Simulatio
 
 /** Adds a finished building on a given tile (as if built earlier). */
 function put(civ: Civ, type: BuildingType, x: number, y: number): Building {
-  const b: Building = { id: civ.nextBuildingId++, type, x, y, started: 0, progress: 5, needed: 5, done: true, reserve: type === 'quarry' ? 600 : 0, acc: 0, active: false, idle: 0, empty: false, here: 0 };
+  const b: Building = { id: civ.nextBuildingId++, type, x, y, started: 0, progress: 5, needed: 5, done: true, reserve: type === 'quarry' ? 600 : 0, acc: 0, active: false, idle: 0, empty: false, here: 0, level: 1, up: 0 };
   civ.buildings.push(b);
   return b;
 }

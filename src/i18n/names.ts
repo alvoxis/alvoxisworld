@@ -82,6 +82,7 @@ export function messageText(m: CodedMessage): string {
       if (species) extra.species = species;
       if (typeof p.type === 'string') extra.type = td(`build.${p.type}`);
       if (typeof p.tech === 'string') extra.tech = td(`tech.${p.tech}`);
+      if (typeof p.level === 'number') extra.level = td(`house.level.${p.level}`).toLowerCase();
       if (typeof p.stage === 'string') extra.stage = td(`civstage.${p.stage}`).toLowerCase();
       return td(`msg.${m.code}`, { ...(p as Record<string, string | number>), ...extra });
     }

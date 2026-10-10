@@ -144,6 +144,10 @@ export interface Building {
   empty: boolean;
   /** Workers that were at work here in the last step. */
   here: number;
+  /** House level (1 hut … 4 urban house; 1 for other buildings). */
+  level: number;
+  /** Level a finished house is being upgraded to (0 = no upgrade); the work uses `progress` / `needed`. */
+  up: number;
 }
 
 export interface Civ {
@@ -176,8 +180,86 @@ export function newCiv(): Civ {
 
 const done = (c: Civ, type: BuildingType) => c.buildings.filter((b) => b.done && b.type === type);
 
+// ---- house levels (0.16) ----------------------------------------------------------
+
+export interface HouseLevelDef {
+  /** People the house holds. */
+  capacity: number;
+  /** Cost and steps of work to upgrade *to* this level (level 1 is built as a normal house). */
+  wood: number;
+  stone: number;
+  steps: number;
+}
+/** Index = level: 1 hut, 2 wooden house, 3 reinforced house, 4 urban house. Level 1 holds HOUSE_CAPACITY, as before. */
+export const HOUSE_LEVELS: readonly HouseLevelDef[] = [
+  { capacity: 0, wood: 0, stone: 0, steps: 0 },
+  { capacity: HOUSE_CAPACITY, wood: 0, stone: 0, steps: 0 },
+  { capacity: 8, wood: 12, stone: 0, steps: 6 },
+  { capacity: 12, wood: 12, stone: 12, steps: 8 },
+  { capacity: 18, wood: 16, stone: 24, steps: 10 },
+];
+export const MAX_HOUSE_LEVEL = HOUSE_LEVELS.length - 1;
+/** Upgrades the settlement starts by itself: one at a time, only while housing is nearly full, and only above these reserves. */
+export const AUTO_UPGRADE_FOOD = 15;
+export const AUTO_UPGRADE_WOOD_LEFT = 10;
+
+/** Highest house level the settlement's stage and technologies allow now (camp 1; village 2, with Better building 3; town 4 with Better building). */
+export function maxHouseLevel(c: Civ): number {
+  if (c.stage === 'camp') return 1;
+  if (!hasTech(c, 'construction')) return 2;
+  return c.stage === 'town' ? 4 : 3;
+}
+export function houseCapacity(b: Building): number {
+  return HOUSE_LEVELS[Math.max(1, Math.min(MAX_HOUSE_LEVEL, b.level))].capacity;
+}
+export function upgradeCost(c: Civ, level: number): { wood: number; stone: number } {
+  const k = hasTech(c, 'construction') ? 0.75 : 1;
+  const d = HOUSE_LEVELS[level];
+  return { wood: Math.ceil(d.wood * k), stone: Math.ceil(d.stone * k) };
+}
+export function upgradeSteps(c: Civ, level: number): number {
+  return Math.max(1, Math.ceil(HOUSE_LEVELS[level].steps * (hasTech(c, 'construction') ? 0.7 : 1)));
+}
+/** The house to upgrade next: a finished house below the allowed level, lowest level first, then the oldest. */
+export function upgradeTarget(c: Civ): Building | null {
+  const max = maxHouseLevel(c);
+  let best: Building | null = null;
+  for (const b of c.buildings) {
+    if (b.type !== 'house' || !b.done || b.up || b.level >= max) continue;
+    if (!best || b.level < best.level || (b.level === best.level && b.id < best.id)) best = b;
+  }
+  return best;
+}
+export type UpgradeFail = 'none' | 'level' | 'busy' | 'resources';
+/** Why no house can be upgraded now (null = one can). */
+export function upgradeBlock(c: Civ): UpgradeFail | null {
+  if (!c.buildings.some((b) => b.type === 'house' && b.done)) return 'none';
+  const b = upgradeTarget(c);
+  if (!b) return 'level';
+  if (constructions(c) >= MAX_CONSTRUCTIONS) return 'busy';
+  const cost = upgradeCost(c, b.level + 1);
+  if (c.wood < cost.wood || c.stone < cost.stone) return 'resources';
+  return null;
+}
+/** Starts upgrading the next house in place: pays once, then builders do the work (the house keeps its people and capacity meanwhile). */
+export function startUpgrade(c: Civ): Building | UpgradeFail {
+  const block = upgradeBlock(c);
+  if (block) return block;
+  const b = upgradeTarget(c)!;
+  const to = b.level + 1;
+  const cost = upgradeCost(c, to);
+  c.wood -= cost.wood;
+  c.stone -= cost.stone;
+  b.up = to;
+  b.progress = 0;
+  b.needed = upgradeSteps(c, to);
+  return b;
+}
+
 export function housing(c: Civ): number {
-  return BASE_CAPACITY + HOUSE_CAPACITY * done(c, 'house').length;
+  let n = BASE_CAPACITY;
+  for (const b of c.buildings) if (b.done && b.type === 'house') n += houseCapacity(b);
+  return n;
 }
 export function storage(c: Civ): number {
   return BASE_STORAGE + STOREHOUSE_BONUS * done(c, 'storehouse').length;
@@ -192,8 +274,9 @@ export function costOf(c: Civ, type: BuildingType): { wood: number; stone: numbe
 export function stepsOf(c: Civ, type: BuildingType): number {
   return Math.max(1, Math.ceil(BUILDINGS[type].steps * (hasTech(c, 'construction') ? 0.7 : 1)));
 }
+/** Building sites and house upgrades under way (both take builders and count against MAX_CONSTRUCTIONS). */
 export function constructions(c: Civ): number {
-  return c.buildings.filter((b) => !b.done).length;
+  return c.buildings.filter((b) => !b.done || b.up > 0).length;
 }
 export function finished(c: Civ): number {
   return c.buildings.filter((b) => b.done).length;
@@ -273,7 +356,7 @@ export function startBuilding(world: World, s: Settlement, owner: Uint16Array | 
   const steps = stepsOf(c, type);
   const b: Building = {
     id: c.nextBuildingId++, type, x: i % world.width, y: Math.floor(i / world.width), started: tick, progress: 0, needed: steps,
-    done: false, reserve: 0, acc: 0, active: false, idle: 0, empty: false, here: 0,
+    done: false, reserve: 0, acc: 0, active: false, idle: 0, empty: false, here: 0, level: 1, up: 0,
   };
   c.buildings.push(b);
   return b;
@@ -334,19 +417,38 @@ export function civStep(host: CivHost, s: Settlement): number {
   const here = workersHere(c, creatures);
   for (const b of c.buildings) b.here = here.get(b.id) ?? 0;
 
-  // 3. Construction: builders at the site do the work.
+  // 3. Construction and house upgrades: builders at the site do the work.
   for (const b of c.buildings) {
-    if (b.done) continue;
+    if (b.done && !b.up) continue;
     const n = here.get(b.id) ?? 0;
     if (!n) continue;
     b.progress = Math.min(b.needed, b.progress + BUILD_PER_WORKER * n);
     if (b.progress >= b.needed - 1e-9) {
       b.progress = b.needed;
+      if (b.up) {
+        // Upgrade finished: the same house, one level higher.
+        const firstOfTier = !c.buildings.some((o) => o !== b && o.type === 'house' && o.done && o.level >= b.up);
+        b.level = b.up;
+        b.up = 0;
+        host.event(s, `${s.name}: a house became level ${b.level}.`, 'settlement_house_upgraded', { name: s.name, level: b.level });
+        if (firstOfTier) host.event(s, `${s.name} has its first level ${b.level} house.`, 'settlement_housing_tier', { name: s.name, level: b.level });
+        continue;
+      }
       b.done = true;
       if (b.type === 'quarry') b.reserve = Math.min(STONE_RESERVE_CAP, countNear(world, b.x, b.y, QUARRY_RADIUS, STONE_TERRAIN) * STONE_PER_TILE);
       host.event(s, `${s.name}: a ${b.type} was built.`, 'settlement_built', { name: s.name, type: b.type });
     }
   }
+
+  // A finished site or upgrade needs no builders: free them now (a new farm keeps at most its own places).
+  const left = new Map<number, number>();
+  c.jobs = c.jobs.filter((j) => {
+    const b = c.buildings.find((x) => x.id === j.b);
+    const n = left.get(j.b) ?? 0;
+    if (!b || n >= slotsOf(b)) return false;
+    left.set(j.b, n + 1);
+    return true;
+  });
 
   // 4. Production.
   const cap = storage(c);
@@ -479,14 +581,14 @@ const STEP = 20; // settlement step in ticks (STEP_TICKS in settlements.ts)
 
 /** Kind of work a building gives (null: it needs no workers now). */
 export function jobKind(b: Building): JobKind | null {
-  if (!b.done) return 'build';
+  if (!b.done || b.up) return 'build';
   if (b.empty) return null;
   return b.type === 'farm' ? 'farm' : b.type === 'lumber' ? 'wood' : b.type === 'quarry' ? 'stone' : null;
 }
 
 /** Workers a building wants now. */
 export function slotsOf(b: Building): number {
-  if (!b.done) return BUILDERS;
+  if (!b.done || b.up) return BUILDERS;
   return jobKind(b) ? WORK_SLOTS[b.type] : 0;
 }
 
@@ -552,7 +654,7 @@ export function assignJobs(host: CivHost, s: Settlement, adults: number[]): void
   const working = new Set(kept.map((j) => j.id));
   const free = adults.filter((id) => !working.has(id));
   const foodShort = c.food < Math.max(10, s.members.length);
-  const rank = (b: Building) => (!b.done ? (foodShort ? 1 : 0) : b.type === 'farm' ? (foodShort ? 0 : 1) : b.type === 'lumber' ? 2 : 3);
+  const rank = (b: Building) => (!b.done || b.up ? (foodShort ? 1 : 0) : b.type === 'farm' ? (foodShort ? 0 : 1) : b.type === 'lumber' ? 2 : 3);
   const order = c.buildings.filter((b) => slotsOf(b) > 0).sort((a, b) => rank(a) - rank(b) || a.id - b.id);
   const give = (id: number, b: Building) => {
     const i = creatures.indexOf(id);
@@ -641,6 +743,7 @@ function autoManage(host: CivHost, s: Settlement): void {
       if (typeof b === 'object') break;
     }
   }
+  if (wantsUpgrade(c, pop)) startUpgrade(c);
   if (!c.research) {
     for (const id of TECH_IDS) {
       if (!hasTech(c, id) && techNeedsMet(c, id) && c.knowledge >= TECHS[id].knowledge) {
@@ -650,6 +753,19 @@ function autoManage(host: CivHost, s: Settlement): void {
       }
     }
   }
+}
+
+/**
+ * Whether a self-running settlement should upgrade a house now: housing is (nearly) full, no other upgrade is under
+ * way, food and wood production exist, there is no famine, and paying leaves the food and wood reserves intact.
+ */
+export function wantsUpgrade(c: Civ, pop: number): boolean {
+  if (pop < housing(c) - 2 || c.famine || c.food < Math.max(AUTO_UPGRADE_FOOD, pop)) return false;
+  if (c.buildings.some((b) => b.up > 0)) return false;
+  if (!done(c, 'farm').length || !c.buildings.some((b) => b.type === 'lumber')) return false;
+  const b = upgradeTarget(c);
+  if (!b || upgradeBlock(c)) return false;
+  return c.wood - upgradeCost(c, b.level + 1).wood >= AUTO_UPGRADE_WOOD_LEFT;
 }
 
 /** Why research cannot start now (null = it can). */
@@ -706,8 +822,11 @@ export function importCiv(raw: unknown, world: World): Civ {
     maxId = Math.max(maxId, id);
     const needed = Math.floor(num(b.needed, 1, 100, BUILDINGS[b.type as BuildingType].steps));
     const isDone = b.done === true;
+    // House level and upgrade (0.16; older saves: every house is level 1, nothing is being upgraded).
+    const level = b.type === 'house' ? Math.floor(num(b.level, 1, MAX_HOUSE_LEVEL, 1)) : 1;
+    const up = b.type === 'house' && isDone && b.up === level + 1 && level < MAX_HOUSE_LEVEL ? level + 1 : 0;
     c.buildings.push({
-      id, type: b.type, x, y, started: num(b.started, 0, 1e12, 0), progress: isDone ? needed : num(b.progress, 0, needed, 0), needed,
+      id, type: b.type, x, y, started: num(b.started, 0, 1e12, 0), progress: isDone && !up ? needed : num(b.progress, 0, needed, 0), needed, level, up,
       done: isDone, reserve: num(b.reserve, 0, STONE_RESERVE_CAP, 0), acc: num(b.acc, 0, WOOD_PER_TREE, 0),
       // Version 12 fields; older saves: a farm counts as working, nothing is exhausted.
       active: typeof b.active === 'boolean' ? b.active : isDone && b.type === 'farm', idle: Math.floor(num(b.idle, 0, 1e6, 0)), empty: b.empty === true,

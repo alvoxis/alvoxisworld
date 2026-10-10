@@ -41,6 +41,9 @@ Creatures that are easy to see and pick; groups; people that find homes, found s
 ## ✅ Living Settlements 0.15 (done)
 Residents take jobs (construction, field work, woodcutting, quarrying), walk to the buildings and produce there; production is tied to workers without double counting; visible work, worker and problem lines in the cards, settlement event toasts. Save format still 11. Next logical step: hauling and roads, more buildings and resources, tuning the places per building on real worlds.
 
+## ✅ Housing Evolution 0.16 (done)
+Houses go from huts to wooden, reinforced and urban houses with the settlement's stage and Better building; upgrades cost resources, take builders and time and add room; visible on the map and in the card. Save format still 11. Next logical step: architecture per people, more building types growing the same way.
+
 ## Milestone 6: Richer nature (next)
 - More fauna as data: sauropods, pterosaurs, crocodiles (amphibious habitat), small mammals. Herds, nesting and eggs, sexes, seasonal migration.
 - Snow cover beyond tundra, erosion and rivers carving new courses.

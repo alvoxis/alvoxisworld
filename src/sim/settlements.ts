@@ -19,7 +19,7 @@ import type { World } from '../world/world';
 import { SPECIES, type Creatures } from './creatures';
 import { MOVE, passable } from './pathfinding';
 import {
-  RADIUS_BONUS, civStep, exportCiv, housing, importCiv, jobKind, newCiv, startBuilding, startResearch, type JobKind,
+  RADIUS_BONUS, civStep, exportCiv, housing, importCiv, jobKind, newCiv, startBuilding, startResearch, startUpgrade, type JobKind, type UpgradeFail,
   type Building, type BuildFail, type BuildingType, type Civ, type CivHost, type CivSave, type TechId,
 } from './civ';
 
@@ -299,6 +299,14 @@ export class Settlements {
   build(world: World, s: Settlement, type: BuildingType, tick: number): Building | BuildFail | 'none' {
     if (!s.civ) return 'none';
     const b = startBuilding(world, s, this.owner, type, tick);
+    if (typeof b === 'object') this.version++;
+    return b;
+  }
+
+  /** Upgrades the next house of a human settlement (the card's Upgrade button). */
+  upgradeHouse(s: Settlement): Building | UpgradeFail | 'no-civ' {
+    if (!s.civ) return 'no-civ';
+    const b = startUpgrade(s.civ);
     if (typeof b === 'object') this.version++;
     return b;
   }

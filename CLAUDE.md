@@ -18,7 +18,7 @@ Browser pixel-art sandbox god game. TypeScript (strict), Vite, Vitest, Canvas 2D
 - Keep saves compatible: current `SAVE_VERSION` is 11 and loads versions 1–11. Add new save fields as optional and sanitise them on load. Bump the version only when needed and add a migration/test.
 - Preserve species coexistence and never auto-remove dinosaurs or other species. Simulation stays deterministic (fixed 10 ticks/s; use the sim RNG, not `Math.random`).
 - Settings and quality options change drawing only, never simulation rules.
-- Settlements (`src/sim/settlements.ts`) and the human economy (`src/sim/civ.ts`: food/wood/stone, five buildings, stages, three technologies) exist. Still out of scope unless explicitly requested: states, diplomacy, wars, rulers, trade, hybrid races, inventory, the "Alvoxis Energy" economy, real payments. Promo codes are a local, non-secure test prototype and must not be described otherwise.
+- Settlements (`src/sim/settlements.ts`) and the human economy (`src/sim/civ.ts`: food/wood/stone, five buildings, house levels 1–4, worker jobs, stages, three technologies) exist. Still out of scope unless explicitly requested: states, diplomacy, wars, rulers, trade, hybrid races, inventory, the "Alvoxis Energy" economy, real payments. Promo codes are a local, non-secure test prototype and must not be described otherwise.
 - No pull requests unless asked.
 
 ## Localisation (ru / en / zh-CN)

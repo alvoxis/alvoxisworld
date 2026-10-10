@@ -297,3 +297,24 @@ Residents of human settlements now really work at the buildings, and farms, lumb
 - **Saves.** Still format **11**: jobs, skipped buildings and the per-building fields (`active`, `idle`, `empty`, `here`) are optional parts of the settlement `civ` block, validated on load (unknown buildings, duplicate workers and non-members are dropped). Older saves load and residents get jobs on the next step. A loaded world continues exactly like the original (tested).
 
 Limits: no hauling between buildings and the store; no animation of the buildings themselves; the numbers of places per building are first guesses; the balance of worker-based production was checked only in the test scenarios.
+
+## Housing evolution (v0.16.0)
+
+Houses now grow with their settlement. A house keeps its id, tile and place in the list; only its `level` changes.
+
+| Level | Look on the map | Holds | Opened by | Upgrade cost (wood / stone) | Work |
+| --- | --- | --- | --- | --- | --- |
+| 1 Hut | small thatched cone with a pennant | 5 | any camp (built as a normal house, 10 wood) | — | 6 steps |
+| 2 Wooden house | log walls, roof in the settlement colour, lit window | 8 | village stage | 12 / 0 | 6 steps |
+| 3 Reinforced house | stone ground floor, timber upper floor, taller | 12 | village + *Better building* | 12 / 12 | 8 steps |
+| 4 Urban house | two-storey pale stone house with windows and a chimney, rises above its tile | 18 | town + *Better building* | 16 / 24 | 10 steps |
+
+- *Better building* also gives −25% upgrade cost and −30% upgrade time, as for new buildings. Housing is 10 plus the sum of each finished house's level capacity (level 1 = the old 5 per house).
+- **How an upgrade works.** The cost is paid once when it starts; the house is surrounded by scaffolding with a blue progress bar and builders from the 0.15 job system do the work (0.5 step per builder per step, up to 3 builders). An upgrade counts as one of the two constructions allowed at a time. Meanwhile the house keeps its people and its current capacity; when the work is done it becomes the next level in place. One level at a time; never above what the stage and technology allow.
+- **Who decides.** With *Settlements build by themselves* on, a settlement upgrades one house at a time, lowest level and oldest first, only while housing is nearly full (people ≥ capacity − 2), with a farm and a lumber camp, no famine, at least 15 food (or one per person) and at least 10 wood left after paying. The settlement card has an **Upgrade house** button (same convention as Build: greyed with the reason when not possible).
+- **Fire and floods** destroy houses of every level as before; the capacity disappears with the house, the builders' jobs are dropped on the next step and the paid cost is lost (as for a building site).
+- **Card.** Houses by level, upgrades in progress, and what opens the next level; each house line shows its level and capacity or the upgrade progress.
+- **Events.** "A house became a …" and "… has its first …" (a new housing tier) go to the history and the toast (one toast per 3 s with a count of the others).
+- **Saves.** Still format **11**: `level` and `up` are optional building fields; houses from older saves load as level 1 huts with no upgrade; invalid levels or upgrades are cleaned up on load. Saving during an upgrade keeps the paid cost, progress and builders.
+
+Limits: one house type for every people (the levels are a table, so another people could get its own later); advanced houses burn like huts; costs, capacities and the auto rule are first guesses checked in tests and one browser scenario, not tuned by long play. The project has no Latvian translation; the new texts exist in English, Russian and Simplified Chinese.

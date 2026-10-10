@@ -433,7 +433,7 @@ describe('development', () => {
     civ.techs = ['farming', 'construction'];
     sim.spawnInCircle(HUMAN, 40, 40, 5, 30);
     civ.buildings.length = 0;
-    for (let k = 0; k < 8; k++) civ.buildings.push({ id: k + 1, type: k === 0 ? 'storehouse' : 'house', x: 30 + k, y: 30, started: 0, progress: 6, needed: 6, done: true, reserve: 0, acc: 0, active: false, idle: 0, empty: false, here: 0 });
+    for (let k = 0; k < 8; k++) civ.buildings.push({ id: k + 1, type: k === 0 ? 'storehouse' : 'house', x: 30 + k, y: 30, started: 0, progress: 6, needed: 6, done: true, reserve: 0, acc: 0, active: false, idle: 0, empty: false, here: 0, level: 1, up: 0 });
     civ.nextBuildingId = 9;
     steps(sim, 4);
     expect(s.members.length).toBeGreaterThanOrEqual(30);

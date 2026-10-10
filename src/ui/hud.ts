@@ -317,7 +317,7 @@ export class Hud {
   /** Settlement events worth a notification (everything still goes to the history). */
   private static readonly NOTIFY = new Set([
     'settlement_built', 'settlement_destroyed_fire', 'settlement_destroyed_flood', 'settlement_famine', 'settlement_stage',
-    'settlement_exhausted', 'settlement_farm_stopped',
+    'settlement_exhausted', 'settlement_farm_stopped', 'settlement_house_upgraded', 'settlement_housing_tier',
   ]);
   private seenEvent: object | null = null;
   private lastEventToast = 0;

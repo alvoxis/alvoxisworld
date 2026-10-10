@@ -7,8 +7,9 @@ import type { Game } from '../game/game';
 import { td, t } from '../i18n';
 import { messageText, seasonName, speciesName, stageName } from '../i18n/names';
 import {
-  BUILDING_TYPES, SLOTS, STAGE_REQ, TECHS, TECH_IDS, FARM_TERRAIN, FOREST_TERRAIN, LUMBER_RADIUS, HOUSE_CAPACITY, STOREHOUSE_BONUS,
-  buildBlock, costOf, finished, housing, jobKind, researchBlock, slotsOf, storage, type BuildingType, type Building, type Civ, type JobKind, type TechId,
+  BUILDING_TYPES, SLOTS, STAGE_REQ, TECHS, TECH_IDS, FARM_TERRAIN, FOREST_TERRAIN, LUMBER_RADIUS, STOREHOUSE_BONUS,
+  MAX_HOUSE_LEVEL, buildBlock, costOf, finished, houseCapacity, housing, jobKind, maxHouseLevel, researchBlock, slotsOf, storage, upgradeBlock, upgradeCost,
+  upgradeTarget, type BuildingType, type Building, type Civ, type JobKind, type TechId,
 } from '../sim/civ';
 import { dateFromTick, TICKS_PER_DAY, TICKS_PER_YEAR } from '../sim/clock';
 import { COLORS, EMIGRATE_STRESS } from '../sim/settlements';
@@ -31,6 +32,7 @@ export class SettlementCard {
   private civBox: HTMLElement | null = null;
   private buildList!: HTMLElement;
   private buildBtns = new Map<BuildingType, HTMLButtonElement>();
+  private upgradeBtn: HTMLButtonElement | null = null;
   private techRows = new Map<TechId, { name: HTMLElement; status: HTMLElement; btn: HTMLButtonElement }>();
   private histList!: HTMLElement;
   private buildSig = '';
@@ -56,7 +58,7 @@ export class SettlementCard {
     if (s?.civ) {
       const box = el('div', 'civ', container);
       this.civBox = box;
-      for (const key of ['stage', 'next', 'housing', 'pressure', 'workers', 'split', 'problems']) this.addLine(box, key);
+      for (const key of ['stage', 'next', 'housing', 'houses', 'housenext', 'pressure', 'workers', 'split', 'problems']) this.addLine(box, key);
       el('div', 'sub', box).dataset.k = 'resources';
       for (const key of ['food', 'wood', 'stone', 'knowledge']) this.addLine(box, key);
       this.addLine(box, 'famine');
@@ -69,6 +71,10 @@ export class SettlementCard {
         b.addEventListener('click', () => this.build(type));
         this.buildBtns.set(type, b);
       }
+      const up = el('button', 'btn small', grid);
+      up.type = 'button';
+      up.addEventListener('click', () => this.upgrade());
+      this.upgradeBtn = up;
       el('div', 'sub', box).dataset.k = 'tech';
       for (const id2 of TECH_IDS) {
         const row = el('div', 'tech-row', box);
@@ -115,6 +121,20 @@ export class SettlementCard {
 
   private buildReason(r: string, stage: 'camp' | 'village' | 'town'): string {
     return r === 'slots' ? t('build.fail.slots', { n: SLOTS[stage] }) : td(`build.fail.${r}`);
+  }
+
+  private upgrade(): void {
+    const sim = this.game.sim;
+    const s = sim.settlements.get(this.id);
+    if (!s?.civ) return;
+    const r = sim.settlements.upgradeHouse(s);
+    if (typeof r === 'object') this.toast(t('upgrade.started', { level: td(`house.level.${r.up}`) }));
+    else if (r !== 'no-civ') this.toast(td(this.upgradeReason(r)));
+    this.update();
+  }
+
+  private upgradeReason(r: 'none' | 'level' | 'busy' | 'resources'): string {
+    return r === 'none' ? 'build.fail.no_house' : r === 'level' ? 'build.fail.level' : `build.fail.${r}`;
   }
 
   private research(id: TechId): void {
@@ -184,6 +204,18 @@ export class SettlementCard {
     this.set('pressure', t('civ.pressure'), t('civ.pressure_value', { n: Math.round(s.stress), max: EMIGRATE_STRESS }));
     this.lines.pressure.hidden = s.stress < 1;
     this.set('housing', t('civ.housing'), t('civ.housing_value', { pop, cap: housing(c) }) + (pop >= housing(c) ? ` — ${t('civ.full')}` : ''));
+    // Houses by level, upgrades under way, and what opens the next level.
+    const houses = c.buildings.filter((b) => b.type === 'house' && b.done);
+    const byLevel: string[] = [];
+    for (let l = 1; l <= MAX_HOUSE_LEVEL; l++) {
+      const n = houses.filter((b) => b.level === l).length;
+      if (n) byLevel.push(`${td(`house.level.${l}`)} ${n}`);
+    }
+    const ups = houses.filter((b) => b.up).length;
+    this.set('houses', t('civ.houses'), houses.length ? t('civ.houses_value', { n: houses.length, list: byLevel.join(' · ') }) + (ups ? ` · ${t('civ.houses_up', { n: ups })}` : '') : t('civ.none'));
+    const max = maxHouseLevel(c);
+    const req = max >= MAX_HOUSE_LEVEL ? 'house.req.top' : c.stage === 'camp' ? 'house.req.village' : !c.techs.includes('construction') ? 'house.req.construction' : 'house.req.town';
+    this.set('housenext', t('civ.house_next'), `${td(`house.level.${max}`)} — ${td(req)}`);
     const cap = storage(c);
     const r = c.rate;
     for (const [key, have, prod, use] of [['food', c.food, r.food, r.foodUse], ['wood', c.wood, r.wood, 0], ['stone', c.stone, r.stone, 0]] as const) {
@@ -195,12 +227,12 @@ export class SettlementCard {
     this.lines.famine.hidden = !c.famine;
     for (const sub of this.civBox!.querySelectorAll<HTMLElement>('.sub')) sub.textContent = td(sub.dataset.k === 'tech' ? 'civ.tech' : sub.dataset.k === 'buildings' ? 'civ.buildings' : 'civ.resources');
     // Buildings: the list is text only, so it can be rebuilt whenever it changes.
-    const sig = c.buildings.map((b) => `${b.id}:${b.done ? 1 : b.progress}:${Math.round(b.reserve)}:${b.here}:${c.jobs.filter((j) => j.b === b.id).length}:${b.active}:${b.empty}`).join(',') + `|${td('civ.none')}|${world.terrain.length}`;
+    const sig = c.buildings.map((b) => `${b.id}:${b.done ? 1 : b.progress}:${Math.round(b.reserve)}:${b.here}:${c.jobs.filter((j) => j.b === b.id).length}:${b.active}:${b.empty}:${b.level}:${b.up}`).join(',') + `|${td('civ.none')}|${world.terrain.length}`;
     if (sig !== this.buildSig) {
       this.buildSig = sig;
       this.buildList.replaceChildren();
       if (!c.buildings.length) el('li', '', this.buildList).textContent = t('civ.none');
-      for (const b of c.buildings) el('li', '', this.buildList).textContent = `${td(`build.${b.type}`)} (${b.x}, ${b.y}) — ${this.buildingState(b)}${this.staffText(c, b)}`;
+      for (const b of c.buildings) el('li', '', this.buildList).textContent = `${td(b.type === 'house' && b.done ? `house.level.${b.level}` : `build.${b.type}`)} (${b.x}, ${b.y}) — ${this.buildingState(b)}${this.staffText(c, b)}`;
     }
     for (const [type, btn] of this.buildBtns) {
       const cost = costOf(c, type);
@@ -209,6 +241,15 @@ export class SettlementCard {
       btn.title = `${td(`build.${type}.desc`)}${block ? ` — ${this.buildReason(block, c.stage)}` : ''}`;
       btn.classList.toggle('unavailable', !!block);
       btn.setAttribute('aria-disabled', String(!!block));
+    }
+    if (this.upgradeBtn) {
+      const target = upgradeTarget(c);
+      const cost = target ? upgradeCost(c, target.level + 1) : null;
+      const block = upgradeBlock(c);
+      this.upgradeBtn.textContent = `${td('build.upgrade')}${cost ? ` · ${cost.wood ? `${ICON.wood}${cost.wood}` : ''}${cost.stone ? ` ${ICON.stone}${cost.stone}` : ''}` : ''}`;
+      this.upgradeBtn.title = `${td('build.upgrade.desc')}${block ? ` — ${td(this.upgradeReason(block))}` : ''}`;
+      this.upgradeBtn.classList.toggle('unavailable', !!block);
+      this.upgradeBtn.setAttribute('aria-disabled', String(!!block));
     }
     for (const [id, row] of this.techRows) {
       const def = TECHS[id];
@@ -269,9 +310,10 @@ export class SettlementCard {
 
   private buildingState(b: Building): string {
     if (!b.done) return t('bstate.progress', { pct: Math.round((b.progress / b.needed) * 100) });
+    if (b.up) return t('bstate.upgrading', { level: td(`house.level.${b.up}`).toLowerCase(), pct: Math.round((b.progress / b.needed) * 100) });
     const world = this.game.sim.world;
     switch (b.type) {
-      case 'house': return t('bstate.house', { n: HOUSE_CAPACITY });
+      case 'house': return t('bstate.house_level', { level: td(`house.level.${b.level}`), n: houseCapacity(b) });
       case 'storehouse': return t('bstate.storehouse', { n: STOREHOUSE_BONUS });
       case 'farm': return FARM_TERRAIN.includes(world.terrain[b.y * world.width + b.x]) ? td('bstate.farm_ok') : td('bstate.farm_barren');
       case 'lumber': return !b.empty && (b.acc > 0 || this.treeNear(b)) ? td('bstate.lumber_ok') : td('bstate.lumber_none');

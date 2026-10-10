@@ -579,9 +579,10 @@ export class Renderer {
     const a = ctx.globalAlpha;
     ctx.globalAlpha = a * (b.done ? 1 : 0.45);
     if (s < 3) {
-      // Far away: a coloured dot per building.
-      ctx.fillStyle = BUILDING_COLORS[b.type];
+      // Far away: a coloured dot per building (houses by level, so towns read lighter and larger).
+      ctx.fillStyle = b.type === 'house' ? HOUSE_DOTS[Math.min(4, Math.max(1, b.level))] : BUILDING_COLORS[b.type];
       ctx.fillRect(px, py, w, w);
+      if (b.type === 'house' && b.level >= 3 && b.done) ctx.fillRect(px, py - w, w, w);
     } else {
       const u = s / 8; // art is drawn on an 8×8 grid
       const r = (x: number, y: number, ww: number, hh: number, c: string) => {
@@ -590,9 +591,7 @@ export class Renderer {
       };
       switch (b.type) {
         case 'house':
-          r(1, 3, 6, 4, '#c9a36b');
-          r(0, 2, 8, 2, COLORS[color]); // roof in the settlement colour
-          r(3, 5, 2, 2, '#4a3220');
+          drawHouse(r, b.done ? b.level : 1, COLORS[color]);
           break;
         case 'storehouse':
           r(0, 2, 8, 5, '#8d8579');
@@ -615,10 +614,18 @@ export class Renderer {
       }
     }
     ctx.globalAlpha = a;
-    if (!b.done && s >= 3) {
+    if (b.up && s >= 3) {
+      // Upgrade under way: wooden scaffolding around the house (which keeps standing and housing its people).
+      const u = s / 8;
+      const top = b.up >= 3 ? -4 : -1;
+      ctx.fillStyle = '#b07a3a';
+      for (const x of [0, 7]) ctx.fillRect(Math.round(px + x * u), Math.round(py + top * u), Math.max(1, Math.round(u)), Math.round((8 - top) * u));
+      for (let y = top + 1; y < 8; y += 3) ctx.fillRect(px, Math.round(py + y * u), w, Math.max(1, Math.round(u * 0.6)));
+    }
+    if ((!b.done || b.up) && s >= 3) {
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.fillRect(px, py + w - 3, w, 3);
-      ctx.fillStyle = '#ffd34d';
+      ctx.fillStyle = b.up ? '#7fd3ff' : '#ffd34d';
       ctx.fillRect(px, py + w - 3, Math.round((w * b.progress) / b.needed), 3);
     }
   }
@@ -721,6 +728,60 @@ export class Renderer {
     ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
     ctx.fillStyle = frac > 0.5 ? '#5fd35f' : frac > 0.25 ? '#f2c14e' : '#e0533a';
     ctx.fillRect(bx, by, bw * frac, bh);
+  }
+}
+
+/** Far-away dot colour of a house by level. */
+const HOUSE_DOTS = ['', '#b8964f', '#c9a36b', '#a7a39b', '#e4ded2'];
+
+type Rect = (x: number, y: number, w: number, h: number, c: string) => void;
+
+/**
+ * Houses by level on the 8×8 building grid; higher levels rise above their tile (negative y), so a town's skyline
+ * is visible at the normal zoom. 1 thatched hut, 2 timber house with a coloured roof, 3 stone base with a timber
+ * upper floor, 4 two-storey pale stone town house with windows and a chimney.
+ */
+function drawHouse(r: Rect, level: number, roof: string): void {
+  switch (level) {
+    case 1:
+      r(2, 2, 4, 1, '#d9b765'); // thatch, stepped like a cone
+      r(1, 3, 6, 2, '#c4a052');
+      r(0, 5, 8, 2, '#a98a45');
+      r(3, 5, 2, 2, '#3b2817');
+      r(4, 1, 1, 1, roof); // a small pennant in the settlement colour
+      break;
+    case 2:
+      r(1, 3, 6, 4, '#a8783e'); // log walls
+      r(1, 4, 6, 0.5, '#7c5428');
+      r(1, 5.5, 6, 0.5, '#7c5428');
+      r(0, 1, 8, 2, roof);
+      r(1, 0, 6, 1, roof);
+      r(3, 5, 2, 2, '#3b2817');
+      r(5.5, 3.5, 1, 1, '#ffd98a'); // lit window
+      break;
+    case 3:
+      r(0, 3, 8, 4, '#8f8b84'); // stone ground floor
+      r(1, 4, 2, 0.5, '#6f6b65');
+      r(5, 5, 2, 0.5, '#6f6b65');
+      r(1, 0, 6, 3, '#a8783e'); // timber upper floor
+      r(1, 1.2, 6, 0.4, '#5e3f1e');
+      r(0, -2, 8, 2, roof);
+      r(2, -3, 4, 1, roof);
+      r(3, 5, 2, 2, '#3b2817');
+      r(2, 0.8, 1, 1, '#ffd98a');
+      r(5, 0.8, 1, 1, '#ffd98a');
+      break;
+    default:
+      r(0, -2, 8, 9, '#e1dbcd'); // two storeys of pale stone
+      r(0, 2.5, 8, 0.5, '#b9b2a2');
+      r(0, -4, 8, 2, roof);
+      r(1, -5, 6, 1, roof);
+      r(6, -6, 1, 2, '#6d5d4f'); // chimney
+      for (const x of [1, 3.5, 6]) {
+        r(x, -1, 1, 1.5, '#5b86b8');
+        r(x, 3.5, 1, 1.5, '#5b86b8');
+      }
+      r(3.5, 5, 1.5, 2, '#3b2817');
   }
 }
 
