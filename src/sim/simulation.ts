@@ -10,7 +10,8 @@ import { T, isWater } from '../world/terrain';
 import { WATER_FLAG } from '../world/world';
 import { Weather, WEATHER_KIND, type WeatherKind } from './weather';
 import { vegetationTick } from './vegetation';
-import { Settlements, type FoundFail, type Settlement } from './settlements';
+import { Groups } from './groups';
+import { EMIGRATE_BAN_TICKS, Settlements, type FoundFail, type Settlement, type SettlementKind } from './settlements';
 
 /** Selectable simulation speeds (multiples of real time). 0 means paused. */
 export const SPEED_LEVELS = [1, 2, 3, 5, 10, 20] as const;
@@ -45,6 +46,7 @@ export class Simulation {
   readonly fire = new Fire();
   readonly sky = new Sky();
   readonly settlements = new Settlements();
+  readonly groups = new Groups();
   rng: Rng;
   tick = 0;
   speed: Speed = 1;
@@ -72,7 +74,13 @@ export class Simulation {
     this.lastSeason = this.date.seasonIndex;
     this.creatures.envThirst = (x, y) => this.weather.thirstFactor(x, y);
     this.creatures.onBirth = (child, parent) => this.settlements.onBirth(child, parent);
-    this.creatures.onDeath = (id) => this.settlements.onDeath(id);
+    this.creatures.onDeath = (id) => {
+      this.settlements.onDeath(id);
+      this.groups.onDeath(id);
+    };
+    this.creatures.groupGoal = (id) => this.groups.goalOf(id);
+    this.settlements.onEmigrate = (ids, st, tick) => this.groups.createGroup(this.world, this.creatures, ids, tick, st.id, tick + EMIGRATE_BAN_TICKS);
+    this.creatures.breedBlock = (id) => this.settlements.breedBlocked(id);
     this.settlements.onEvent = (text, code, p) => this.log(text, code, p);
   }
 
@@ -92,6 +100,7 @@ export class Simulation {
     this.weather.strikes = [];
     this.sky.reset();
     this.settlements.reset();
+    this.groups.reset();
     this.creatures.dangers = [];
     this.weather.refresh(world);
     this.rng = new Rng(world.seed ^ 0x51ed270b);
@@ -165,6 +174,7 @@ export class Simulation {
     const before = this.creatures.countAll();
     this.creatures.tick(this.world, this.rng, this.tick);
     this.settlements.step(this.world, this.creatures, this.tick);
+    this.groups.step(this.world, this.creatures, this.settlements, this.tick);
     this.tick++;
 
     const now = this.date;
@@ -193,8 +203,8 @@ export class Simulation {
   }
 
   /** Founds a settlement at a spot if the conditions hold (see Settlements.canFound). */
-  foundSettlement(x: number, y: number): Settlement | FoundFail {
-    return this.settlements.found(this.world, this.creatures, this.tick, x, y);
+  foundSettlement(x: number, y: number, kind: SettlementKind = 'animal'): Settlement | FoundFail {
+    return this.settlements.found(this.world, this.creatures, this.tick, x, y, kind);
   }
 
   // ---- sky: lightning, meteors in flight, natural disasters ---------------

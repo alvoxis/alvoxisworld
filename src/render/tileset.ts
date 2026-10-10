@@ -290,6 +290,11 @@ const PIXEL_ART: Record<number, PixelArt> = {
     ],
     palette: { r: '#7a3b2a', d: '#552618', b: '#b0705a', t: '#f2efe6', e: '#f2c14e', a: '#6a3022' },
   },
+  5: {
+    // Human, 8×8 (one tile): head, tunic, legs.
+    rows: ['..hhh...', '..hhh...', '...h....', '.tttttt.', 'ahtttth.', '..tttt..', '..l..l..', '..l..l..'].map((r) => r.slice(0, 8)),
+    palette: { h: '#e8b98a', t: '#3f6fb5', a: '#e8b98a', l: '#4a3a2a' },
+  },
   4: {
     // Fish, 6×6 (0.75 tiles).
     rows: ['......', '.d.ss.', 'ddsses', 'ddssss', '.d.ss.', '......'],

@@ -55,6 +55,25 @@ export interface SpeciesDef {
   /** Share of MAX_CREATURES this species may occupy, so no species starves others of slots. */
   maxShare: number;
   color: string;
+  /** Intelligent species (people): kept apart from animal settlements; later stages build civilizations on this. */
+  sentient?: boolean;
+  /** How a sentient species chooses where to live and who it lives with. A new people (elves, ...) is a new SpeciesDef with its own profile. */
+  civ?: CivProfile;
+}
+
+export interface CivProfile {
+  /** Liking (0..1) for each terrain around a possible home; terrain not listed counts 0. */
+  affinity: Readonly<Record<number, number>>;
+  /** Terrain this people never settles on (the spot itself). */
+  avoid: readonly number[];
+  /** Needs open water within reach of the home. */
+  needsWater: boolean;
+  /** Smallest group that founds a settlement by itself. */
+  minFounders: number;
+  /** Largest group that travels together. */
+  groupMax: number;
+  /** Other species that may live in its settlements and groups. Empty today: settlements and groups are single-species. */
+  compatible: readonly number[];
 }
 
 export const GRAZER = 0;
@@ -62,6 +81,7 @@ export const RAPTOR = 1;
 export const HADROSAUR = 2;
 export const TYRANT = 3;
 export const FISH = 4;
+export const HUMAN = 5;
 
 export const SPECIES: readonly SpeciesDef[] = [
   {
@@ -74,7 +94,7 @@ export const SPECIES: readonly SpeciesDef[] = [
   {
     id: RAPTOR, key: 'raptor', name: 'Raptor', plural: 'Raptors', diet: 'carnivore', habitat: 'land',
     speed: 0.18, size: 1, adultAge: 400, maxAge: 2600, maxHealth: 60, hungerRate: 0.15, thirstRate: 0.14,
-    food: [], biteGain: 0, prey: [GRAZER], attack: 8, meat: 90,
+    food: [], biteGain: 0, prey: [GRAZER, HUMAN], attack: 8, meat: 90,
     move: MOVE.LAND, sight: 14, breedCooldown: 420, breedChance: 0.02, litter: 1, crowdLimit: 2, maxShare: 0.15,
     color: '#c8502e',
   },
@@ -88,7 +108,7 @@ export const SPECIES: readonly SpeciesDef[] = [
   {
     id: TYRANT, key: 'tyrant', name: 'Tyrant', plural: 'Tyrants', diet: 'carnivore', habitat: 'land',
     speed: 0.14, size: 1.8, adultAge: 900, maxAge: 4000, maxHealth: 220, hungerRate: 0.14, thirstRate: 0.12,
-    food: [], biteGain: 0, prey: [HADROSAUR, GRAZER], attack: 25, meat: 100,
+    food: [], biteGain: 0, prey: [HADROSAUR, GRAZER, HUMAN], attack: 25, meat: 100,
     move: MOVE.LOWLAND, sight: 13, breedCooldown: 600, breedChance: 0.015, litter: 1, crowdLimit: 3,
     maxShare: 0.05, color: '#7a3b2a',
   },
@@ -98,6 +118,23 @@ export const SPECIES: readonly SpeciesDef[] = [
     food: [T.SHALLOW_WATER, T.RIVER, T.LAKE], biteGain: 3, prey: [], attack: 0, meat: 0,
     move: MOVE.WATER, sight: 8, breedCooldown: 200, breedChance: 0.03, litter: 2, crowdLimit: 3, maxShare: 0.3,
     color: '#9fc4d8',
+  },
+  {
+    // People: available from the start of the game. They forage plants like other land animals (no hunting, tools,
+    // buildings or economy yet), walk where lowland animals can, flee predators and can be hunted by them.
+    id: HUMAN, key: 'human', name: 'Human', plural: 'Humans', diet: 'herbivore', habitat: 'land',
+    speed: 0.12, size: 1, adultAge: 600, maxAge: 3000, maxHealth: 50, hungerRate: 0.17, thirstRate: 0.14,
+    food: [T.GRASS, T.FOREST, T.JUNGLE, T.SAVANNA, T.HILLS], biteGain: 3, prey: [], attack: 0, meat: 0,
+    move: MOVE.LOWLAND, sight: 12, breedCooldown: 500, breedChance: 0.02, litter: 1, crowdLimit: 3, maxShare: 0.2,
+    color: '#e0a878', sentient: true,
+    civ: {
+      affinity: { [T.GRASS]: 1, [T.SAVANNA]: 0.8, [T.FOREST]: 0.7, [T.HILLS]: 0.5, [T.JUNGLE]: 0.5, [T.SAND]: 0.3, [T.TUNDRA]: 0.3, [T.SWAMP]: 0.2, [T.SOIL]: 0.4 },
+      avoid: [T.DESERT, T.MOUNTAIN, T.SNOW, T.SWAMP],
+      needsWater: true,
+      minFounders: 4,
+      groupMax: 24,
+      compatible: [],
+    },
   },
 ];
 
@@ -115,9 +152,11 @@ export const STATE = {
   HUNT: 5,
   FLEE: 6,
   SEEK_MATE: 7,
+  /** Walking to a place chosen by the creature's group (or to a settlement). */
+  TRAVEL: 8,
 } as const;
 export const STATE_NAMES = [
-  'Wandering', 'Looking for food', 'Eating', 'Looking for water', 'Drinking', 'Hunting', 'Fleeing', 'Looking for a mate',
+  'Wandering', 'Looking for food', 'Eating', 'Looking for water', 'Drinking', 'Hunting', 'Fleeing', 'Looking for a mate', 'Traveling',
 ];
 
 export const CAUSE = {
@@ -157,6 +196,8 @@ const THINK_EVERY = 4;
 const HUNGRY = 40;
 const THIRSTY = 50;
 const SATED = 8;
+/** A traveller counts as arrived within this many tiles of its goal. */
+const ARRIVED = 2.5;
 const ATTACK_RANGE = 0.8;
 /** Waypoints stored per creature; longer routes are re-planned when the stored part is used up. */
 export const PATH_MAX = 32;
@@ -281,6 +322,10 @@ export class Creatures {
   readonly birthStats = new Uint32Array(SPECIES.length);
   /** Told of every birth (child id, parent id); settlements use it to keep their population exact. */
   onBirth: ((childId: number, parentId: number) => void) | null = null;
+  /** Returns true when the creature may not breed (a settlement whose housing is full). */
+  breedBlock: ((id: number) => boolean) | null = null;
+  /** The tile (index) a creature's group wants it to walk to, or -1. Asked when a creature has no pressing need. */
+  groupGoal: ((id: number) => number) | null = null;
   /** Told when a creature dies or is removed (its id). */
   onDeath: ((id: number) => void) | null = null;
   /** Deaths since the last call to drainDeaths() (for UI/history). */
@@ -340,6 +385,13 @@ export class Creatures {
     return n;
   }
 
+  /** Whether a land species can walk from one tile to another (true while the region map is not ready yet, so callers do not stall). */
+  reachable(world: World, species: number, ax: number, ay: number, bx: number, by: number): boolean {
+    if (this.fieldWorld !== world) return true;
+    const w = world.width;
+    return this.regions.connected(SPECIES[species].move, ay * w + ax, by * w + bx);
+  }
+
   /** Whether the creature at index i is alive. */
   isAlive(i: number): boolean {
     return i >= 0 && i < this.count && !this.dead[i];
@@ -369,6 +421,22 @@ export class Creatures {
       }
     }
     return best;
+  }
+
+  /**
+   * Creatures near a tap, nearest first. A creature counts as touched when the tap is near its feet or near
+   * the middle of its sprite (drawn above its position), so tapping the picture selects it.
+   */
+  candidatesAt(x: number, y: number, radius: number, max = 6): number[] {
+    const out: Array<{ i: number; d: number }> = [];
+    for (let i = 0; i < this.count; i++) {
+      if (this.dead[i]) continue;
+      const lift = SPECIES[this.species[i]].size * 0.3;
+      const d = Math.min(Math.hypot(this.x[i] - x, this.y[i] - y), Math.hypot(this.x[i] - x, this.y[i] - lift - y));
+      if (d <= radius) out.push({ i, d });
+    }
+    out.sort((a, b) => a.d - b.d || this.id[a.i] - this.id[b.i]);
+    return out.slice(0, max).map((o) => o.i);
   }
 
   stage(i: number): LifeStage {
@@ -848,6 +916,31 @@ export class Creatures {
         if (r === NO_BUDGET && s === STATE.SEEK_MATE) return;
       }
     }
+    // 5. Nothing pressing: follow the group's wish (a place to go to, or back to the others).
+    if (this.groupGoal) {
+      const goal = this.groupGoal(this.id[i]);
+      if (goal >= 0) {
+        const gx = goal % world.width;
+        const gy = Math.floor(goal / world.width);
+        if (Math.hypot(this.x[i] - gx - 0.5, this.y[i] - gy - 0.5) <= ARRIVED) {
+          if (s === STATE.TRAVEL) {
+            this.state[i] = STATE.WANDER;
+            this.clearPath(i);
+          }
+          return;
+        }
+        if (s === STATE.TRAVEL && this.pathGoal[i] === goal) return; // already on the way
+        if (canSearch) {
+          const r = this.planTo(world, i, gx, gy, 2500);
+          if (r >= 0) {
+            this.state[i] = STATE.TRAVEL;
+            return;
+          }
+          if (r === NOT_FOUND) this.searchCd[i] = 60;
+        }
+        if (s === STATE.TRAVEL) return; // keep going while a plan is pending
+      }
+    }
     if (s !== STATE.WANDER) {
       this.state[i] = STATE.WANDER;
       this.clearPath(i);
@@ -921,6 +1014,15 @@ export class Creatures {
       case STATE.HUNT:
         this.actHunt(world, rng, i, speed);
         break;
+      case STATE.TRAVEL: {
+        const res = this.followPath(world, i, speed * 0.9);
+        if (res === 'done' && this.continueRoute(world, i)) break;
+        if (res !== 'moving') {
+          this.clearPath(i);
+          this.state[i] = STATE.WANDER;
+        }
+        break;
+      }
       case STATE.SEEK_MATE:
         // With no route left the pair is together (courtship): wait for the breeding roll.
         if (this.pathPos[i] >= this.pathLen[i]) {
@@ -1096,6 +1198,7 @@ export class Creatures {
   private roomToBreed(i: number): boolean {
     const sp = SPECIES[this.species[i]];
     if (this.speciesCount[sp.id] >= MAX_CREATURES * sp.maxShare) return false;
+    if (this.breedBlock?.(this.id[i])) return false;
     return this.crowd[sp.id][this.cellOf(this.x[i], this.y[i])] - 1 < sp.crowdLimit; // excludes the parent itself
   }
 

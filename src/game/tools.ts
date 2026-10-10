@@ -87,7 +87,7 @@ const paintTool = (id: number): Tool => ({
 
 const spawnTool = (species: number): Tool => {
   const sp = SPECIES[species];
-  const perDab = sp.diet === 'carnivore' ? 1 : sp.size > 1.2 ? 2 : 3;
+  const perDab = sp.diet === 'carnivore' ? 1 : sp.sentient || sp.size > 1.2 ? 2 : 3;
   return {
     id: `spawn_${sp.key}`,
     label: sp.name,
@@ -144,8 +144,16 @@ export const TOOLS: readonly Tool[] = [
     id: 'found', label: 'Found settlement', category: 'creatures', icon: { emoji: '🏕️' }, usesBrush: false, repeatMs: Infinity,
     hint: 'Found a settlement where at least 6 animals of one land species live within 8 tiles of the spot',
     apply: (ctx, x, y) => {
-      const r = ctx.sim.foundSettlement(x, y);
+      const r = ctx.sim.foundSettlement(x, y, 'animal');
       ctx.notify(typeof r === 'string' ? t(`toast.found_${r}`) : t('toast.found_ok', { name: r.name }));
+    },
+  },
+  {
+    id: 'found_human', label: 'Found human settlement', category: 'creatures', icon: { emoji: '🏘️' }, usesBrush: false, repeatMs: Infinity,
+    hint: 'Found a settlement of people where at least 6 free people live within 8 tiles of the spot',
+    apply: (ctx, x, y) => {
+      const r = ctx.sim.foundSettlement(x, y, 'human');
+      ctx.notify(typeof r === 'string' ? t(r === 'few' ? 'toast.found_few_people' : `toast.found_${r}`) : t('toast.found_ok', { name: r.name }));
     },
   },
   {

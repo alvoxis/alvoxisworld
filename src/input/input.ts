@@ -7,6 +7,8 @@ export interface InputHandlers {
   moveStroke(wx: number, wy: number): void;
   endStroke(): void;
   hover(pos: { x: number; y: number } | null): void;
+  /** A short tap that did not move while the Move tool pans (so creatures can still be picked). */
+  tap?(wx: number, wy: number): void;
 }
 
 const TOUCH_STROKE_DELAY_MS = 70;
@@ -83,11 +85,14 @@ export class InputController {
     return this.camera.screenToWorld(p.x, p.y);
   }
 
+  private tapStart: { x: number; y: number; t: number } | null = null;
+
   private onDown = (e: PointerEvent): void => {
     e.preventDefault();
     this.el.setPointerCapture?.(e.pointerId);
     const p = this.local(e);
     this.pointers.set(e.pointerId, { ...p, type: e.pointerType });
+    this.tapStart = this.pointers.size === 1 ? { x: p.x, y: p.y, t: performance.now() } : null;
 
     if (this.pointers.size >= 2) {
       this.cancelPending();
@@ -172,7 +177,16 @@ export class InputController {
 
   private onUp = (e: PointerEvent): void => {
     if (!this.pointers.has(e.pointerId)) return;
+    const down = this.pointers.get(e.pointerId);
     this.pointers.delete(e.pointerId);
+    if (this.mode === 'pan' && this.tapStart && this.pointers.size === 0 && down) {
+      const moved = Math.hypot(down.x - this.tapStart.x, down.y - this.tapStart.y);
+      if (moved < 8 && performance.now() - this.tapStart.t < 450) {
+        const w = this.world(down);
+        this.h.tap?.(w.x, w.y);
+      }
+    }
+    this.tapStart = null;
     if (this.mode === 'pending') {
       window.clearTimeout(this.pendingTimer);
       this.startStroke(); // a quick tap still applies the tool once

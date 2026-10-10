@@ -13,7 +13,7 @@ import { EFFECTS, EFFECT_DURATIONS } from '../sim/effects';
 import { SPEED_LEVELS } from '../sim/simulation';
 import { SAVE_VERSION } from '../save/serialize';
 import { Minimap } from './minimap';
-import { COLORS } from '../sim/settlements';
+import { SettlementCard } from './settlementcard';
 import { CATEGORY_ICONS, GEAR_ICON } from './icons';
 import { LANGS, getLang, onLangChange, setLang, t, td, tn, type Lang } from '../i18n';
 import {
@@ -321,12 +321,14 @@ export class Hud {
       t('status.date', { year: d.year, season: seasonName(d.seasonIndex), day: d.day }) + (sim.speed === 0 ? t('status.paused') : '');
     let herb = 0;
     let pred = 0;
+    let people = 0;
     for (const s of SPECIES) {
       const n = sim.creatures.countSpecies(s.id);
-      if (s.diet === 'carnivore') pred += n;
+      if (s.sentient) people += n;
+      else if (s.diet === 'carnivore') pred += n;
       else herb += n;
     }
-    $('pop').textContent = t('status.pop', { total: herb + pred, herb, pred });
+    $('pop').textContent = t('status.pop', { total: herb + pred, herb, pred }) + (people ? t('status.people', { n: people }) : '');
     const wx = sim.weather.summary();
     const parts = [
       wx.rain ? t('status.rain', { n: wx.rain }) : '',
@@ -340,10 +342,7 @@ export class Hud {
     if (this.game.selectedId) this.renderCreature();
     // An open settlement card follows the simulation.
     const card = document.getElementById('settle-card');
-    if (card && !$('info').hidden) {
-      const id = Number($('info-body').dataset.settlement);
-      this.fillSettlementCard(card, id);
-    }
+    if (card && !$('info').hidden) this.card.update();
   }
 
   /**
@@ -404,7 +403,24 @@ export class Hud {
     const stage = line(t('info.stage'));
     const doing = line(t('info.doing'));
     const diet = line(t('info.diet'));
-    diet.textContent = `${td(`diet.${info.species.diet}.lower`)}, ${td(`habitat.${info.species.habitat}`)}`;
+    diet.textContent = `${td(info.species.sentient ? 'diet.sentient.lower' : `diet.${info.species.diet}.lower`)}, ${td(`habitat.${info.species.habitat}`)}`;
+    const home = line(t('info.home'));
+    const homeBtn = document.createElement('button');
+    homeBtn.className = 'btn small';
+    homeBtn.type = 'button';
+    homeBtn.textContent = t('info.home_open');
+    homeBtn.hidden = true;
+    homeBtn.addEventListener('click', () => {
+      const st = game.sim.settlements.settlementOf(info.id);
+      if (!st) return;
+      const rep = game.report(st.x + 0.5, st.y + 0.5);
+      if (rep) {
+        game.select(0); // the card replaces the creature panel (a selection would bring it back)
+        this.showInfo(rep);
+      }
+    });
+    body.appendChild(homeBtn);
+    const groupLine = line(t('info.group'));
     const meter = (label: string) => {
       const wrap = document.createElement('div');
       wrap.className = 'meter';
@@ -497,6 +513,12 @@ export class Hud {
       hunger(now.hunger, 100, 'low');
       thirst?.(now.thirst, 100, 'low');
       renderEffects(now);
+      const st = game.sim.settlements.settlementOf(now.id);
+      home.textContent = st ? st.name : t('info.home_none');
+      homeBtn.hidden = !st;
+      const grp = game.sim.groups.groupOfCreature(now.id);
+      groupLine.parentElement!.hidden = !now.species.sentient;
+      groupLine.textContent = grp ? t('info.group_value', { n: grp.members.length, mode: td(`group.${grp.mode}`) }) : t('info.group_none');
       follow.textContent = game.follow ? t('info.following') : t('info.follow');
       follow.classList.toggle('primary', game.follow);
     };
@@ -506,6 +528,7 @@ export class Hud {
   }
 
   private lastTile: TileReport | null = null;
+  private readonly card = new SettlementCard(this.game, (text) => this.toast(text));
 
   private showInfo(r: TileReport): void {
     this.lastTile = r;
@@ -527,7 +550,7 @@ export class Hud {
       const card = document.createElement('div');
       card.id = 'settle-card';
       body.appendChild(card);
-      this.fillSettlementCard(card, r.settlementId);
+      this.card.mount(card, r.settlementId);
     }
     for (const [k, v] of lines) {
       const div = document.createElement('div');
@@ -537,58 +560,6 @@ export class Hud {
       body.appendChild(div);
     }
     el.hidden = false;
-  }
-
-  /** Settlement card: every value is read from the simulation at the moment it is drawn. */
-  private fillSettlementCard(card: HTMLElement, id: number): void {
-    const sim = this.game.sim;
-    const s = sim.settlements.get(id);
-    card.replaceChildren();
-    const line = (k: string, v: string) => {
-      const div = document.createElement('div');
-      const b = document.createElement('b');
-      b.textContent = `${k}: `;
-      div.append(b, v);
-      card.appendChild(div);
-    };
-    if (!s) {
-      card.textContent = t('settle.gone');
-      return;
-    }
-    const title = document.createElement('div');
-    title.className = 'title';
-    const sw = document.createElement('span');
-    sw.className = 'swatch';
-    sw.style.background = COLORS[s.color];
-    title.append(sw, `${s.name}`);
-    card.appendChild(title);
-    // Composition by life stage, counted from the real members.
-    const stages: Record<string, number> = { Juvenile: 0, Adult: 0, Elder: 0 };
-    for (const m of s.members) {
-      const i = sim.creatures.indexOf(m);
-      if (i >= 0) stages[sim.creatures.stage(i)]++;
-    }
-    const age = sim.tick - s.founded;
-    line(t('settle.population'), String(s.members.length));
-    line(t('settle.composition'), `${speciesName(s.species, true)} ×${s.members.length} (${Object.entries(stages).map(([k, n]) => `${stageName(k)} ${n}`).join(' · ')})`);
-    line(t('settle.territory'), t('settle.territory_value', { tiles: s.tiles.length, r: s.radius }));
-    line(t('settle.age'), t('settle.age_value', { years: Math.floor(age / TICKS_PER_YEAR), days: Math.floor((age % TICKS_PER_YEAR) / TICKS_PER_DAY) }));
-    line(t('settle.status'), td(`settle.status.${s.status}`));
-    line(t('settle.flow'), t('settle.flow_value', { born: s.born, died: s.died, joined: s.joined, left: s.left, peak: s.peak }));
-    const h = document.createElement('div');
-    const hb = document.createElement('b');
-    hb.textContent = `${t('settle.history')}:`;
-    h.appendChild(hb);
-    card.appendChild(h);
-    const ul = document.createElement('ul');
-    ul.className = 'settle-history';
-    for (const e of s.events.slice(-6).reverse()) {
-      const d = dateFromTick(e.tick);
-      const li = document.createElement('li');
-      li.textContent = t('stats.history_line', { year: d.year, season: seasonName(d.seasonIndex), text: messageText(e) });
-      ul.appendChild(li);
-    }
-    card.appendChild(ul);
   }
 
   // ---- settings ----------------------------------------------------------
@@ -763,6 +734,10 @@ export class Hud {
     const sev = $<HTMLSelectElement>('weather-severity');
     auto.addEventListener('change', () => (this.game.sim.weather.config.auto = auto.checked));
     sev.addEventListener('change', () => (this.game.sim.weather.config.severity = Number(sev.value)));
+    const autoFound = $<HTMLInputElement>('sim-autofound');
+    autoFound.addEventListener('change', () => (this.game.sim.groups.enabled = autoFound.checked));
+    const civAuto = $<HTMLInputElement>('sim-settlements-auto');
+    civAuto.addEventListener('change', () => (this.game.sim.settlements.auto = civAuto.checked));
     const speed = $<HTMLSelectElement>('sim-speed');
     speed.addEventListener('change', () => this.game.setSpeed(Number(speed.value)));
   }
@@ -867,6 +842,8 @@ export class Hud {
       $<HTMLInputElement>('weather-auto').checked = this.game.sim.weather.config.auto;
       $<HTMLSelectElement>('weather-severity').value = String(this.game.sim.weather.config.severity);
       this.syncDisasters();
+      $<HTMLInputElement>('sim-settlements-auto').checked = this.game.sim.settlements.auto;
+      $<HTMLInputElement>('sim-autofound').checked = this.game.sim.groups.enabled;
       this.syncSpeedSelect();
     } else if (id === 'stats') {
       this.renderStats();
@@ -1089,9 +1066,11 @@ export class Hud {
     });
     let herb = 0;
     let pred = 0;
+    let people = 0;
     for (const s of SPECIES) {
       const n = sim.creatures.countSpecies(s.id);
-      if (s.diet === 'carnivore') pred += n;
+      if (s.sentient) people += n;
+      else if (s.diet === 'carnivore') pred += n;
       else herb += n;
     }
     const age = sim.tick;
@@ -1103,6 +1082,7 @@ export class Hud {
       [t('stats.animals'), String(herb + pred)],
       [t('stats.herbivores'), String(herb)],
       [t('stats.predators'), String(pred)],
+      ...(people ? ([[t('stats.people'), String(people)]] as Array<[string, string]>) : []),
       [t('stats.births_deaths'), `${sim.creatures.births} / ${sim.creatures.deaths}`],
       [t('stats.sky'), t('stats.sky_value', { m: st.meteors, l: st.lightning, q: st.quakes, w: st.wildfires })],
       [t('stats.land'), `${((land / total) * 100).toFixed(1)}%`],

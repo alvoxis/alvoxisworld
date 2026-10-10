@@ -1,6 +1,6 @@
 {
   "name": "alvoxis-world-evolution",
-  "version": "0.8.0",
+  "version": "0.14.0",
   "private": true,
   "description": "ALVOXIS: World Evolution \u2014 a browser-based pixel-art sandbox god game.",
   "type": "module",
@@ -12,7 +12,8 @@
     "test": "vitest run",
     "check": "npm run typecheck && npm run test && vite build",
     "bench": "vite-node scripts/bench.ts",
-    "bench:sizes": "vite-node scripts/sizes.ts"
+    "bench:sizes": "vite-node scripts/sizes.ts",
+    "bench:civ": "vite-node scripts/civbench.ts"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

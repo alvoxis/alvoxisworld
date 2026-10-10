@@ -945,3 +945,63 @@ dialog#confirm .btn {
   font-size: 12px;
   color: var(--muted);
 }
+
+#info {
+  /* Never more than about 40% of the screen, so the map (and the people on it) stays tappable. */
+  max-height: min(42dvh, calc(100dvh - var(--toolbar-h, 150px) - var(--safe-top) - 80px));
+  overflow-y: auto;
+}
+
+#settle-card .civ {
+  margin-top: 4px;
+}
+
+#settle-card .sub {
+  margin: 8px 0 2px;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+#settle-card .settle-list {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.build-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.btn.small {
+  height: 40px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+.btn.unavailable {
+  opacity: 0.5;
+}
+
+.tech-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.tech-row .tech-info {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.tech-row .btn.small {
+  flex: 0 0 auto;
+}

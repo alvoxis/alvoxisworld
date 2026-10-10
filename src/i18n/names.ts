@@ -36,7 +36,7 @@ export function toolHint(tool: Tool): string {
   if (tool.id.startsWith('paint_')) return '';
   if (tool.id.startsWith('spawn_')) {
     const sp = SPECIES.find((s) => s.key === tool.id.slice(6))!;
-    return t('hint.spawn', { diet: td(`diet.${sp.diet}`), habitat: td(`habitat.${sp.habitat}`) });
+    return t('hint.spawn', { diet: td(sp.sentient ? 'diet.sentient' : `diet.${sp.diet}`), habitat: td(`habitat.${sp.habitat}`) });
   }
   if (tool.id.startsWith('effect_')) {
     const def = EFFECTS.find((e) => e.key === tool.id.slice(7))!;
@@ -77,8 +77,14 @@ export function messageText(m: CodedMessage): string {
       return Number(p.killed) > 0
         ? td(`msg.meteor_kills.${size}`, { killed: p.killed })
         : td(`msg.meteor.${size}`);
-    default:
-      return td(`msg.${m.code}`, { ...(p as Record<string, string | number>), ...(species ? { species } : {}) });
+    default: {
+      const extra: Record<string, string> = {};
+      if (species) extra.species = species;
+      if (typeof p.type === 'string') extra.type = td(`build.${p.type}`);
+      if (typeof p.tech === 'string') extra.tech = td(`tech.${p.tech}`);
+      if (typeof p.stage === 'string') extra.stage = td(`civstage.${p.stage}`).toLowerCase();
+      return td(`msg.${m.code}`, { ...(p as Record<string, string | number>), ...extra });
+    }
   }
 }
 

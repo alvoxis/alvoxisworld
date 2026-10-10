@@ -3,6 +3,7 @@ import { EFFECT_COUNT } from '../sim/effects';
 import { FOOD_CELL } from '../sim/foodmap';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
 import type { SettlementsSave } from '../sim/settlements';
+import type { GroupsSave } from '../sim/groups';
 import { MAX_QUEUED_METEORS, MAX_SHOWERS, type DisasterConfig, type MeteorInFlight, type Shower } from '../sim/sky';
 import type { WeatherConfig, WeatherSystem } from '../sim/weather';
 import { T } from '../world/terrain';
@@ -17,9 +18,14 @@ import { WATER_FLAG, World } from '../world/world';
  *     natural-disaster settings (absent = defaults),
  * 7 = navigation snapshots hold terrain + slope class codes (older saves rebuild navigation once on load,
  *     because slopes were not part of walkability before),
- * 8 = settlements (optional block; absent = none, so saves 1–7 load unchanged).
+ * 8 = settlements (optional block; absent = none, so saves 1–7 load unchanged),
+ * 9 = people (a sixth species): `statSpecies` records how many species the per-species statistics arrays hold,
+ *     so older saves (5 species) keep their death statistics. Creatures already carry species ids, so nothing else changes,
+ * 10 = human settlements: optional `civ` per settlement (stock, buildings, technologies) and `auto` in the settlements block;
+ *      absent = none / defaults, so saves 1–9 load unchanged,
+ * 11 = groups of free people (optional `groups` block), settlement `stress`/`lastEmigration` and `bans`; absent = none / defaults.
  */
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 11;
 
 /** Version 6 additions. Everything in it is optional in a save and validated on load. */
 export interface SkySave {
@@ -89,6 +95,8 @@ export interface CreatureSave {
   deaths: number;
   deathStats: Uint32Array;
   birthStats: Uint32Array;
+  /** Version 9: number of species the two statistics arrays were written for (absent = 5, the species before people). */
+  statSpecies?: number;
 }
 
 /** Version 1 creature block (Milestone 1: grazers and raptors with energy only). */
@@ -125,6 +133,8 @@ export interface SaveData {
   sky?: SkySave;
   /** Version 8. */
   settlements?: SettlementsSave;
+  /** Version 11. */
+  groups?: GroupsSave;
 }
 
 const COPIED = [
@@ -145,6 +155,7 @@ export function serialize(sim: Simulation): SaveData {
     deaths: c.deaths,
     deathStats: c.deathStats.slice(),
     birthStats: c.birthStats.slice(),
+    statSpecies: SPECIES.length,
   } as CreatureSave;
   for (const k of [...COPIED, ...COPIED_V3]) (creatures as unknown as Record<string, unknown>)[k] = c[k].slice(0, n);
   creatures.path = c.path.slice(0, n * PATH_MAX);
@@ -166,6 +177,7 @@ export function serialize(sim: Simulation): SaveData {
     creatures,
     history: sim.history.map((h) => ({ ...h })),
     settlements: sim.settlements.exportState(),
+    groups: sim.groups.exportState(),
     sky: {
       config: { ...sim.sky.config },
       meteors: sim.sky.meteors.map((m) => ({ ...m })),
@@ -233,18 +245,24 @@ function loadCreatures(c: Creatures, src: CreatureSave): void {
   c.nextId = src.nextId;
   c.births = src.births;
   c.deaths = src.deaths;
-  // Older saves have fewer death causes: copy what exists (cause ids never change meaning).
+  // Older saves have fewer death causes and (before people) fewer species: copy what exists, species by id.
+  // Cause ids and species ids never change meaning.
   if (src.deathStats) {
-    const oldCauses = src.deathStats.length / SPECIES.length;
+    let oldSpecies = Number.isInteger(src.statSpecies) && src.statSpecies! > 0 ? src.statSpecies! : 5;
+    if (src.deathStats.length % oldSpecies) oldSpecies = SPECIES.length;
+    const oldCauses = src.deathStats.length / oldSpecies;
     const newCauses = c.deathStats.length / SPECIES.length;
     c.deathStats.fill(0);
     if (Number.isInteger(oldCauses)) {
-      for (let sp = 0; sp < SPECIES.length; sp++) {
+      for (let sp = 0; sp < Math.min(oldSpecies, SPECIES.length); sp++) {
         for (let k = 0; k < Math.min(oldCauses, newCauses); k++) c.deathStats[sp * newCauses + k] = src.deathStats[sp * oldCauses + k];
       }
     }
   }
-  if (src.birthStats?.length === c.birthStats.length) c.birthStats.set(src.birthStats);
+  if (src.birthStats) {
+    c.birthStats.fill(0);
+    for (let sp = 0; sp < Math.min(src.birthStats.length, c.birthStats.length); sp++) c.birthStats[sp] = src.birthStats[sp];
+  }
 }
 
 /** Milestone 1 saves: energy becomes hunger, everyone gets full health and a fresh id. */
@@ -347,7 +365,7 @@ function loadSky(sim: Simulation, sky: SkySave): void {
 
 /** Validates a snapshot and loads it into the simulation, replacing the current world. */
 export function deserializeInto(sim: Simulation, data: SaveData): World {
-  if (!data || ![1, 2, 3, 4, 5, 6, 7, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
+  if (!data || !(Number.isInteger(data.version) && data.version >= 1 && data.version <= SAVE_VERSION)) throw new Error('Unsupported save version');
   const n = data.width * data.height;
   for (const arr of [data.heights, data.terrain, data.temperature, data.moisture]) {
     if (!(arr instanceof Uint8Array) || arr.length !== n) throw new Error('Corrupt save: map size mismatch');
@@ -400,6 +418,7 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
   else loadCreatures(sim.creatures, data.creatures as CreatureSave);
   sim.creatures.reindex();
   sim.settlements.importState(data.settlements, world, sim.creatures);
+  sim.groups.importState(data.groups, world, sim.creatures, sim.settlements);
   sim.history = data.history.map((h) => ({ ...h }));
   // Saves before 7 built their navigation data without slopes: have it rebuilt once.
   if (data.version < 7) world.passVersion++;

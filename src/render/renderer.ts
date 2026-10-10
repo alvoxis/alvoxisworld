@@ -8,6 +8,7 @@ import { TerrainPainter, type PaintOptions } from './painter';
 import { SkyRenderer, type Bolt, type Dust, type VisualEffect } from './skyfx';
 import type { MeteorInFlight } from '../sim/sky';
 import { COLORS, type Settlement } from '../sim/settlements';
+import type { Building, BuildingType } from '../sim/civ';
 import { Tileset, TILE_PX, creatureSprite } from './tileset';
 
 /** Device pixels per tile at which 8-px-per-tile detail chunks are used. */
@@ -24,6 +25,9 @@ const PAINT_BUDGET_MS = 6;
  * chunks at once; doing them all in one frame took 55–80 ms on 2048×1280.
  */
 const FLUSH_BUDGET_MS = 4;
+/** Smallest drawn width (CSS px) of a creature sprite, and of a person. */
+const MIN_SPRITE_PX = 7;
+const MIN_PERSON_PX = 10;
 /** Smaller repaint steps in performance mode. */
 const FLUSH_BUDGET_LOW_MS = 2;
 const FROST_TEMPERATURE = 0.45 * 255;
@@ -34,6 +38,8 @@ const DEEP_RGB = [20, 48, 108] as const;
 export type { VisualEffect } from './skyfx';
 
 /** Simulation state drawn on top of the map. */
+const BUILDING_COLORS: Record<BuildingType, string> = { house: '#c9a36b', storehouse: '#8d8579', farm: '#7fb046', lumber: '#7a5530', quarry: '#9a9791' };
+
 export interface Overlay {
   burning: readonly number[];
   weather: readonly WeatherSystem[];
@@ -390,8 +396,10 @@ export class Renderer {
     if (s >= MID_SCALE && overlay && !this.quality.reduced) this.drawGlints(camera, s, ox, oy, overlay.now);
 
     if (overlay) this.drawFire(overlay, s, ox, oy);
-    this.drawCreatures(camera, creatures, s, ox, oy, alpha);
+    // Settlements (borders, buildings, centre marker) are drawn first so that people are never hidden behind them.
     if (overlay?.settlementBorders && overlay.settlements.length) this.drawSettlements(overlay.settlements, camera, s, ox, oy);
+    this.drawCreatures(camera, creatures, s, ox, oy, alpha);
+    if (overlay?.settlementBorders && overlay.settlements.length && s >= 3 * this.dpr) this.drawSettlementLabels(overlay.settlements, s, ox, oy);
     if (overlay) {
       this.skyfx.draw(ctx, camera, s, ox, oy, this.dpr, {
         systems: overlay.weather,
@@ -518,6 +526,8 @@ export class Renderer {
       ctx.strokeStyle = COLORS[st.color];
       ctx.lineWidth = Math.max(1.5, 1.6 * this.dpr);
       ctx.stroke();
+      // Buildings of a human settlement (finished ones solid, under construction faded).
+      if (st.civ) for (const b of st.civ.buildings) this.drawBuilding(b, st.color, s, ox, oy, x0, y0, x1, y1);
       // Centre marker.
       const cx = ox + (st.x + 0.5) * s;
       const cy = oy + (st.y + 0.5) * s;
@@ -534,18 +544,81 @@ export class Renderer {
       ctx.strokeStyle = 'rgba(0,0,0,0.7)';
       ctx.lineWidth = Math.max(1, this.dpr);
       ctx.stroke();
-      if (s >= 3 * this.dpr) {
-        ctx.font = `${Math.round(11 * this.dpr)}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.lineWidth = 3 * this.dpr;
-        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
-        const label = `${st.name} · ${st.members.length}`;
-        ctx.strokeText(label, cx, cy - r - 4 * this.dpr);
-        ctx.fillStyle = '#fff';
-        ctx.fillText(label, cx, cy - r - 4 * this.dpr);
-      }
     }
     ctx.restore();
+  }
+
+  /** Names and populations above the settlement centres, drawn over the people (small text, offset upward). */
+  private drawSettlementLabels(list: readonly Settlement[], s: number, ox: number, oy: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.font = `${Math.round(11 * this.dpr)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 3 * this.dpr;
+    for (const st of list) {
+      const cx = ox + (st.x + 0.5) * s;
+      const cy = oy + (st.y + 0.5) * s - Math.max(10 * this.dpr, s * 1.6);
+      if (cx < -80 || cy < -40 || cx > this.canvas.width + 80 || cy > this.canvas.height + 40) continue;
+      const label = `${st.name} · ${st.members.length}`;
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.strokeText(label, cx, cy);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, cx, cy);
+    }
+    ctx.restore();
+  }
+
+  private drawBuilding(b: Building, color: number, s: number, ox: number, oy: number, x0: number, y0: number, x1: number, y1: number): void {
+    if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) return;
+    const ctx = this.ctx;
+    const px = Math.round(ox + b.x * s);
+    const py = Math.round(oy + b.y * s);
+    const w = Math.max(2, Math.round(s));
+    const a = ctx.globalAlpha;
+    ctx.globalAlpha = a * (b.done ? 1 : 0.45);
+    if (s < 3) {
+      // Far away: a coloured dot per building.
+      ctx.fillStyle = BUILDING_COLORS[b.type];
+      ctx.fillRect(px, py, w, w);
+    } else {
+      const u = s / 8; // art is drawn on an 8×8 grid
+      const r = (x: number, y: number, ww: number, hh: number, c: string) => {
+        ctx.fillStyle = c;
+        ctx.fillRect(Math.round(px + x * u), Math.round(py + y * u), Math.max(1, Math.round(ww * u)), Math.max(1, Math.round(hh * u)));
+      };
+      switch (b.type) {
+        case 'house':
+          r(1, 3, 6, 4, '#c9a36b');
+          r(0, 2, 8, 2, COLORS[color]); // roof in the settlement colour
+          r(3, 5, 2, 2, '#4a3220');
+          break;
+        case 'storehouse':
+          r(0, 2, 8, 5, '#8d8579');
+          r(0, 1, 8, 2, COLORS[color]);
+          r(2, 4, 4, 3, '#4a4339');
+          break;
+        case 'farm':
+          r(0, 1, 8, 6, '#9a7a44');
+          for (let k = 0; k < 4; k++) r(1, 1 + k * 1.5, 6, 0.8, '#6fae3e');
+          break;
+        case 'lumber':
+          r(1, 4, 5, 3, '#7a5530');
+          r(5, 1, 2, 3, '#3f7d3a');
+          r(0, 7, 8, 1, '#5a3e22');
+          break;
+        default:
+          r(0, 3, 8, 4, '#7d7b78');
+          r(1, 1, 4, 3, '#a09d98');
+          r(5, 4, 2, 2, '#4a4947');
+      }
+    }
+    ctx.globalAlpha = a;
+    if (!b.done && s >= 3) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(px, py + w - 3, w, 3);
+      ctx.fillStyle = '#ffd34d';
+      ctx.fillRect(px, py + w - 3, Math.round((w * b.progress) / b.needed), 3);
+    }
   }
 
   private drawFire(o: Overlay, s: number, ox: number, oy: number): void {
@@ -591,20 +664,26 @@ export class Renderer {
       const y = cr.py[i] + (cr.y[i] - cr.py[i]) * alpha;
       if (x < minX || y < minY || x > maxX || y > maxY) continue;
       const sp = cr.species[i];
+      const def = SPECIES[sp];
       const px = Math.round(ox + x * s);
       const py = Math.round(oy + y * s);
-      const juvenile = cr.age[i] < SPECIES[sp].adultAge;
+      const juvenile = cr.age[i] < def.adultAge;
       if (big) {
         const set = this.sprites[sp];
         const sprite = cr.dx[i] >= 0 ? set.right : set.left;
-        // One sprite pixel = 1/8 tile, like terrain; juveniles are drawn smaller.
-        const scale = (s / TILE_PX) * (juvenile ? 0.7 : 1);
+        // One sprite pixel = 1/8 tile, like terrain; juveniles are drawn smaller. Nothing is drawn smaller than
+        // MIN_SPRITE_PX device pixels (people a little larger), so creatures stay visible and tappable at any zoom.
+        const minW = (def.sentient ? MIN_PERSON_PX : MIN_SPRITE_PX) * this.dpr;
+        const scale = Math.max(s / TILE_PX, minW / sprite.width) * (juvenile ? 0.75 : 1);
         const w = Math.max(2, Math.round(sprite.width * scale));
         const h = Math.max(2, Math.round(sprite.height * scale));
         ctx.drawImage(sprite, px - (w >> 1), py - h + Math.round(h * 0.25), w, h);
       } else {
-        const d = Math.max(2, Math.round(this.dpr * (SPECIES[sp].size > 1.2 ? 2.5 : 1.5)));
-        ctx.fillStyle = SPECIES[sp].color;
+        // Far out: a dot with a dark rim, large enough to see (people brighter and bigger).
+        const d = Math.max(2, Math.round(this.dpr * (def.sentient ? 4 : def.size > 1.2 ? 3.5 : 3)));
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(px - (d >> 1) - 1, py - (d >> 1) - 1, d + 2, d + 2);
+        ctx.fillStyle = def.sentient ? '#6fa8ff' : def.color;
         ctx.fillRect(px - (d >> 1), py - (d >> 1), d, d);
       }
     }

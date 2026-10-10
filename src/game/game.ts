@@ -78,6 +78,9 @@ export class Game {
   /** Selected creature id (0 = none) and whether the camera follows it. */
   selectedId = 0;
   follow = false;
+  private lastPick: { x: number; y: number; id: number; at: number } | null = null;
+  /** When the selected creature died or was removed (the card is shown for a few seconds, then the selection clears). */
+  private fateAt = 0;
   /** Cause of death of the selected creature once it has died (null while alive). */
   selectedFate: string | null = null;
 
@@ -121,12 +124,22 @@ export class Game {
         if (this.effects.length > 8) this.effects.shift();
       },
       inspect: (x, y) => {
-        // Tap near a creature selects it; otherwise report the tile.
-        const i = this.sim.creatures.nearestAt(x, y, Math.max(1, 22 / this.camera.zoom));
-        if (i >= 0) {
-          this.select(this.sim.creatures.id[i]);
+        // Tap near a creature selects the nearest one; tapping the same spot again moves on to the next nearest
+        // (so crowded creatures can all be picked); otherwise report the tile.
+        const near = this.sim.creatures.candidatesAt(x, y, Math.max(0.9, 24 / this.camera.zoom));
+        if (near.length) {
+          let pick = near[0];
+          const last = this.lastPick;
+          const now = performance.now();
+          if (last && now - last.at < 2500 && Math.hypot(last.x - x, last.y - y) < Math.max(0.5, 12 / this.camera.zoom) && near.length > 1) {
+            const k = near.findIndex((i) => this.sim.creatures.id[i] === last.id);
+            if (k >= 0) pick = near[(k + 1) % near.length];
+          }
+          this.lastPick = { x, y, id: this.sim.creatures.id[pick], at: now };
+          this.select(this.sim.creatures.id[pick]);
           return;
         }
+        this.lastPick = null;
         this.select(0);
         const r = this.report(x, y);
         if (r) this.onInspect(r);
@@ -142,6 +155,7 @@ export class Game {
         this.undo.end();
       },
       hover: (p) => (this.hoverPos = p),
+      tap: (x, y) => this.toolCtx.inspect(x, y),
     });
 
     new ResizeObserver(() => this.resize()).observe(canvas);
@@ -346,6 +360,7 @@ export class Game {
   select(id: number): void {
     this.selectedId = id;
     this.selectedFate = null;
+    this.fateAt = 0;
     if (!id) this.follow = false;
     this.onSelect();
   }
@@ -365,6 +380,13 @@ export class Game {
         this.selectedFate = CAUSE_NAMES[d.cause];
         this.follow = false;
       }
+    }
+    // A creature that has died or been removed: show what happened for a few seconds, then clear the selection.
+    if (this.selectedFate !== null) {
+      if (!this.fateAt) this.fateAt = performance.now();
+      else if (performance.now() - this.fateAt > 6000) this.select(0);
+    } else if (this.sim.creatures.indexOf(this.selectedId) < 0) {
+      this.selectedFate = CAUSE_NAMES[0];
     }
     if (this.follow) {
       const i = this.sim.creatures.indexOf(this.selectedId);
