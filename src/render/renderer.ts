@@ -7,6 +7,7 @@ import { Camera } from './camera';
 import { TerrainPainter, type PaintOptions } from './painter';
 import { SkyRenderer, type Bolt, type Dust, type VisualEffect } from './skyfx';
 import type { MeteorInFlight } from '../sim/sky';
+import { COLORS, type Settlement } from '../sim/settlements';
 import { Tileset, TILE_PX, creatureSprite } from './tileset';
 
 /** Device pixels per tile at which 8-px-per-tile detail chunks are used. */
@@ -43,6 +44,9 @@ export interface Overlay {
   drift: { x: number; y: number };
   /** Decorative fair-weather clouds. */
   ambientClouds: boolean;
+  /** Settlements and whether to draw their borders (the player's choice). */
+  settlements: readonly Settlement[];
+  settlementBorders: boolean;
   now: number;
 }
 
@@ -387,6 +391,7 @@ export class Renderer {
 
     if (overlay) this.drawFire(overlay, s, ox, oy);
     this.drawCreatures(camera, creatures, s, ox, oy, alpha);
+    if (overlay?.settlementBorders && overlay.settlements.length) this.drawSettlements(overlay.settlements, camera, s, ox, oy);
     if (overlay) {
       this.skyfx.draw(ctx, camera, s, ox, oy, this.dpr, {
         systems: overlay.weather,
@@ -474,6 +479,75 @@ export class Renderer {
   }
 
   /** Burning tiles: animated pixel flames up close, flickering embers from afar. */
+  /**
+   * Settlement borders: the precomputed edge segments of each territory (only those in view),
+   * in the settlement's colour with a dark outline, a marker at the centre and, close up, the name.
+   * Nothing is recomputed here; the lists change only when a territory changes.
+   */
+  private drawSettlements(list: readonly Settlement[], camera: Camera, s: number, ox: number, oy: number): void {
+    const ctx = this.ctx;
+    const W = this.world.width;
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
+    const x0 = camera.x - 1;
+    const y0 = camera.y - 1;
+    const x1 = camera.x + cw / s + 1;
+    const y1 = camera.y + ch / s + 1;
+    ctx.save();
+    ctx.lineCap = 'butt';
+    for (const st of list) {
+      if (!st.edges.length) continue;
+      ctx.beginPath();
+      for (const e of st.edges) {
+        const i = e >> 2;
+        const x = i % W;
+        const y = (i - x) / W;
+        if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+        const px = ox + x * s;
+        const py = oy + y * s;
+        switch (e & 3) {
+          case 0: ctx.moveTo(px, py); ctx.lineTo(px + s, py); break;
+          case 1: ctx.moveTo(px + s, py); ctx.lineTo(px + s, py + s); break;
+          case 2: ctx.moveTo(px, py + s); ctx.lineTo(px + s, py + s); break;
+          default: ctx.moveTo(px, py); ctx.lineTo(px, py + s);
+        }
+      }
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = Math.max(3, 3 * this.dpr);
+      ctx.stroke();
+      ctx.strokeStyle = COLORS[st.color];
+      ctx.lineWidth = Math.max(1.5, 1.6 * this.dpr);
+      ctx.stroke();
+      // Centre marker.
+      const cx = ox + (st.x + 0.5) * s;
+      const cy = oy + (st.y + 0.5) * s;
+      if (cx < -40 || cy < -40 || cx > cw + 40 || cy > ch + 40) continue;
+      const r = Math.max(4 * this.dpr, s * 0.7);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r);
+      ctx.lineTo(cx + r, cy);
+      ctx.lineTo(cx, cy + r);
+      ctx.lineTo(cx - r, cy);
+      ctx.closePath();
+      ctx.fillStyle = COLORS[st.color];
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      ctx.lineWidth = Math.max(1, this.dpr);
+      ctx.stroke();
+      if (s >= 3 * this.dpr) {
+        ctx.font = `${Math.round(11 * this.dpr)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3 * this.dpr;
+        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+        const label = `${st.name} · ${st.members.length}`;
+        ctx.strokeText(label, cx, cy - r - 4 * this.dpr);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, cx, cy - r - 4 * this.dpr);
+      }
+    }
+    ctx.restore();
+  }
+
   private drawFire(o: Overlay, s: number, ox: number, oy: number): void {
     if (!o.burning.length) return;
     const ctx = this.ctx;

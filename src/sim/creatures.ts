@@ -279,6 +279,10 @@ export class Creatures {
   /** deathStats[species * CAUSE_COUNT + cause]. */
   readonly deathStats = new Uint32Array(SPECIES.length * CAUSE_COUNT);
   readonly birthStats = new Uint32Array(SPECIES.length);
+  /** Told of every birth (child id, parent id); settlements use it to keep their population exact. */
+  onBirth: ((childId: number, parentId: number) => void) | null = null;
+  /** Told when a creature dies or is removed (its id). */
+  onDeath: ((id: number) => void) | null = null;
   /** Deaths since the last call to drainDeaths() (for UI/history). */
   private recentDeaths: DeathRecord[] = [];
 
@@ -334,6 +338,11 @@ export class Creatures {
     let n = 0;
     for (let i = 0; i < this.count; i++) if (this.species[i] === species && !this.dead[i]) n++;
     return n;
+  }
+
+  /** Whether the creature at index i is alive. */
+  isAlive(i: number): boolean {
+    return i >= 0 && i < this.count && !this.dead[i];
   }
 
   /** Current index of a creature id, or -1 if it no longer exists. */
@@ -1046,7 +1055,9 @@ export class Creatures {
       const oy = this.y[i] + (rng.next() - 0.5) * 0.6;
       const spawnX = Creatures.canEnter(world, sp.id, Math.floor(ox), Math.floor(oy)) ? ox : this.x[i];
       const spawnY = spawnX === ox ? oy : this.y[i];
-      if (!this.spawn(sp.id, spawnX, spawnY, rng, { age: 0, hunger: 30, thirst: 20 })) break;
+      const child = this.spawn(sp.id, spawnX, spawnY, rng, { age: 0, hunger: 30, thirst: 20 });
+      if (!child) break;
+      this.onBirth?.(child, this.id[i]);
       this.births++;
       this.birthStats[sp.id]++;
       this.crowd[sp.id][cell]++;
@@ -1576,6 +1587,7 @@ export class Creatures {
     if (this.dead[i]) return;
     this.dead[i] = 1;
     this.byId.delete(this.id[i]);
+    this.onDeath?.(this.id[i]);
     this.deaths++;
     this.deathStats[this.species[i] * CAUSE_COUNT + cause]++;
     this.recentDeaths.push({ id: this.id[i], species: this.species[i], cause });

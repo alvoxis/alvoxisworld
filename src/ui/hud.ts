@@ -13,6 +13,7 @@ import { EFFECTS, EFFECT_DURATIONS } from '../sim/effects';
 import { SPEED_LEVELS } from '../sim/simulation';
 import { SAVE_VERSION } from '../save/serialize';
 import { Minimap } from './minimap';
+import { COLORS } from '../sim/settlements';
 import { CATEGORY_ICONS, GEAR_ICON } from './icons';
 import { LANGS, getLang, onLangChange, setLang, t, td, tn, type Lang } from '../i18n';
 import {
@@ -337,6 +338,12 @@ export class Hud {
     ].filter(Boolean);
     $('weather-status').textContent = parts.length ? parts.join(' · ') : sim.weather.config.auto ? t('status.clear') : t('status.weather_off');
     if (this.game.selectedId) this.renderCreature();
+    // An open settlement card follows the simulation.
+    const card = document.getElementById('settle-card');
+    if (card && !$('info').hidden) {
+      const id = Number($('info-body').dataset.settlement);
+      this.fillSettlementCard(card, id);
+    }
   }
 
   /**
@@ -515,6 +522,13 @@ export class Hud {
       [t('info.moisture'), `${r.moisturePct}%`],
       [t('info.life_nearby'), life || t('info.life_none')],
     ];
+    body.dataset.settlement = r.settlementId ? String(r.settlementId) : '';
+    if (r.settlementId) {
+      const card = document.createElement('div');
+      card.id = 'settle-card';
+      body.appendChild(card);
+      this.fillSettlementCard(card, r.settlementId);
+    }
     for (const [k, v] of lines) {
       const div = document.createElement('div');
       const b = document.createElement('b');
@@ -523,6 +537,58 @@ export class Hud {
       body.appendChild(div);
     }
     el.hidden = false;
+  }
+
+  /** Settlement card: every value is read from the simulation at the moment it is drawn. */
+  private fillSettlementCard(card: HTMLElement, id: number): void {
+    const sim = this.game.sim;
+    const s = sim.settlements.get(id);
+    card.replaceChildren();
+    const line = (k: string, v: string) => {
+      const div = document.createElement('div');
+      const b = document.createElement('b');
+      b.textContent = `${k}: `;
+      div.append(b, v);
+      card.appendChild(div);
+    };
+    if (!s) {
+      card.textContent = t('settle.gone');
+      return;
+    }
+    const title = document.createElement('div');
+    title.className = 'title';
+    const sw = document.createElement('span');
+    sw.className = 'swatch';
+    sw.style.background = COLORS[s.color];
+    title.append(sw, `${s.name}`);
+    card.appendChild(title);
+    // Composition by life stage, counted from the real members.
+    const stages: Record<string, number> = { Juvenile: 0, Adult: 0, Elder: 0 };
+    for (const m of s.members) {
+      const i = sim.creatures.indexOf(m);
+      if (i >= 0) stages[sim.creatures.stage(i)]++;
+    }
+    const age = sim.tick - s.founded;
+    line(t('settle.population'), String(s.members.length));
+    line(t('settle.composition'), `${speciesName(s.species, true)} ×${s.members.length} (${Object.entries(stages).map(([k, n]) => `${stageName(k)} ${n}`).join(' · ')})`);
+    line(t('settle.territory'), t('settle.territory_value', { tiles: s.tiles.length, r: s.radius }));
+    line(t('settle.age'), t('settle.age_value', { years: Math.floor(age / TICKS_PER_YEAR), days: Math.floor((age % TICKS_PER_YEAR) / TICKS_PER_DAY) }));
+    line(t('settle.status'), td(`settle.status.${s.status}`));
+    line(t('settle.flow'), t('settle.flow_value', { born: s.born, died: s.died, joined: s.joined, left: s.left, peak: s.peak }));
+    const h = document.createElement('div');
+    const hb = document.createElement('b');
+    hb.textContent = `${t('settle.history')}:`;
+    h.appendChild(hb);
+    card.appendChild(h);
+    const ul = document.createElement('ul');
+    ul.className = 'settle-history';
+    for (const e of s.events.slice(-6).reverse()) {
+      const d = dateFromTick(e.tick);
+      const li = document.createElement('li');
+      li.textContent = t('stats.history_line', { year: d.year, season: seasonName(d.seasonIndex), text: messageText(e) });
+      ul.appendChild(li);
+    }
+    card.appendChild(ul);
   }
 
   // ---- settings ----------------------------------------------------------
@@ -758,8 +824,9 @@ export class Hud {
 
     // Graphics & performance.
     const s = this.settings;
-    const opts: Array<[string, 'fewerParticles' | 'reducedEffects' | 'performanceMode' | 'clouds']> = [
+    const opts: Array<[string, 'fewerParticles' | 'reducedEffects' | 'performanceMode' | 'clouds' | 'borders']> = [
       ['opt-particles', 'fewerParticles'], ['opt-effects', 'reducedEffects'], ['opt-performance', 'performanceMode'], ['ambient-clouds', 'clouds'],
+      ['opt-borders', 'borders'],
     ];
     for (const [id, key] of opts) {
       $<HTMLInputElement>(id).addEventListener('change', (e) => s.set({ [key]: (e.target as HTMLInputElement).checked }));
@@ -819,6 +886,8 @@ export class Hud {
     this.game.renderer.setQuality(renderQualityOf(v));
     this.game.renderer.ringColor = RING_COLORS[v.ring];
     this.game.showAmbientClouds = v.clouds;
+    this.game.showSettlementBorders = v.borders;
+    $<HTMLInputElement>('opt-borders').checked = v.borders;
     $<HTMLInputElement>('opt-particles').checked = v.fewerParticles || v.performanceMode;
     $<HTMLInputElement>('opt-effects').checked = v.reducedEffects || v.performanceMode;
     // Performance mode forces the two reductions, so they cannot be switched off while it is on.

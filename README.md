@@ -218,3 +218,18 @@ Known limitations:
   - *Promo Codes & Gifts*: see below.
 - **Promo codes (local test prototype)**: `WELCOME` gives the cosmetic *Aurora* area ring, `ALVOXIS` the *Gold* area ring (choose it in Graphics & Performance). States: activated (reward shown), already used, invalid, empty. **This is not a secure system**: codes are checked in the app itself, the list is visible in the source, and used codes are remembered only in this browser (so clearing site data or using another device allows redeeming again). No payments, no purchases, no Alvoxis Energy.
 - Future achievements and rewards are analysed in [docs/ACHIEVEMENTS.md](docs/ACHIEVEMENTS.md); nothing of that is implemented.
+
+## Settlements (Civilization Foundation, v0.8.0)
+
+There are no people in the game yet, so no fictional civilization was added. A **settlement** is the home area of a group of one existing *land* species (grazers, raptors or hadrosaurs); everything shown is read from the running simulation.
+
+- **Found one:** Life tab → *Found settlement*, then tap the ground. It needs at least 6 living animals of one land species, not yet in a settlement, within 8 tiles of the spot; open dry land (not water, mountain or snow); land not already claimed; and, for grazing species, at least 20% of the land within 6 tiles that they can eat. Up to 12 settlements. The toast says why a try was refused. Founding is not undoable.
+- **Identity:** a unique id, a name made from the world seed and the id (no random numbers), and its own colour.
+- **Population:** the members are real creatures (by id). Births to a member join at once, deaths and removals leave at once, creatures of the species that live inside the territory join (checked every 20 ticks), members that wander more than 4 tiles beyond the border leave (moving away). The count is always the number of living members.
+- **Territory:** the land tiles within a radius of the centre (6–18, growing with the population as `5 + 1.4·√n`) that the species can stand on, connected to the centre; water, rivers and lakes cut it off. Earlier settlements keep contested tiles. It is rebuilt only when something changes (founding, growth, disappearance, terrain edits such as floods, craters or snow), never every frame.
+- **Changes over time:** status founding / growing / stable / declining / fading (sampled every 100 ticks from the real population), milestone events at 10, 25, 50, 100, 200 and 400 animals, and **disappearance**: abandoned when no animals are left, dissolved when fewer than 2 remain for 300 ticks.
+- **Borders:** coloured outlines of the real territory, a marker at the centre and (zoomed in) the name and population. Switch them in ⚙ Settings → Graphics & Performance → *Show settlement borders*. The outline comes from precomputed edge lists; each frame only the segments in view are stroked.
+- **Card:** use Inspect (or Select) on a tile inside a territory. It shows the name, population, composition by life stage, territory (tiles, radius), age, status, counts (born, died, joined, left, peak) and the last events, and follows the simulation live.
+- **Saving:** save format **8** adds an optional `settlements` block (members, stats, events). Territory is not saved; it is rebuilt from the land on load. Saves 1–7 load unchanged (no settlements). Invalid saved data is ignored.
+
+Not included yet: people or other races, buildings, resources, research, diplomacy, wars, rulers, automatic founding, relocation of whole settlements, merging settlements.

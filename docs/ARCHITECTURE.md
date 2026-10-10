@@ -227,3 +227,12 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
 - **Adding a feature**: add the key to `en.ts` first, then `ru.ts` and `zh.ts` (TypeScript and the parity test enforce it). Use `t()`/`tn()` for every string shown to the player.
 - `src/game/settings.ts`: `SettingsStore` (localStorage `alvoxis.settings`; validated on read; reads the old `alvoxis.clouds` key). `renderQualityOf()` maps settings to `Renderer.quality` (`particleScale`, `reduced`, `lowRes`), which only the renderer and `SkyRenderer` read. `src/game/promo.ts` is the local test promo list. `src/app/version.ts` holds the version and changelog; `src/app/diagnostics.ts` builds the diagnostics text.
 - The Settings dialog is one `<dialog>` with seven `.set-sec` panels switched by `#set-nav`; confirmations use a second `<dialog id="confirm">` via `Hud.confirm()`.
+
+## Settlements (`src/sim/settlements.ts`)
+
+- `Settlements` lives on `Simulation.settlements`. It uses no random numbers and runs `step()` every 20 ticks after `creatures.tick`; with no settlements it does nothing, so existing deterministic runs are unchanged.
+- Membership: `Creatures.onBirth(child, parent)` and `onDeath(id)` hooks keep the member id lists exact; `step()` adds free creatures of the species inside the radius and drops members that moved away. `memberOf: Map<id, settlementId>` gives O(1) lookups.
+- Territory: `recomputeTerritory()` builds each settlement's tile list (passable land for the species, within the radius, 4-connected to the centre, earlier ids win) and its border edge list `(tile << 2) | side`, and fills `owner: Uint16Array` (2 bytes per tile, allocated only while settlements exist; about 5 MB on a Giant map). It reruns on founding, radius change, disappearance and `World.passVersion` changes.
+- Rendering: `Renderer.drawSettlements` strokes the edge list segments in view; the settings flag `borders` only controls drawing.
+- Saving: `SaveData.settlements?` (save version 8); `importState` validates ids, species, coordinates and members, then rebuilds territory.
+- Extension points for later stages (not implemented): species/race of members is per settlement; a state would own several settlements by id; events already carry codes and parameters for history and translation.

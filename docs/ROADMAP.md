@@ -26,6 +26,9 @@ Slope-aware passability (gentle / steep / cliff) with detours and unsticking; ti
 ## ✅ Interface and Settings milestone (done)
 Russian, English and Simplified Chinese interface with instant switching; SVG tool category icons; Settings with Language, Save & Load (with confirmations), Graphics & Performance, Simulation, Statistics, About & Feedback and local test promo codes; achievements analysis (docs/ACHIEVEMENTS.md, design only).
 
+## ✅ Civilization Foundation (done)
+Settlements of existing land animals: founding conditions, exact population, real territory and borders, card, growth and disappearance, save format 8. No people, economy, research, diplomacy or wars yet.
+
 ## Milestone 6: Richer nature (next)
 - More fauna as data: sauropods, pterosaurs, crocodiles (amphibious habitat), small mammals. Herds, nesting and eggs, sexes, seasonal migration.
 - Snow cover beyond tundra, erosion and rivers carving new courses.

@@ -10,6 +10,7 @@ import { T, isWater } from '../world/terrain';
 import { WATER_FLAG } from '../world/world';
 import { Weather, WEATHER_KIND, type WeatherKind } from './weather';
 import { vegetationTick } from './vegetation';
+import { Settlements, type FoundFail, type Settlement } from './settlements';
 
 /** Selectable simulation speeds (multiples of real time). 0 means paused. */
 export const SPEED_LEVELS = [1, 2, 3, 5, 10, 20] as const;
@@ -43,6 +44,7 @@ export class Simulation {
   readonly weather = new Weather();
   readonly fire = new Fire();
   readonly sky = new Sky();
+  readonly settlements = new Settlements();
   rng: Rng;
   tick = 0;
   speed: Speed = 1;
@@ -69,6 +71,9 @@ export class Simulation {
     this.rng = new Rng(world.seed ^ 0x51ed270b);
     this.lastSeason = this.date.seasonIndex;
     this.creatures.envThirst = (x, y) => this.weather.thirstFactor(x, y);
+    this.creatures.onBirth = (child, parent) => this.settlements.onBirth(child, parent);
+    this.creatures.onDeath = (id) => this.settlements.onDeath(id);
+    this.settlements.onEvent = (text, code, p) => this.log(text, code, p);
   }
 
   get date(): WorldDate {
@@ -86,6 +91,7 @@ export class Simulation {
     this.weather.relaxCursor = 0;
     this.weather.strikes = [];
     this.sky.reset();
+    this.settlements.reset();
     this.creatures.dangers = [];
     this.weather.refresh(world);
     this.rng = new Rng(world.seed ^ 0x51ed270b);
@@ -158,6 +164,7 @@ export class Simulation {
     vegetationTick(this.world, this.rng, SEASON_GROWTH[date.season]);
     const before = this.creatures.countAll();
     this.creatures.tick(this.world, this.rng, this.tick);
+    this.settlements.step(this.world, this.creatures, this.tick);
     this.tick++;
 
     const now = this.date;
@@ -183,6 +190,11 @@ export class Simulation {
       { drought: 'The gods sent a drought.', snow: 'The gods sent snow.', storm: 'The gods sent a thunderstorm.', rain: 'The gods sent rain.' }[god],
       `god_${god}`,
     );
+  }
+
+  /** Founds a settlement at a spot if the conditions hold (see Settlements.canFound). */
+  foundSettlement(x: number, y: number): Settlement | FoundFail {
+    return this.settlements.found(this.world, this.creatures, this.tick, x, y);
   }
 
   // ---- sky: lightning, meteors in flight, natural disasters ---------------

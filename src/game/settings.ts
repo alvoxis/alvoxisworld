@@ -12,6 +12,8 @@ export interface Settings {
   performanceMode: boolean;
   /** Decorative fair-weather clouds. */
   clouds: boolean;
+  /** Settlement borders on the map. */
+  borders: boolean;
   /** Area ring colour; a reward colour is only honoured if that gift was received. */
   ring: RingColor;
   /** Promo codes already used in this browser. */
@@ -23,6 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   reducedEffects: false,
   performanceMode: false,
   clouds: true,
+  borders: true,
   ring: 'default',
   promoUsed: [],
 };
@@ -56,7 +59,7 @@ export function parseSettings(raw: string | null, oldClouds: string | null = nul
   }
   if (!o || typeof o !== 'object') return s;
   const r = o as Record<string, unknown>;
-  for (const k of ['fewerParticles', 'reducedEffects', 'performanceMode', 'clouds'] as const) {
+  for (const k of ['fewerParticles', 'reducedEffects', 'performanceMode', 'clouds', 'borders'] as const) {
     if (typeof r[k] === 'boolean') s[k] = r[k] as boolean;
   }
   if (Array.isArray(r.promoUsed)) s.promoUsed = r.promoUsed.filter((c): c is string => typeof c === 'string').slice(0, 50);

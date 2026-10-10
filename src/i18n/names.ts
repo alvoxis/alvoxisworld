@@ -77,11 +77,8 @@ export function messageText(m: CodedMessage): string {
       return Number(p.killed) > 0
         ? td(`msg.meteor_kills.${size}`, { killed: p.killed })
         : td(`msg.meteor.${size}`);
-    case 'extinct':
-    case 'first':
-      return td(`msg.${m.code}`, { species });
     default:
-      return td(`msg.${m.code}`, p as Record<string, string | number>);
+      return td(`msg.${m.code}`, { ...(p as Record<string, string | number>), ...(species ? { species } : {}) });
   }
 }
 

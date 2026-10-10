@@ -2,6 +2,7 @@ import { CAUSE, Creatures, MAX_CREATURES, PATH_MAX, SPECIES, STATE } from '../si
 import { EFFECT_COUNT } from '../sim/effects';
 import { FOOD_CELL } from '../sim/foodmap';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
+import type { SettlementsSave } from '../sim/settlements';
 import { MAX_QUEUED_METEORS, MAX_SHOWERS, type DisasterConfig, type MeteorInFlight, type Shower } from '../sim/sky';
 import type { WeatherConfig, WeatherSystem } from '../sim/weather';
 import { T } from '../world/terrain';
@@ -15,9 +16,10 @@ import { WATER_FLAG, World } from '../world/world';
  * 6 = sky: thunderstorms/snow flags and ids on weather systems, wind drift, meteors in flight,
  *     natural-disaster settings (absent = defaults),
  * 7 = navigation snapshots hold terrain + slope class codes (older saves rebuild navigation once on load,
- *     because slopes were not part of walkability before).
+ *     because slopes were not part of walkability before),
+ * 8 = settlements (optional block; absent = none, so saves 1–7 load unchanged).
  */
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 /** Version 6 additions. Everything in it is optional in a save and validated on load. */
 export interface SkySave {
@@ -121,6 +123,8 @@ export interface SaveData {
   v4?: SaveV4;
   /** Version 6. */
   sky?: SkySave;
+  /** Version 8. */
+  settlements?: SettlementsSave;
 }
 
 const COPIED = [
@@ -161,6 +165,7 @@ export function serialize(sim: Simulation): SaveData {
     moisture: w.moisture.slice(),
     creatures,
     history: sim.history.map((h) => ({ ...h })),
+    settlements: sim.settlements.exportState(),
     sky: {
       config: { ...sim.sky.config },
       meteors: sim.sky.meteors.map((m) => ({ ...m })),
@@ -342,7 +347,7 @@ function loadSky(sim: Simulation, sky: SkySave): void {
 
 /** Validates a snapshot and loads it into the simulation, replacing the current world. */
 export function deserializeInto(sim: Simulation, data: SaveData): World {
-  if (!data || ![1, 2, 3, 4, 5, 6, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
+  if (!data || ![1, 2, 3, 4, 5, 6, 7, SAVE_VERSION].includes(data.version)) throw new Error('Unsupported save version');
   const n = data.width * data.height;
   for (const arr of [data.heights, data.terrain, data.temperature, data.moisture]) {
     if (!(arr instanceof Uint8Array) || arr.length !== n) throw new Error('Corrupt save: map size mismatch');
@@ -394,6 +399,7 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
   if (data.version === 1) loadCreaturesV1(sim.creatures, data.creatures as CreatureSaveV1);
   else loadCreatures(sim.creatures, data.creatures as CreatureSave);
   sim.creatures.reindex();
+  sim.settlements.importState(data.settlements, world, sim.creatures);
   sim.history = data.history.map((h) => ({ ...h }));
   // Saves before 7 built their navigation data without slopes: have it rebuilt once.
   if (data.version < 7) world.passVersion++;

@@ -26,6 +26,8 @@ export interface TileReport {
   elevationM: number;
   temperatureC: number;
   moisturePct: number;
+  /** Settlement whose territory covers the tile (0 = none). */
+  settlementId: number;
   /** Creatures within 6 tiles, per species. */
   life: Array<{ species: number; n: number }>;
 }
@@ -60,6 +62,8 @@ export class Game {
   private dust: Array<{ x: number; y: number; radius: number; start: number }> = [];
   /** Draw decorative fair-weather clouds (storm, rain and snow clouds always show). */
   showAmbientClouds = true;
+  /** Draw settlement borders (a view choice; settlements exist either way). */
+  showSettlementBorders = true;
   /** True while a new world is being generated. */
   generating = false;
   private genWorkerFactory: (() => GenWorkerLike) | null = null;
@@ -187,6 +191,8 @@ export class Game {
       dust: this.dust,
       drift: this.sim.weather.drift,
       ambientClouds: this.showAmbientClouds,
+      settlements: this.sim.settlements.list,
+      settlementBorders: this.showSettlementBorders,
       now,
     });
   }
@@ -330,6 +336,7 @@ export class Game {
       elevationM: (w.heights[i] - SEA_LEVEL) * 30,
       temperatureC: Math.round((w.temperature[i] / 255) * 56 - 16),
       moisturePct: Math.round((w.moisture[i] / 255) * 100),
+      settlementId: this.sim.settlements.ownerAt(x, y)?.id ?? 0,
       life,
     };
   }
