@@ -27,7 +27,11 @@ export const SIM_BUDGET_MS = 12;
 
 export interface HistoryEntry {
   tick: number;
+  /** English text (always present; what old saves and tests see). */
   text: string;
+  /** Message code and values: the interface builds the line in the current language from these. */
+  code?: string;
+  p?: Record<string, string | number>;
 }
 
 /**
@@ -93,8 +97,8 @@ export class Simulation {
     this.lastSeason = this.date.seasonIndex;
   }
 
-  log(text: string): void {
-    this.history.push({ tick: this.tick, text });
+  log(text: string, code?: string, p?: Record<string, string | number>): void {
+    this.history.push(code ? { tick: this.tick, text, code, p } : { tick: this.tick, text });
     if (this.history.length > 200) this.history.shift();
   }
 
@@ -163,7 +167,7 @@ export class Simulation {
     }
     const after = this.creatures.countAll();
     SPECIES.forEach((s, k) => {
-      if (before[k] > 0 && after[k] === 0) this.log(`${s.plural} went extinct.`);
+      if (before[k] > 0 && after[k] === 0) this.log(`${s.plural} went extinct.`, 'extinct', { species: s.id });
     });
   }
 
@@ -174,11 +178,10 @@ export class Simulation {
     kind: WeatherKind, x: number, y: number, radius: number, intensity: number, opts: { storm?: boolean; snow?: boolean } = {},
   ): void {
     this.weather.addManual(kind, x, y, radius, 0.35 + 0.25 * intensity, opts);
+    const god = kind === WEATHER_KIND.DROUGHT ? 'drought' : opts.snow ? 'snow' : opts.storm ? 'storm' : 'rain';
     this.log(
-      kind === WEATHER_KIND.DROUGHT ? 'The gods sent a drought.'
-      : opts.snow ? 'The gods sent snow.'
-      : opts.storm ? 'The gods sent a thunderstorm.'
-      : 'The gods sent rain.',
+      { drought: 'The gods sent a drought.', snow: 'The gods sent snow.', storm: 'The gods sent a thunderstorm.', rain: 'The gods sent rain.' }[god],
+      `god_${god}`,
     );
   }
 
@@ -193,7 +196,7 @@ export class Simulation {
     this.creatures.anyFire = this.fire.burning > 0;
     this.sky.stats.lightning++;
     this.sky.emit({ kind: 'bolt', x: tx + 0.5, y: ty + 0.5 });
-    if (r.killed) this.log(`Lightning struck down ${r.killed} creature${r.killed > 1 ? 's' : ''}.`);
+    if (r.killed) this.log(`Lightning struck down ${r.killed} creature${r.killed > 1 ? 's' : ''}.`, 'lightning', { n: r.killed });
     return r;
   }
 
@@ -221,7 +224,7 @@ export class Simulation {
    */
   launchShower(x: number, y: number, spread: number, count: number, intensity = 1): number {
     const n = this.sky.startShower(x, y, Math.max(2, spread), count, Math.min(3, Math.max(1, Math.round(intensity))));
-    if (n) this.log(`A meteor shower began (${n} meteors).`);
+    if (n) this.log(`A meteor shower began (${n} meteors).`, 'shower', { n });
     return n;
   }
 
@@ -263,7 +266,7 @@ export class Simulation {
     this.sky.stats.meteors++;
     this.sky.emit({ kind: 'impact', x: m.x, y: m.y, radius: Math.max(2, m.radius) * (0.7 + 0.3 * m.intensity), intensity: m.intensity });
     const size = meteorClass(m.radius);
-    this.log(`A ${size} meteor struck${r && r.killed ? `, killing ${r.killed}` : ''}.`);
+    this.log(`A ${size} meteor struck${r && r.killed ? `, killing ${r.killed}` : ''}.`, 'meteor', { size, killed: r ? r.killed : 0 });
   }
 
   /** Natural disasters: rolled every DISASTER_STEP ticks from the settings. Uses the simulation RNG, so it is deterministic. */
@@ -309,7 +312,7 @@ export class Simulation {
         if (this.fire.ignite(w, x, y)) {
           this.creatures.anyFire = true;
           this.sky.stats.wildfires++;
-          this.log('A wildfire broke out.');
+          this.log('A wildfire broke out.', 'wildfire');
           break;
         }
       }
@@ -430,14 +433,14 @@ export class Simulation {
   meteor(x: number, y: number, radius: number, intensity: number): DisasterResult {
     const r = meteorStrike(this.world, this.creatures, this.fire, this.rng, x, y, radius, intensity);
     this.creatures.anyFire = this.fire.burning > 0;
-    this.log(`A meteor struck${r.killed ? `, killing ${r.killed}` : ''}.`);
+    this.log(`A meteor struck${r.killed ? `, killing ${r.killed}` : ''}.`, r.killed ? 'meteor_plain_kills' : 'meteor_plain', { killed: r.killed });
     return r;
   }
 
   earthquake(x: number, y: number, radius: number, intensity: number): DisasterResult {
     const r = earthquake(this.world, this.creatures, this.rng, x, y, radius, intensity);
     this.sky.stats.quakes++;
-    this.log(`An earthquake shook the land${r.killed ? `, killing ${r.killed}` : ''}.`);
+    this.log(`An earthquake shook the land${r.killed ? `, killing ${r.killed}` : ''}.`, r.killed ? 'quake_kills' : 'quake', { killed: r.killed });
     return r;
   }
 
@@ -458,7 +461,7 @@ export class Simulation {
     }
     if (spawned > 0 && !this.seenSpecies.has(species)) {
       this.seenSpecies.add(species);
-      this.log(`The first ${SPECIES[species].plural.toLowerCase()} appeared.`);
+      this.log(`The first ${SPECIES[species].plural.toLowerCase()} appeared.`, 'first', { species });
     }
     return spawned;
   }

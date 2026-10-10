@@ -147,6 +147,19 @@ Natural worlds lose little walkable land: cliffs are 0.2–0.4% of land on mediu
 ### Not changed
 The simulation stays on the main thread; the Web Worker analysis above still holds (navigation and generation already run in workers).
 
+## Interface and Settings milestone
+
+Same method as the previous milestone (headless Chromium, iPhone 13 emulation, `scene.mjs` scenes, production build). **Not measured on a physical iPhone.**
+
+| Scene (20× unless noted) | Technical milestone build | This build | This build, performance mode |
+| --- | --- | --- | --- |
+| Giant, 1616 animals, panning: avg / p99 / max ms | 15.7 / 26.0 / 30.3 | 16.1 / 28.0 / 30.4 | 15.6 / 25.2 / 26.2 |
+| Medium, ~4650 animals: avg / p99 / max ms | 16.6 / 24.5 / 26.8 | 16.5 / 24.8 / 26.7 | not run |
+| Edit brush r=11, 5×: avg / max ms | 6.8 / 12.5 | 6.2 / 11.9 | not run |
+| Sky, showers + fire, 5×: avg / max ms | 4.3 / 14.1 | 3.9 / 17.9 | 4.0 / 17.0 |
+
+The localisation and Settings code adds no per-frame work (strings are built on change, the status line was already rebuilt four times a second). Performance mode in this software-rendered headless browser changes little (the canvas is 390 px instead of 780 px wide, frame cost within noise); its intended benefit is on devices with a high pixel density and a GPU, which has not been measured here. The simulation is identical in every mode.
+
 ## Earlier milestones
 
 ### Milestone 4: simulation benchmarks (Node, medians of 3 runs)

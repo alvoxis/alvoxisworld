@@ -36,6 +36,10 @@ export interface SkyFrame {
   burning: readonly number[];
   drift: { x: number; y: number };
   ambientClouds: boolean;
+  /** 1 normally; less (e.g. 0.35) when the player chose fewer decorative particles. */
+  particleScale: number;
+  /** Skip cloud shadows and flashes (impact flash, sky flash of lightning). */
+  reduced: boolean;
   worldW: number;
   worldH: number;
   now: number;
@@ -104,9 +108,11 @@ export class SkyRenderer {
     const weatherAlpha = 0.4 + 0.6 * clamp01((22 - zoom) / 14);
     const list = this.collectClouds(camera, s, ox, oy, f, cw, ch, ambientAlpha, weatherAlpha);
     // Shadows first (offset toward the south-east, as if the sun is in the north-west), then clouds.
-    for (const c of list) {
-      ctx.globalAlpha = c.alpha * 0.32;
-      ctx.drawImage(this.shadows[c.shape], c.x + c.w * 0.1, c.y + c.h * 0.55, c.w, c.h);
+    if (!f.reduced) {
+      for (const c of list) {
+        ctx.globalAlpha = c.alpha * 0.32;
+        ctx.drawImage(this.shadows[c.shape], c.x + c.w * 0.1, c.y + c.h * 0.55, c.w, c.h);
+      }
     }
     this.drawPrecipitation(ctx, s, ox, oy, dpr, f, cw, ch);
     for (const c of list) {
@@ -137,7 +143,7 @@ export class SkyRenderer {
     };
     if (ambientAlpha > 0.01) {
       // About one cloud per 50×50 tiles; only those on screen are drawn.
-      const n = Math.max(14, Math.min(MAX_AMBIENT, Math.round((f.worldW * f.worldH) / 2500)));
+      const n = Math.max(8, Math.min(Math.round(MAX_AMBIENT * Math.max(0.4, f.particleScale)), Math.round((f.worldW * f.worldH) / 2500)));
       const margin = 40;
       const spanX = f.worldW + margin * 2;
       const spanY = f.worldH + margin * 2;
@@ -210,7 +216,7 @@ export class SkyRenderer {
       const area = (x1 - x0) * (y1 - y0);
       const snow = sys.snow;
       const cap = snow ? MAX_SNOW_FLAKES : MAX_RAIN_DROPS;
-      const n = Math.min(cap, Math.round((8 + area / (1800 * dpr * dpr)) * (0.4 + 0.6 * sys.intensity)));
+      const n = Math.min(Math.round(cap * f.particleScale), Math.round((8 + area / (1800 * dpr * dpr)) * (0.4 + 0.6 * sys.intensity) * f.particleScale));
       const w = x1 - x0;
       const h = y1 - y0;
       if (snow) {
@@ -254,7 +260,7 @@ export class SkyRenderer {
     const stride = Math.max(1, Math.ceil(list.length / 240));
     let drawn = 0;
     const W = f.worldW;
-    for (let k = 0; k < list.length && drawn < MAX_SMOKE_SOURCES; k += stride) {
+    for (let k = 0; k < list.length && drawn < Math.round(MAX_SMOKE_SOURCES * f.particleScale); k += stride) {
       const i = list[k];
       const x = i % W;
       const y = (i - x) / W;
@@ -282,7 +288,7 @@ export class SkyRenderer {
       if (age < 0 || age > 1) continue;
       const cx = ox + d.x * s;
       const cy = oy + d.y * s;
-      for (let k = 0; k < 14; k++) {
+      for (let k = 0; k < Math.max(4, Math.round(14 * f.particleScale)); k++) {
         const a = rnd(Math.round(d.start), k, 41) * Math.PI * 2;
         const dist = d.radius * s * (0.2 + 0.9 * rnd(Math.round(d.start), k, 42)) * (0.4 + 0.6 * Math.min(1, age * 4));
         const rise = age * d.radius * s * (0.6 + 0.8 * rnd(Math.round(d.start), k, 43));
@@ -309,7 +315,7 @@ export class SkyRenderer {
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.stroke();
-      if (e.kind === 'meteor' && age < 0.3) {
+      if (e.kind === 'meteor' && age < 0.3 && !f.reduced) {
         ctx.fillStyle = `rgba(255,240,200,${0.6 * (1 - age / 0.3)})`;
         ctx.beginPath();
         ctx.arc(cx, cy, e.radius * s * 0.6, 0, Math.PI * 2);
@@ -396,7 +402,7 @@ export class SkyRenderer {
       const gx = ox + b.x * s;
       const gy = oy + b.y * s;
       if (gx < -50 || gx > cw + 50 || gy < -50 || gy > ch + 300) continue;
-      if (age < 0.22) {
+      if (age < 0.22 && !f.reduced) {
         ctx.fillStyle = `rgba(235,240,255,${0.2 * (1 - age / 0.22)})`;
         ctx.fillRect(0, 0, cw, ch); // the whole sky flashes
       }

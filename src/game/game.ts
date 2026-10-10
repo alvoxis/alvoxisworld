@@ -12,7 +12,7 @@ import { Simulation, type Speed } from '../sim/simulation';
 import { TimeControl } from './timecontrol';
 import { checkWorldSize, generateWorld, WORLD_SIZES } from '../world/generator';
 import { generateWorldAsync, type GenWorkerLike } from '../world/genjobs';
-import { SEA_LEVEL, TERRAIN } from '../world/terrain';
+import { SEA_LEVEL } from '../world/terrain';
 import { World } from '../world/world';
 import { SHOWER_COUNTS } from '../sim/sky';
 import { areaOf, BRUSH_SIZES, toolById, type AreaRing, type Tool, type ToolContext } from './tools';
@@ -21,11 +21,13 @@ import { UndoHistory, type UndoResult } from './undo';
 export interface TileReport {
   x: number;
   y: number;
-  terrain: string;
+  /** Terrain id: the interface names it in the current language. */
+  terrainId: number;
   elevationM: number;
   temperatureC: number;
   moisturePct: number;
-  nearbyLife: string;
+  /** Creatures within 6 tiles, per species. */
+  life: Array<{ species: number; n: number }>;
 }
 
 interface Stroke {
@@ -87,7 +89,7 @@ export class Game {
     const size = WORLD_SIZES[1];
     const seed = (Math.random() * 2 ** 32) >>> 0;
     this.sim = new Simulation(generateWorld(size.width, size.height, seed));
-    this.sim.log(`World ${seed} was formed.`);
+    this.sim.log(`World ${seed} was formed.`, 'world_formed', { seed });
     this.sim.onSeasonChange = (s) => this.renderer.setWinter(s === 3);
     // A meteor the player launched is one undo step when it lands (natural ones are not recorded).
     // If a brush stroke is open when it lands, that stroke is closed first so the two never merge into one step.
@@ -320,17 +322,15 @@ export class Game {
     for (let k = 0; k < c.count; k++) {
       if (Math.abs(c.x[k] - wx) <= 6 && Math.abs(c.y[k] - wy) <= 6) counts[c.species[k]]++;
     }
-    const life = SPECIES.map((s, k) => (counts[k] ? `${counts[k]} ${(counts[k] > 1 ? s.plural : s.name).toLowerCase()}` : ''))
-      .filter(Boolean)
-      .join(', ');
+    const life = SPECIES.flatMap((s, k) => (counts[k] ? [{ species: s.id, n: counts[k] }] : []));
     return {
       x,
       y,
-      terrain: TERRAIN[w.terrain[i]].name,
+      terrainId: w.terrain[i],
       elevationM: (w.heights[i] - SEA_LEVEL) * 30,
       temperatureC: Math.round((w.temperature[i] / 255) * 56 - 16),
       moisturePct: Math.round((w.moisture[i] / 255) * 100),
-      nearbyLife: life || 'none',
+      life,
     };
   }
 
@@ -434,7 +434,7 @@ export class Game {
       const keep = { ...this.sim.weather.config };
       this.sim.reset(world);
       this.sim.weather.config = keep;
-      this.sim.log(`World ${seed} was formed.`);
+      this.sim.log(`World ${seed} was formed.`, 'world_formed', { seed });
       this.attachWorld(world);
       this.camera.fit();
       this.select(0);
@@ -471,7 +471,7 @@ export class Game {
   async importFile(bytes: Uint8Array): Promise<ImportReport> {
     const report = await decodeSaveFile(bytes);
     this.install(report.data);
-    this.sim.log(`World ${report.data.seed} was imported from a file.`);
+    this.sim.log(`World ${report.data.seed} was imported from a file.`, 'imported', { seed: report.data.seed });
     return report;
   }
 

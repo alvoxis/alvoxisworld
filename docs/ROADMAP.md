@@ -23,6 +23,9 @@ Visible drifting clouds with shadows; rain, snow and thunderstorms with lightnin
 ## ✅ Technical Improvement Milestone (done)
 Slope-aware passability (gentle / steep / cliff) with detours and unsticking; time-budgeted simulation and map repainting; incremental food map and weather relaxation; a separate meteor-shower tool with count and power; round area-size buttons with on-map previews. Save format v7. Measured in docs/PERFORMANCE.md.
 
+## ✅ Interface and Settings milestone (done)
+Russian, English and Simplified Chinese interface with instant switching; SVG tool category icons; Settings with Language, Save & Load (with confirmations), Graphics & Performance, Simulation, Statistics, About & Feedback and local test promo codes; achievements analysis (docs/ACHIEVEMENTS.md, design only).
+
 ## Milestone 6: Richer nature (next)
 - More fauna as data: sauropods, pterosaurs, crocodiles (amphibious habitat), small mammals. Herds, nesting and eggs, sexes, seasonal migration.
 - Snow cover beyond tundra, erosion and rivers carving new courses.

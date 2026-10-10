@@ -216,3 +216,14 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
 - `FoodMap.update` recounts a few bands per tick (full map every 50 ticks); weather climate relaxation sweeps a contiguous window with a cursor.
 - Meteor showers: `Sky.showers` queue (≤ 4 showers, ≤ 120 queued, ≤ 24 in flight), launched by `Simulation.tickShowers`.
 - Save format v7 adds the relax cursor, showers and food-map cursor; older saves load (slopes are recomputed).
+
+## Localisation and settings (Interface and Settings milestone)
+
+- `src/i18n/index.ts`: `t(key, params)`, `td(dynamicKey)`, `tn(base, n)` (plural forms `_one/_few/_many/_other` chosen with `Intl.PluralRules`), `setLang`, `onLangChange`, `applyDom`. The language is kept in `localStorage` (`alvoxis.lang`) and applied before the first frame.
+- `src/i18n/en.ts` is the source of truth (typed object); `ru.ts` and `zh.ts` are typed `Dict`, so a missing key is a compile error. `tests/i18n.test.ts` additionally checks placeholders, plural forms, absence of untranslated Latin words, that every `data-i18n*` key in `index.html` exists, and that every species, terrain, effect, tool, state, cause, season and message code has a translation.
+- Static markup uses `data-i18n`, `data-i18n-aria`, `data-i18n-title`, `data-i18n-ph`; text built in code (`Hud.retranslate()`) is rebuilt on every language change.
+- Game data keep English ids/names (`SPECIES[].name`, `TERRAIN[].name`, tool `label`) because saves, undo labels and tests use them; `src/i18n/names.ts` maps them to display text.
+- Simulation history lines: `Simulation.log(text, code?, params?)` keeps the English `text` and adds an optional message code and values; `messageText()` renders them in the current language. Old saves have no code and show their text.
+- **Adding a feature**: add the key to `en.ts` first, then `ru.ts` and `zh.ts` (TypeScript and the parity test enforce it). Use `t()`/`tn()` for every string shown to the player.
+- `src/game/settings.ts`: `SettingsStore` (localStorage `alvoxis.settings`; validated on read; reads the old `alvoxis.clouds` key). `renderQualityOf()` maps settings to `Renderer.quality` (`particleScale`, `reduced`, `lowRes`), which only the renderer and `SkyRenderer` read. `src/game/promo.ts` is the local test promo list. `src/app/version.ts` holds the version and changelog; `src/app/diagnostics.ts` builds the diagnostics text.
+- The Settings dialog is one `<dialog>` with seven `.set-sec` panels switched by `#set-nav`; confirmations use a second `<dialog id="confirm">` via `Hud.confirm()`.

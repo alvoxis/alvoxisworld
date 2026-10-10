@@ -1,3 +1,4 @@
+import { t, td, tn } from '../i18n';
 import { SPECIES } from '../sim/creatures';
 import { EFFECTS } from '../sim/effects';
 import { Simulation } from '../sim/simulation';
@@ -117,7 +118,7 @@ const effectTool = (e: number): Tool => {
     area: (r) => [{ radius: Math.max(0.6, r - 0.5), kind: 'main' }],
     apply: (ctx, x, y, r) => {
       const n = ctx.sim.applyEffect(e, x, y, r - 0.5, ctx.durationTicks, ctx.intensity);
-      ctx.notify(n ? `${def.name} on ${n} creature${n > 1 ? 's' : ''}` : 'No creature there');
+      ctx.notify(n ? tn('toast.effect_on', n, { name: td(`effect.${def.key}`) }) : t('toast.no_creature'));
     },
   };
 };
@@ -253,7 +254,7 @@ export const TOOLS: readonly Tool[] = [
       return [{ radius: crater, kind: 'main' }, { radius: crater * 2.2, kind: 'outer' }];
     },
     apply: (ctx, x, y, r) => {
-      if (!ctx.sim.launchMeteor(x, y, Math.max(2, r), ctx.intensity)) ctx.notify('Too many meteors in the sky');
+      if (!ctx.sim.launchMeteor(x, y, Math.max(2, r), ctx.intensity)) ctx.notify(t('toast.too_many_meteors'));
     },
   },
   {
@@ -263,7 +264,7 @@ export const TOOLS: readonly Tool[] = [
     area: (r) => [{ radius: Math.max(3, r), kind: 'main' }],
     apply: (ctx, x, y, r) => {
       const n = ctx.sim.launchShower(x, y, Math.max(3, r), ctx.count, ctx.intensity);
-      ctx.notify(n ? `Meteor shower: ${n} meteors` : 'Too many meteors in the sky');
+      ctx.notify(n ? tn('toast.shower', n) : t('toast.too_many_meteors'));
     },
   },
   {
@@ -283,7 +284,7 @@ export const TOOLS: readonly Tool[] = [
     hint: 'Removes all buffs and debuffs',
     apply: (ctx, x, y, r) => {
       const n = ctx.sim.cleanse(x, y, r - 0.5);
-      ctx.notify(n ? `Cleansed ${n} creature${n > 1 ? 's' : ''}` : 'No creature there');
+      ctx.notify(n ? tn('toast.cleansed', n) : t('toast.no_creature'));
     },
   },
 ];

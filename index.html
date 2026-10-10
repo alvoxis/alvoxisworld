@@ -15,50 +15,50 @@
   </head>
   <body>
     <div id="app">
-      <canvas id="map" aria-label="World map"></canvas>
+      <canvas id="map" data-i18n-aria="map.label" aria-label="World map"></canvas>
 
       <header id="topbar">
-        <button id="btn-menu" class="chip" aria-label="Open menu">☰</button>
+        <button id="btn-menu" class="chip" data-i18n-aria="top.menu" aria-label="Settings"></button>
         <div id="status">
           <div id="date">Year 1 · Spring · Day 1</div>
           <div id="pop"></div>
           <div id="weather-status"></div>
         </div>
-        <div id="speed" role="group" aria-label="Time controls">
-          <button class="chip arrow" id="slower" aria-label="Slower">‹</button>
-          <button class="chip" id="pause" aria-label="Pause">⏸</button>
-          <button class="chip arrow" id="faster" aria-label="Faster">›</button>
+        <div id="speed" role="group" data-i18n-aria="time.label" aria-label="Time controls">
+          <button class="chip arrow" id="slower" data-i18n-aria="top.slower" aria-label="Slower">‹</button>
+          <button class="chip" id="pause" data-i18n-aria="top.pause" aria-label="Pause">⏸</button>
+          <button class="chip arrow" id="faster" data-i18n-aria="top.faster" aria-label="Faster">›</button>
           <span id="speed-label" aria-live="polite">1×</span>
         </div>
       </header>
 
-      <div id="zoom" role="group" aria-label="Zoom">
-        <button class="chip" id="zoom-in" aria-label="Zoom in">＋</button>
-        <button class="chip" id="zoom-out" aria-label="Zoom out">－</button>
-        <button class="chip" id="zoom-fit" aria-label="Show whole world">⤢</button>
-        <button class="chip" id="undo" aria-label="Undo last terrain change" disabled>↶</button>
-        <button class="chip" id="redo" aria-label="Redo terrain change" disabled>↷</button>
-        <button class="chip" id="minimap-toggle" aria-label="Show or hide the minimap" aria-pressed="true">🗺</button>
+      <div id="zoom" role="group" data-i18n-aria="zoom.label" aria-label="Zoom">
+        <button class="chip" id="zoom-in" data-i18n-aria="zoom.in" aria-label="Zoom in">＋</button>
+        <button class="chip" id="zoom-out" data-i18n-aria="zoom.out" aria-label="Zoom out">－</button>
+        <button class="chip" id="zoom-fit" data-i18n-aria="zoom.fit" aria-label="Show whole world">⤢</button>
+        <button class="chip" id="undo" data-i18n-aria="undo.button" aria-label="Undo last terrain change" disabled>↶</button>
+        <button class="chip" id="redo" data-i18n-aria="redo.button" aria-label="Redo terrain change" disabled>↷</button>
+        <button class="chip" id="minimap-toggle" data-i18n-aria="minimap.toggle" aria-label="Show or hide the minimap" aria-pressed="true">🗺</button>
       </div>
 
-      <canvas id="minimap" aria-label="Minimap: tap to move the camera"></canvas>
+      <canvas id="minimap" data-i18n-aria="minimap.label" aria-label="Minimap: tap to move the camera"></canvas>
 
       <section id="info" hidden>
-        <button class="chip close" id="info-close" aria-label="Close">✕</button>
+        <button class="chip close" id="info-close" data-i18n-aria="info.close" aria-label="Close">✕</button>
         <div id="info-body"></div>
       </section>
 
       <div id="toast" role="status" aria-live="polite"></div>
 
       <footer id="toolbar">
-        <nav id="cats" role="tablist" aria-label="Tool tabs"></nav>
-        <div id="tools" role="toolbar" aria-label="Tools"></div>
+        <nav id="cats" role="tablist" data-i18n-aria="cats.label" aria-label="Tool tabs"></nav>
+        <div id="tools" role="toolbar" data-i18n-aria="tools.label" aria-label="Tools"></div>
         <div id="toolbar-bottom">
-          <div id="sizes" role="radiogroup" aria-label="Area size: from very small to very large"></div>
+          <div id="sizes" role="radiogroup" data-i18n-aria="sizes.label" aria-label="Area size: from very small to very large"></div>
           <div id="toolbar-extra">
-            <div id="quick" role="group" aria-label="View tools">
-              <button class="chip" id="tool-move" aria-label="Move the map">✋</button>
-              <button class="chip" id="tool-inspect" aria-label="Inspect">🔍</button>
+            <div id="quick" role="group" data-i18n-aria="tools.view_label" aria-label="View tools">
+              <button class="chip" id="tool-move" data-i18n-aria="tool.move.hint" aria-label="Move the map">✋</button>
+              <button class="chip" id="tool-inspect" data-i18n-aria="tool.inspect" aria-label="Inspect">🔍</button>
             </div>
             <button class="chip" id="intensity" aria-label="Power level" hidden>Power ●●○</button>
             <button class="chip" id="duration" aria-label="Effect duration" hidden>⏳ Medium</button>
@@ -67,107 +67,122 @@
         </div>
       </footer>
 
-      <dialog id="menu">
+      <dialog id="menu" aria-labelledby="set-title">
         <div class="menu-head">
-          <h1>ALVOXIS: World Evolution</h1>
-          <button class="chip" id="menu-close" aria-label="Close menu">✕</button>
+          <h1 id="set-title" data-i18n="set.title">Settings</h1>
+          <button class="chip" id="menu-close" data-i18n-aria="set.close" aria-label="Close settings">✕</button>
         </div>
+        <nav id="set-nav" role="tablist" data-i18n-aria="set.nav" aria-label="Settings sections"></nav>
 
-        <section>
-          <h2>New world</h2>
+        <section class="set-sec" data-sec="language" role="tabpanel">
+          <h2 data-i18n="lang.title">Interface language</h2>
+          <div id="lang-list" role="radiogroup" data-i18n-aria="lang.title" aria-label="Interface language"></div>
+          <p class="hint" data-i18n="lang.hint"></p>
+        </section>
+
+        <section class="set-sec" data-sec="saves" role="tabpanel" hidden>
+          <h2 data-i18n="set.saves">Save &amp; Load</h2>
+          <p class="hint" data-i18n="save.slots_hint"></p>
+          <div id="slots"></div>
+          <div class="row file-row">
+            <button class="chip wide" id="export-save" data-i18n="save.export">⬇ Export to file</button>
+            <label class="chip wide file-pick" id="import-label"><span data-i18n="save.import">⬆ Import file</span><input type="file" id="import-save" accept=".alvoxis,.json,.gz,application/json,application/gzip,application/octet-stream" /></label>
+          </div>
+          <p class="hint file-status" id="file-status" aria-live="polite" hidden></p>
+          <p class="hint" data-i18n="save.file_hint"></p>
+
+          <h2 data-i18n="new.title">New world</h2>
           <div class="row">
-            <label>Seed <input id="seed" inputmode="text" autocomplete="off" placeholder="random" /></label>
-            <button class="btn" id="seed-random" type="button">🎲</button>
+            <label><span data-i18n="new.seed">Seed</span> <input id="seed" inputmode="text" autocomplete="off" data-i18n-ph="new.seed_ph" placeholder="random" /></label>
+            <button class="btn" id="seed-random" type="button" data-i18n-aria="new.random_seed" aria-label="Random seed">🎲</button>
           </div>
           <div class="row">
-            <label>Size <select id="size"></select></label>
-            <button class="btn primary" id="generate" type="button">Generate</button>
+            <label><span data-i18n="new.size">Size</span> <select id="size"></select></label>
+            <button class="btn primary" id="generate" type="button" data-i18n="new.generate">Generate</button>
           </div>
           <div class="row" id="custom-size" hidden>
-            <label>Width <input id="custom-w" type="number" inputmode="numeric" min="128" max="4096" step="32" value="768" /></label>
-            <label>Height <input id="custom-h" type="number" inputmode="numeric" min="128" max="4096" step="32" value="512" /></label>
+            <label><span data-i18n="new.width">Width</span> <input id="custom-w" type="number" inputmode="numeric" min="128" max="4096" step="32" value="768" /></label>
+            <label><span data-i18n="new.height">Height</span> <input id="custom-h" type="number" inputmode="numeric" min="128" max="4096" step="32" value="512" /></label>
           </div>
           <p class="hint" id="size-note"></p>
           <p class="hint" id="current-seed"></p>
         </section>
 
-        <section>
-          <h2>Weather</h2>
-          <div class="row">
-            <label class="check"><input type="checkbox" id="weather-auto" checked /> Weather changes by itself</label>
-          </div>
-          <div class="row">
-            <label>Severity <select id="weather-severity">
-              <option value="0">Mild</option>
-              <option value="1" selected>Normal</option>
-              <option value="2">Extreme</option>
-            </select></label>
-          </div>
-          <p class="hint">Rain, snow, thunderstorms and droughts move across the map with the wind. They change moisture and temperature, fill or dry lakes and rivers, flood low land, green or wither plants, and put out (or feed) fires. Thunderstorms throw lightning that hurts creatures and can start fires. Pausing stops the weather.</p>
+        <section class="set-sec" data-sec="graphics" role="tabpanel" hidden>
+          <h2 data-i18n="set.graphics">Graphics &amp; Performance</h2>
+          <p class="hint" data-i18n="gfx.hint"></p>
+          <div class="opt"><label class="check"><input type="checkbox" id="opt-performance" /> <span data-i18n="gfx.performance"></span></label><p class="hint" data-i18n="gfx.performance_hint"></p></div>
+          <div class="opt"><label class="check"><input type="checkbox" id="opt-particles" /> <span data-i18n="gfx.particles"></span></label><p class="hint" data-i18n="gfx.particles_hint"></p></div>
+          <div class="opt"><label class="check"><input type="checkbox" id="opt-effects" /> <span data-i18n="gfx.effects"></span></label><p class="hint" data-i18n="gfx.effects_hint"></p></div>
+          <div class="opt"><label class="check"><input type="checkbox" id="ambient-clouds" checked /> <span data-i18n="gfx.clouds"></span></label><p class="hint" data-i18n="gfx.clouds_hint"></p></div>
+          <div class="opt"><label class="check"><input type="checkbox" id="pass-overlay" /> <span data-i18n="gfx.overlay"></span></label><p class="hint" data-i18n="gfx.overlay_hint"></p></div>
+          <h2 data-i18n="gfx.ring">Area ring colour</h2>
+          <div id="ring-list" role="radiogroup" data-i18n-aria="gfx.ring" aria-label="Area ring colour"></div>
+          <p class="hint" id="ring-note" data-i18n="gfx.ring_locked"></p>
         </section>
 
-        <section>
-          <h2>Natural disasters</h2>
-          <div class="row">
-            <label class="check"><input type="checkbox" id="disasters-auto" /> Disasters strike by themselves</label>
-          </div>
-          <div class="row">
-            <label>How often <select id="disasters-frequency">
-              <option value="0">Rare</option>
-              <option value="1" selected>Normal</option>
-              <option value="2">Frequent</option>
-            </select></label>
-          </div>
-          <div class="row"><label class="check"><input type="checkbox" id="disasters-meteors" checked /> Meteors (mostly small, sometimes large)</label></div>
-          <div class="row"><label class="check"><input type="checkbox" id="disasters-quakes" checked /> Earthquakes</label></div>
-          <div class="row"><label class="check"><input type="checkbox" id="disasters-wildfires" checked /> Wildfires (dry places only)</label></div>
-          <p class="hint">Off by default, so the world only changes when you ask. Rates are per game year on a medium map and grow with bigger maps. Natural disasters are never added to the undo history; the god powers still work either way.</p>
+        <section class="set-sec" data-sec="simulation" role="tabpanel" hidden>
+          <h2 data-i18n="sim.speed">Time speed</h2>
+          <div class="row"><label><span data-i18n="sim.speed">Time speed</span> <select id="sim-speed"></select></label></div>
+          <p class="hint" data-i18n="sim.speed_hint"></p>
+          <h2 data-i18n="sim.weather">Weather</h2>
+          <div class="row"><label class="check"><input type="checkbox" id="weather-auto" checked /> <span data-i18n="sim.weather_auto"></span></label></div>
+          <div class="row"><label><span data-i18n="sim.severity">Severity</span> <select id="weather-severity"></select></label></div>
+          <p class="hint" data-i18n="sim.weather_hint"></p>
+          <h2 data-i18n="sim.disasters">Natural disasters</h2>
+          <div class="row"><label class="check"><input type="checkbox" id="disasters-auto" /> <span data-i18n="sim.disasters_auto"></span></label></div>
+          <div class="row"><label><span data-i18n="sim.frequency">How often</span> <select id="disasters-frequency"></select></label></div>
+          <div class="row"><label class="check"><input type="checkbox" id="disasters-meteors" checked /> <span data-i18n="sim.d_meteors"></span></label></div>
+          <div class="row"><label class="check"><input type="checkbox" id="disasters-quakes" checked /> <span data-i18n="sim.d_quakes"></span></label></div>
+          <div class="row"><label class="check"><input type="checkbox" id="disasters-wildfires" checked /> <span data-i18n="sim.d_wildfires"></span></label></div>
+          <p class="hint" data-i18n="sim.disasters_hint"></p>
         </section>
 
-        <section>
-          <h2>View</h2>
-          <div class="row">
-            <label class="check"><input type="checkbox" id="pass-overlay" /> Mark ground animals cannot cross (red: snow, mountain, steep slope; crossed lines: sheer cliff)</label>
-          </div>
-          <div class="row">
-            <label class="check"><input type="checkbox" id="ambient-clouds" checked /> Show fair-weather clouds</label>
-          </div>
-          <p class="hint">Hatches mountains and snow. Deep and shallow sea and lakes block all land animals; rivers can be waded. Rain, snow and storm clouds are always shown; the decorative clouds fade away when you zoom in, and are only a picture (they don't affect the simulation).</p>
-        </section>
-
-        <section>
-          <h2>Save &amp; load</h2>
-          <p class="hint">Saved in this browser (IndexedDB).</p>
-          <div id="slots"></div>
-          <div class="row file-row">
-            <button class="chip wide" id="export-save">⬇ Export to file</button>
-            <label class="chip wide file-pick" id="import-label">⬆ Import file<input type="file" id="import-save" accept=".alvoxis,.json,.gz,application/json,application/gzip,application/octet-stream" /></label>
-          </div>
-          <p class="hint file-status" id="file-status" aria-live="polite" hidden></p>
-          <p class="hint">Files keep the whole world (map, creatures, weather). Import checks the file first; a damaged or foreign file leaves your world untouched.</p>
-        </section>
-
-        <section>
-          <h2>World statistics</h2>
+        <section class="set-sec" data-sec="stats" role="tabpanel" hidden>
+          <h2 data-i18n="set.stats">Statistics</h2>
           <div id="stats"></div>
-        </section>
-
-        <section>
-          <h2>History</h2>
+          <h2 data-i18n="stats.history">History</h2>
           <ol id="history"></ol>
         </section>
 
-        <section>
-          <h2>Controls</h2>
-          <ul class="hint">
-            <li>One finger / left mouse: use the selected tool. Hold to keep applying.</li>
-            <li>Two fingers: pan and pinch-zoom. Mouse: right-drag to pan, wheel to zoom.</li>
-            <li>Keyboard: arrows/WASD pan, +/− zoom, Space pause.</li>
-            <li>✋ Move tool: one-finger drag pans the map.</li>
-            <li>↶ Undo / ↷ Redo: reverts or re-applies terrain changes (brushes, painting, flood, drain, meteor and earthquake terrain). Tiles the world has changed since (rain, drought, grazing, fire) keep their newer state. Creatures, effects, weather and fire are not undoable. Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or Ctrl+Y on a keyboard.</li>
-            <li>🗺 Minimap: tap or drag on it to move the camera.</li>
-          </ul>
+        <section class="set-sec" data-sec="about" role="tabpanel" hidden>
+          <h2 id="about-version">ALVOXIS</h2>
+          <p class="hint" id="about-format"></p>
+          <p data-i18n="about.blurb"></p>
+          <h2 data-i18n="about.help">How to play</h2>
+          <ul class="hint" id="about-help"></ul>
+          <h2 data-i18n="about.changelog">What is new</h2>
+          <ul class="hint" id="about-changelog"></ul>
+          <h2 data-i18n="about.diag">Diagnostics</h2>
+          <p class="hint" data-i18n="about.diag_hint"></p>
+          <div class="row"><button class="btn" id="copy-diag" type="button" data-i18n="about.copy_diag">Copy diagnostics</button></div>
+          <textarea id="diag-text" readonly rows="6" hidden></textarea>
+          <p class="hint file-status" id="diag-status" aria-live="polite" hidden></p>
+          <h2 data-i18n="about.feedback">Feedback</h2>
+          <p class="hint" data-i18n="about.feedback_hint"></p>
         </section>
+
+        <section class="set-sec" data-sec="promo" role="tabpanel" hidden>
+          <h2 data-i18n="promo.title">Promo Codes &amp; Gifts</h2>
+          <p class="hint" data-i18n="promo.hint"></p>
+          <form class="row" id="promo-form" autocomplete="off">
+            <label><span data-i18n="promo.input">Promo code</span> <input id="promo-input" autocapitalize="characters" autocorrect="off" spellcheck="false" data-i18n-ph="promo.input_ph" placeholder="Enter a code" /></label>
+            <button class="btn primary" id="promo-redeem" type="submit" data-i18n="promo.redeem">Redeem</button>
+          </form>
+          <p class="promo-status" id="promo-status" role="status" aria-live="polite" hidden></p>
+          <h2 data-i18n="promo.rewards">Your gifts</h2>
+          <ul class="hint" id="promo-rewards"></ul>
+          <p class="hint" data-i18n="promo.reward_note"></p>
+        </section>
+      </dialog>
+
+      <dialog id="confirm" aria-labelledby="confirm-title">
+        <h2 id="confirm-title" data-i18n="confirm.title">Are you sure?</h2>
+        <p id="confirm-text"></p>
+        <div class="row">
+          <button class="btn" id="confirm-no" type="button" data-i18n="common.cancel">Cancel</button>
+          <button class="btn primary" id="confirm-yes" type="button" data-i18n="common.confirm">Confirm</button>
+        </div>
       </dialog>
     </div>
     <script type="module" src="./src/main.ts"></script>

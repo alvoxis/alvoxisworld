@@ -23,6 +23,8 @@ const PAINT_BUDGET_MS = 6;
  * chunks at once; doing them all in one frame took 55–80 ms on 2048×1280.
  */
 const FLUSH_BUDGET_MS = 4;
+/** Smaller repaint steps in performance mode. */
+const FLUSH_BUDGET_LOW_MS = 2;
 const FROST_TEMPERATURE = 0.45 * 255;
 const SHALLOW_RGB = [66, 150, 196] as const;
 const MAX_GLINTS = 500;
@@ -45,6 +47,12 @@ export interface Overlay {
 }
 
 /** Circles previewing where the current tool acts (see AreaRing in game/tools.ts). */
+export interface RenderQuality {
+  particleScale: number;
+  reduced: boolean;
+  lowRes: boolean;
+}
+
 export interface BrushCursor {
   x: number;
   y: number;
@@ -114,6 +122,15 @@ export class Renderer {
   readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private dpr = 1;
+  private cssW = 0;
+  private cssH = 0;
+  /**
+   * Drawing quality chosen by the player (settings). It only changes how things are drawn,
+   * never the simulation: particle counts, skipped flashes/shadows/glints, resolution.
+   */
+  quality: RenderQuality = { particleScale: 1, reduced: false, lowRes: false };
+  /** Colour of the action-area ring (a cosmetic choice). */
+  ringColor = 'rgba(255,255,255,0.95)';
   private world!: World;
   private base!: HTMLCanvasElement;
   private baseCtx!: CanvasRenderingContext2D;
@@ -182,9 +199,17 @@ export class Renderer {
     this.world.markAllDirty();
   }
 
+  setQuality(q: RenderQuality): void {
+    const res = q.lowRes !== this.quality.lowRes;
+    this.quality = { ...q };
+    if (res && this.cssW) this.resize(this.cssW, this.cssH);
+  }
+
   /** Resizes the backing store to the element's CSS size × devicePixelRatio (capped at 2). */
   resize(cssW: number, cssH: number): void {
-    this.dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.cssW = cssW;
+    this.cssH = cssH;
+    this.dpr = Math.min(this.quality.lowRes ? 1 : 2, window.devicePixelRatio || 1);
     this.canvas.width = Math.round(cssW * this.dpr);
     this.canvas.height = Math.round(cssH * this.dpr);
   }
@@ -340,7 +365,7 @@ export class Renderer {
     const ctx = this.ctx;
     const w = this.world;
     const s = camera.zoom * this.dpr; // device px per tile
-    this.flushDirty(camera, s, FLUSH_BUDGET_MS);
+    this.flushDirty(camera, s, this.quality.lowRes ? FLUSH_BUDGET_LOW_MS : FLUSH_BUDGET_MS);
     const ox = -camera.x * s;
     const oy = -camera.y * s;
     const cw = this.canvas.width;
@@ -358,7 +383,7 @@ export class Renderer {
     const budgetEnd = performance.now() + PAINT_BUDGET_MS;
     if (s >= DETAIL_SCALE) this.drawLevel(this.detail, camera, s, ox, oy, budgetEnd);
     else if (s >= MID_SCALE) this.drawLevel(this.mid, camera, s, ox, oy, budgetEnd);
-    if (s >= MID_SCALE && overlay) this.drawGlints(camera, s, ox, oy, overlay.now);
+    if (s >= MID_SCALE && overlay && !this.quality.reduced) this.drawGlints(camera, s, ox, oy, overlay.now);
 
     if (overlay) this.drawFire(overlay, s, ox, oy);
     this.drawCreatures(camera, creatures, s, ox, oy, alpha);
@@ -372,6 +397,8 @@ export class Renderer {
         burning: overlay.burning,
         drift: overlay.drift,
         ambientClouds: overlay.ambientClouds,
+        particleScale: this.quality.particleScale,
+        reduced: this.quality.reduced,
         worldW: w.width,
         worldH: w.height,
         now: overlay.now,
@@ -432,7 +459,7 @@ export class Renderer {
         ctx.strokeStyle = 'rgba(0,0,0,0.45)';
         ctx.lineWidth = Math.max(3, 3 * this.dpr);
         ctx.stroke();
-        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.strokeStyle = this.ringColor;
         ctx.lineWidth = Math.max(1.5, 1.6 * this.dpr);
         ctx.setLineDash([]);
         ctx.stroke();
