@@ -1,5 +1,4 @@
 import { Rng } from '../core/rng';
-import { isLand } from '../world/brush';
 import { World } from '../world/world';
 import { dateFromTick, SEASON_GROWTH, TICKS_PER_SECOND, type WorldDate } from './clock';
 import { Creatures, SPECIES } from './creatures';
@@ -59,6 +58,14 @@ export class Simulation {
     if (this.history.length > 200) this.history.shift();
   }
 
+  /**
+   * Fraction (0..1) of the way to the next tick. The renderer uses it to draw
+   * creatures between their previous and current positions.
+   */
+  get alpha(): number {
+    return Math.min(1, Math.max(0, this.accumulator));
+  }
+
   /** Advances by real elapsed seconds; returns the number of ticks run. */
   advance(dtSeconds: number): number {
     if (this.speed === 0) return 0;
@@ -77,7 +84,7 @@ export class Simulation {
     const date = this.date;
     vegetationTick(this.world, this.rng, SEASON_GROWTH[date.season]);
     const before = SPECIES.map((s) => this.creatures.countSpecies(s.id));
-    this.creatures.tick(this.world, this.rng);
+    this.creatures.tick(this.world, this.rng, this.tick);
     this.tick++;
 
     const now = this.date;
@@ -87,25 +94,28 @@ export class Simulation {
     }
     SPECIES.forEach((s, k) => {
       const count = this.creatures.countSpecies(s.id);
-      if (before[k] > 0 && count === 0) this.log(`${s.name}s went extinct.`);
+      if (before[k] > 0 && count === 0) this.log(`${s.plural} went extinct.`);
     });
   }
 
-  /** Spawns creatures of a species on land tiles inside a circle. Returns how many spawned. */
+  /**
+   * Spawns creatures of a species inside a circle, only on tiles their habitat
+   * allows (land animals on land, fish in water). Returns how many spawned.
+   */
   spawnInCircle(species: number, cx: number, cy: number, radius: number, amount: number): number {
     let spawned = 0;
-    for (let a = 0; a < amount * 4 && spawned < amount; a++) {
+    for (let a = 0; a < amount * 6 && spawned < amount; a++) {
       const ang = this.rng.next() * Math.PI * 2;
       const r = Math.sqrt(this.rng.next()) * radius;
       const x = cx + Math.cos(ang) * r;
       const y = cy + Math.sin(ang) * r;
-      if (!isLand(this.world, x, y)) continue;
+      if (!Creatures.canEnter(this.world, species, Math.floor(x), Math.floor(y))) continue;
       if (!this.creatures.spawn(species, x, y, this.rng)) break;
       spawned++;
     }
     if (spawned > 0 && !this.seenSpecies.has(species)) {
       this.seenSpecies.add(species);
-      this.log(`The first ${SPECIES[species].name.toLowerCase()}s appeared.`);
+      this.log(`The first ${SPECIES[species].plural.toLowerCase()} appeared.`);
     }
     return spawned;
   }

@@ -1,8 +1,48 @@
-import { Creatures, MAX_CREATURES } from '../sim/creatures';
+import { CAUSE, Creatures, MAX_CREATURES, SPECIES, STATE } from '../sim/creatures';
 import { Simulation, type HistoryEntry } from '../sim/simulation';
 import { World } from '../world/world';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
+
+/** Creature fields stored in a save (one typed array per field, length = count). */
+export interface CreatureSave {
+  count: number;
+  nextId: number;
+  id: Uint32Array;
+  species: Uint8Array;
+  x: Float32Array;
+  y: Float32Array;
+  dx: Float32Array;
+  dy: Float32Array;
+  health: Float32Array;
+  hunger: Float32Array;
+  thirst: Float32Array;
+  age: Float32Array;
+  state: Uint8Array;
+  tx: Float32Array;
+  ty: Float32Array;
+  targetId: Uint32Array;
+  timer: Uint16Array;
+  breedTimer: Uint16Array;
+  births: number;
+  deaths: number;
+  deathStats: Uint32Array;
+  birthStats: Uint32Array;
+}
+
+/** Version 1 creature block (Milestone 1: grazers and raptors with energy only). */
+interface CreatureSaveV1 {
+  count: number;
+  x: Float32Array;
+  y: Float32Array;
+  dx: Float32Array;
+  dy: Float32Array;
+  species: Uint8Array;
+  energy: Float32Array;
+  age: Float32Array;
+  births: number;
+  deaths: number;
+}
 
 /** Plain, structured-clone-friendly snapshot of a running world. */
 export interface SaveData {
@@ -17,25 +57,28 @@ export interface SaveData {
   terrain: Uint8Array;
   temperature: Uint8Array;
   moisture: Uint8Array;
-  creatures: {
-    count: number;
-    x: Float32Array;
-    y: Float32Array;
-    dx: Float32Array;
-    dy: Float32Array;
-    species: Uint8Array;
-    energy: Float32Array;
-    age: Float32Array;
-    births: number;
-    deaths: number;
-  };
+  creatures: CreatureSave | CreatureSaveV1;
   history: HistoryEntry[];
 }
+
+const COPIED = [
+  'id', 'species', 'x', 'y', 'dx', 'dy', 'health', 'hunger', 'thirst', 'age', 'state', 'tx', 'ty', 'targetId',
+  'timer', 'breedTimer',
+] as const;
 
 export function serialize(sim: Simulation): SaveData {
   const w = sim.world;
   const c = sim.creatures;
   const n = c.count;
+  const creatures = {
+    count: n,
+    nextId: c.nextId,
+    births: c.births,
+    deaths: c.deaths,
+    deathStats: c.deathStats.slice(),
+    birthStats: c.birthStats.slice(),
+  } as CreatureSave;
+  for (const k of COPIED) (creatures as unknown as Record<string, unknown>)[k] = c[k].slice(0, n);
   return {
     version: SAVE_VERSION,
     savedAt: new Date().toISOString(),
@@ -48,25 +91,59 @@ export function serialize(sim: Simulation): SaveData {
     terrain: w.terrain.slice(),
     temperature: w.temperature.slice(),
     moisture: w.moisture.slice(),
-    creatures: {
-      count: n,
-      x: c.x.slice(0, n),
-      y: c.y.slice(0, n),
-      dx: c.dx.slice(0, n),
-      dy: c.dy.slice(0, n),
-      species: c.species.slice(0, n),
-      energy: c.energy.slice(0, n),
-      age: c.age.slice(0, n),
-      births: c.births,
-      deaths: c.deaths,
-    },
+    creatures,
     history: sim.history.map((h) => ({ ...h })),
   };
 }
 
+function loadCreaturesV2(c: Creatures, src: CreatureSave): void {
+  const count = Math.min(src.count, MAX_CREATURES);
+  for (const k of COPIED) {
+    const arr = src[k];
+    if (!arr || arr.length < count) throw new Error(`Corrupt save: creature field ${k}`);
+    (c[k] as Uint8Array).set(arr.subarray(0, count) as unknown as ArrayLike<number>);
+  }
+  c.px.set(c.x.subarray(0, count));
+  c.py.set(c.y.subarray(0, count));
+  c.harm.fill(CAUSE.NONE, 0, count);
+  c.count = count;
+  c.nextId = src.nextId;
+  c.births = src.births;
+  c.deaths = src.deaths;
+  if (src.deathStats?.length === c.deathStats.length) c.deathStats.set(src.deathStats);
+  if (src.birthStats?.length === c.birthStats.length) c.birthStats.set(src.birthStats);
+}
+
+/** Milestone 1 saves: energy becomes hunger, everyone gets full health and a fresh id. */
+function loadCreaturesV1(c: Creatures, src: CreatureSaveV1): void {
+  const count = Math.min(src.count, MAX_CREATURES);
+  for (let i = 0; i < count; i++) {
+    const sp = SPECIES[src.species[i]] ?? SPECIES[0];
+    c.id[i] = i + 1;
+    c.species[i] = sp.id;
+    c.x[i] = c.px[i] = src.x[i];
+    c.y[i] = c.py[i] = src.y[i];
+    c.dx[i] = src.dx[i];
+    c.dy[i] = src.dy[i];
+    c.health[i] = sp.maxHealth;
+    c.hunger[i] = Math.max(0, Math.min(100, 100 - src.energy[i]));
+    c.thirst[i] = sp.thirstRate > 0 ? 20 : 0;
+    c.age[i] = src.age[i];
+    c.state[i] = STATE.WANDER;
+    c.targetId[i] = 0;
+    c.timer[i] = 0;
+    c.breedTimer[i] = 0;
+    c.harm[i] = CAUSE.NONE;
+  }
+  c.count = count;
+  c.nextId = count + 1;
+  c.births = src.births;
+  c.deaths = src.deaths;
+}
+
 /** Validates a snapshot and loads it into the simulation, replacing the current world. */
 export function deserializeInto(sim: Simulation, data: SaveData): World {
-  if (!data || data.version !== SAVE_VERSION) throw new Error('Unsupported save version');
+  if (!data || (data.version !== 1 && data.version !== SAVE_VERSION)) throw new Error('Unsupported save version');
   const n = data.width * data.height;
   for (const arr of [data.heights, data.terrain, data.temperature, data.moisture]) {
     if (!(arr instanceof Uint8Array) || arr.length !== n) throw new Error('Corrupt save: map size mismatch');
@@ -79,19 +156,8 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
   world.markAllDirty();
 
   sim.reset(world, data.tick, data.rngState);
-  const src = data.creatures;
-  const c: Creatures = sim.creatures;
-  const count = Math.min(src.count, MAX_CREATURES);
-  c.x.set(src.x.subarray(0, count));
-  c.y.set(src.y.subarray(0, count));
-  c.dx.set(src.dx.subarray(0, count));
-  c.dy.set(src.dy.subarray(0, count));
-  c.species.set(src.species.subarray(0, count));
-  c.energy.set(src.energy.subarray(0, count));
-  c.age.set(src.age.subarray(0, count));
-  c.count = count;
-  c.births = src.births;
-  c.deaths = src.deaths;
+  if (data.version === 1) loadCreaturesV1(sim.creatures, data.creatures as CreatureSaveV1);
+  else loadCreaturesV2(sim.creatures, data.creatures as CreatureSave);
   sim.history = data.history.map((h) => ({ ...h }));
   return world;
 }

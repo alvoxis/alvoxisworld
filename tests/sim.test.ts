@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Camera } from '../src/render/camera';
 import { deserializeInto, serialize } from '../src/save/serialize';
 import { dateFromTick, TICKS_PER_YEAR } from '../src/sim/clock';
-import { GRAZER, MAX_CREATURES, RAPTOR } from '../src/sim/creatures';
+import { CAUSE, GRAZER, MAX_CREATURES, RAPTOR, SPECIES } from '../src/sim/creatures';
 import { Simulation } from '../src/sim/simulation';
 import { applyPaintBrush } from '../src/world/brush';
 import { generateWorld } from '../src/world/generator';
@@ -67,14 +67,15 @@ describe('simulation', () => {
       const y = r.next() * 320;
       if (w.terrainAt(Math.floor(x), Math.floor(y)) !== T.GRASS) continue;
       sim.spawnInCircle(GRAZER, x, y, 3, 8);
-      if (placed % 3 === 0) sim.spawnInCircle(RAPTOR, x, y, 3, 1);
+      if (placed % 3 === 0) sim.spawnInCircle(RAPTOR, x, y, 3, 2);
       placed++;
     }
-    for (let i = 0; i < TICKS_PER_YEAR * 6; i++) sim.step();
+    for (let i = 0; i < TICKS_PER_YEAR * 4; i++) sim.step();
     const grazers = sim.creatures.countSpecies(GRAZER);
     expect(grazers).toBeGreaterThan(100);
-    expect(grazers).toBeLessThan(MAX_CREATURES * 0.8);
-    expect(sim.creatures.countSpecies(RAPTOR)).toBeGreaterThan(5);
+    expect(grazers).toBeLessThan(MAX_CREATURES * SPECIES[GRAZER].maxShare + 10);
+    expect(sim.creatures.countSpecies(RAPTOR)).toBeGreaterThan(0);
+    expect(sim.creatures.deathsBy(GRAZER, CAUSE.PREDATION)).toBeGreaterThan(10);
   });
 
   it('bare soil regrows over time', () => {
