@@ -93,6 +93,54 @@ const ELF: string[] = [
   '..l..l..',
 ];
 
+
+// ---- 0.23 wild animals (side view, facing right) -------------------------------------------------------------------
+const DEER: string[] = [
+  '........a.a',
+  '........aaa',
+  '.......bbbe',
+  '.......bbbn',
+  '.bbbbbbbb..',
+  'wbbbbbbbb..',
+  '.bBBBBBbb..',
+  '..l....l...',
+  '..l....l...',
+  '..h....h...',
+];
+const RABBIT: string[] = ['....ee.', '....ee.', '.gggggk', 'ggggggg', 'wgggggg', '.l...l.'];
+const WOLF: string[] = [
+  '.........e.e',
+  '........gggg',
+  '........gkgg',
+  '.......ggggn',
+  't.ggggggggg.',
+  'ttggggggggg.',
+  '..gLLLLLgg..',
+  '..l..l..l.l.',
+];
+const BEAR: string[] = [
+  '.........e.e.',
+  '........bbbbb',
+  '........bkbbb',
+  '........bbbbn',
+  '..bbbbbbbbbb.',
+  '.bbbbbbbbbbb.',
+  '.bbbbbbbbbbb.',
+  '.bBBBBBBBbbb.',
+  '..ll....ll...',
+  '..ll....ll...',
+];
+const SHARK: string[] = ['.....f......', '....ff......', 't.sssssssss.', 'ttssssssssse', 't.sWWWWWWss.', '....p...p...'];
+const WHALE: string[] = [
+  '....bbbbbbbbb...',
+  '..bbbbbbbbbbbbb.',
+  't.bbbbbbbbbbbbbb',
+  'ttbbbbbbbbbbbebb',
+  't.bWWWWWWWWWWbb.',
+  '....WWW...p.....',
+];
+const ORCA: string[] = ['......f.......', '.....ff.......', 't.kkkkkkkkkkk.', 'ttkkkkkkkkWkek', 't.kWWWWWWkkkk.', '....p.........'];
+
 export const CREATURE_ART: Readonly<Record<number, CreatureArt>> = {
   0: {
     frames: [GRAZER, swap(GRAZER, { 6: '...l.l...', 7: '..l...l..' })],
@@ -122,10 +170,54 @@ export const CREATURE_ART: Readonly<Record<number, CreatureArt>> = {
     frames: [ELF, swap(ELF, { 9: '..l.l...', 10: '.l...l..' })],
     palette: { y: '#f3e7a6', s: '#f1d3b3', e: '#f1d3b3', E: '#2d6a2d', g: '#2f7d45', b: '#a0743c', l: '#3b4a2e' },
   },
+  7: {
+    frames: [DEER, swap(DEER, { 7: '...l..l....', 8: '..l....l...', 9: '.h......h..' })],
+    palette: { a: '#c9b08a', b: '#a8703c', B: '#d9b48a', e: '#1a1a1a', n: '#2a1a10', w: '#f2ece0', l: '#7a4a24', h: '#2a1a10' },
+  },
+  8: {
+    frames: [RABBIT, swap(RABBIT, { 5: '..l.l..' })],
+    palette: { g: '#b8a58a', e: '#c9b49a', k: '#1a1a1a', w: '#f4f0e8', l: '#8a7a62' },
+  },
+  9: {
+    frames: [WOLF, swap(WOLF, { 7: '...l.l...ll.' })],
+    palette: { g: '#7d7f86', L: '#b8bcc4', k: '#f2c14e', n: '#1a1a1a', e: '#5d5f66', t: '#5d5f66', l: '#4a4c52' },
+  },
+  10: {
+    frames: [BEAR, swap(BEAR, { 8: '...ll..ll....', 9: '...ll..ll....' })],
+    palette: { b: '#6b4a32', B: '#4f3523', e: '#4f3523', k: '#111111', n: '#2a1a10', l: '#3e2a1c' },
+  },
+  11: {
+    frames: [SHARK, swap(SHARK, { 2: '..sssssssss.', 3: 'tsssssssssse', 4: '..sWWWWWWss.' })],
+    palette: { s: '#7b8a99', f: '#5d6b79', t: '#5d6b79', W: '#dfe6ec', e: '#111111', p: '#5d6b79' },
+  },
+  12: {
+    frames: [WHALE, swap(WHALE, { 2: '..bbbbbbbbbbbbbb', 3: 'tbbbbbbbbbbbbebb', 4: '..bWWWWWWWWWWbb.' })],
+    palette: { b: '#4a5d78', W: '#9aa9bb', t: '#3b4b63', e: '#111111', p: '#3b4b63' },
+  },
+  13: {
+    frames: [ORCA, swap(ORCA, { 2: '..kkkkkkkkkkk.', 3: 'tkkkkkkkkkWkek', 4: '..kWWWWWWkkkk.' })],
+    palette: { k: '#1d2330', W: '#f2f2f2', f: '#1d2330', t: '#1d2330', e: '#8a8f99', p: '#1d2330' },
+  },
 };
 
 /** Opaque pixels of a frame (for tests: silhouettes and sizes). */
 export function silhouette(species: number, frame = 0): string[] {
   const art = CREATURE_ART[species];
   return (art?.frames[frame] ?? []).map((r) => [...r].map((ch) => (art.palette[ch] ? '#' : '.')).join(''));
+}
+
+/**
+ * Drawn size of creatures (0.23): one sprite pixel is CREATURE_SCALE / 8 of a tile, half of the earlier 1/8, so
+ * people and animals stand at a natural size next to houses and trees. Nothing is drawn narrower than the minimum
+ * (device pixels; people a little larger) so creatures stay visible far away. Juveniles are drawn at 3/4 size.
+ * Drawing only: selection uses its own, larger radius (Creatures.candidatesAt), not the sprite.
+ */
+export const CREATURE_SCALE = 0.5;
+export const MIN_SPRITE_PX = 5;
+export const MIN_PERSON_PX = 6;
+
+/** Device pixels per sprite pixel for a creature at s device pixels per tile. */
+export function creatureScale(s: number, artW: number, sentient: boolean, juvenile: boolean, dpr: number): number {
+  const minW = (sentient ? MIN_PERSON_PX : MIN_SPRITE_PX) * dpr;
+  return Math.max((s / 8) * CREATURE_SCALE, minW / artW) * (juvenile ? 0.75 : 1);
 }

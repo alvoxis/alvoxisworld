@@ -1,5 +1,6 @@
 import { hash2 } from '../core/rng';
 import { Creatures, SPECIES, STATE, type Architecture } from '../sim/creatures';
+import { MOVE } from '../sim/pathfinding';
 import type { WeatherSystem } from '../sim/weather';
 import { SEA_LEVEL, T, TERRAIN, isWater } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
@@ -9,9 +10,11 @@ import { SkyRenderer, type Bolt, type Dust, type VisualEffect } from './skyfx';
 import type { MeteorInFlight } from '../sim/sky';
 import { COLORS, type Settlement } from '../sim/settlements';
 import { KINGDOM_COLORS, type Kingdom } from '../sim/kingdoms';
-import type { Building, BuildingType, JobKind } from '../sim/civ';
-import { OUTLINE_PAD, Tileset, TILE_PX, creatureSprite } from './tileset';
-import { architectureOf, buildingDot, drawBuildingArt } from './architecture';
+import { CENTRE_FREE, preparing, type Building, type BuildingType, type JobKind, type Stage } from '../sim/civ';
+import { OUTLINE_PAD, Tileset, creatureSprite, type Sprite } from './tileset';
+import { CREATURE_SCALE, creatureScale } from './creatureart';
+import { BUILDING_SCALE, architectureOf, buildingDot, drawBuildingArt } from './architecture';
+import { LANDMARK_BOUNDS, LANDMARK_OVER_DOTS_BELOW, drawLandmark, landmarkBox, landmarkFireSide, landmarkGround, landmarkScaleFor, landmarkTop, shownResidents } from './landmarks';
 
 /** Device pixels per tile at which 16-px-per-tile fine chunks (native close-up art) are used. */
 export const FINE_SCALE = 18;
@@ -38,10 +41,10 @@ const PAINT_BUDGET_MS = 6;
  */
 const FLUSH_BUDGET_MS = 4;
 /** Smallest drawn width (CSS px) of a creature sprite, and of a person. */
-const MIN_SPRITE_PX = 7;
-const MIN_PERSON_PX = 10;
 /** Smaller repaint steps in performance mode. */
 const FLUSH_BUDGET_LOW_MS = 2;
+/** Terrain that carries trees (tree features in painter.ts). */
+const WOODED: readonly boolean[] = TERRAIN.map((d) => d.id === T.FOREST || d.id === T.JUNGLE || d.id === T.TUNDRA || d.id === T.SAVANNA);
 const FROST_TEMPERATURE = 0.45 * 255;
 const SHALLOW_RGB = [66, 150, 196] as const;
 const MAX_GLINTS = 500;
@@ -66,6 +69,8 @@ export interface Overlay {
   settlementBorders: boolean;
   /** Trails worn by settlement people: [tile, wear] pairs, rebuilt into a cache only when `version` changes. */
   trails?: { version: number; tiles: () => number[] };
+  /** Version of the settlements' roads (Settlements.roadVersion): road drawing is cached on it. */
+  roadVersion?: number;
   /** Kingdoms above the settlements (territory tint, outer border, name at the capital). */
   kingdoms?: KingdomView;
   /** Kind of work of a settlement worker (drawn as a small tool over people at work). */
@@ -513,15 +518,44 @@ export class Renderer {
     else if (lvl === 4) this.drawLevel(this.mid, camera, s, ox, oy, budgetEnd);
     if (s >= MID_SCALE && overlay && !this.quality.reduced) this.drawGlints(camera, s, ox, oy, overlay.now);
 
-    if (overlay) this.drawFire(overlay, s, ox, oy);
+    // Fire on a landmark's centre is sorted out first: in front of its walls it is drawn after the landmark, behind
+    // them it shows as glow and smoke over the building (never as flames through walls), elsewhere as usual.
+    this.landmarkFire = overlay?.settlementBorders ? this.sortLandmarkFire(overlay, camera.zoom) : null;
+    const lf = this.landmarkFire;
+    if (overlay) this.drawFire(overlay, s, ox, oy, lf ? (i) => !lf.late.has(i) && !lf.hidden.has(i) : undefined);
     // Settlements (borders, buildings, centre marker) are drawn first so that people are never hidden behind them.
     if (overlay?.trails) this.drawTrails(overlay.trails, camera, s, ox, oy);
+    if (overlay?.settlementBorders && overlay.settlements.length) this.drawRoads(overlay.settlements, overlay.roadVersion ?? 0, camera, s, ox, oy);
     if (overlay?.settlementBorders && overlay.settlements.length) {
       const kc = overlay.kingdoms?.list.length ? this.kingdomCache(overlay.settlements, overlay.kingdoms) : null;
       if (kc && !this.quality.reduced) this.drawKingdomTints(kc, s, ox, oy);
       this.drawSettlements(overlay.settlements, camera, s, ox, oy, kc);
     }
     this.drawCreatures(camera, creatures, s, ox, oy, alpha, overlay);
+    // Far away creatures are dots and landmarks icons over them, so each settlement's main building stays
+    // recognisable; the settlement's buildings under the icon and a few of its residents are drawn again on top.
+    if (overlay?.settlementBorders && camera.zoom < LANDMARK_OVER_DOTS_BELOW) {
+      const vx0 = camera.x - 1;
+      const vy0 = camera.y - 1;
+      const vx1 = camera.x + this.canvas.width / s + 1;
+      const vy1 = camera.y + this.canvas.height / s + 1;
+      for (const st of overlay.settlements) {
+        if (!st.civ) continue;
+        const box = landmarkBox(st, camera.zoom);
+        if (box.x1 < vx0 || box.y1 < vy0 || box.x0 > vx1 || box.y0 > vy1) continue;
+        const arch = architectureOf(st.species);
+        this.drawLandmark(st, arch, st.civ.stage, ox + (st.x + 0.5) * s, oy + (st.y + 0.5) * s, s);
+        for (const b of st.civ.buildings) {
+          if (b.x + 1 > box.x0 && b.x < box.x1 && b.y + 1 > box.y0 && b.y < box.y1) this.drawBuilding(b, st.color, arch, s, ox, oy, vx0, vy0, vx1, vy1);
+        }
+        this.drawLandmarkFire(st, s, ox, oy);
+        for (const i of shownResidents(st, creatures, camera.zoom)) {
+          const x = creatures.px[i] + (creatures.x[i] - creatures.px[i]) * alpha;
+          const y = creatures.py[i] + (creatures.y[i] - creatures.py[i]) * alpha;
+          this.drawDot(creatures.species[i], Math.round(ox + x * s), Math.round(oy + y * s));
+        }
+      }
+    }
     if (overlay?.settlementBorders && overlay.settlements.length && s >= 3 * this.dpr) this.drawSettlementLabels(overlay.settlements, s, ox, oy, overlay.kingdoms);
     if (overlay) {
       this.skyfx.draw(ctx, camera, s, ox, oy, this.dpr, {
@@ -673,6 +707,117 @@ export class Renderer {
     ctx.imageSmoothingEnabled = smooth;
   }
 
+  private roadCache: { version: number; blocks: Map<number, HTMLCanvasElement> } | null = null;
+
+  /**
+   * Roads (0.23, sim/roads.ts): per 32×32-tile block one canvas at 8 px per tile, rebuilt only when roads change.
+   * Each road tile is a strip of ground joined to its road neighbours, the plaza and building doors: a narrow
+   * trodden path in a camp, a wider dirt road with darker verges in a village, a cobbled road in a town.
+   */
+  private drawRoads(list: readonly Settlement[], version: number, camera: Camera, s: number, ox: number, oy: number): void {
+    const W = this.world.width;
+    const B = 32;
+    const P = 8;
+    if (!this.roadCache || this.roadCache.version !== version) {
+      const blocks = new Map<number, HTMLCanvasElement>();
+      const bw = Math.ceil(W / B);
+      for (const st of list) {
+        const c = st.civ;
+        if (!c || !c.roads.length) continue;
+        const roads = new Set(c.roads);
+        const doors = new Set(c.buildings.map((b) => (b.y + 1) * W + b.x));
+        const link = (x: number, y: number) => {
+          const n = y * W + x;
+          return roads.has(n) || doors.has(n) || Math.max(Math.abs(x - st.x), Math.abs(y - st.y)) <= CENTRE_FREE;
+        };
+        // Humans: trodden earth, then dirt roads with pebbles, then cobbles. Elves: soft paths, then pale stone with moss.
+        const elven = architectureOf(st.species) === 'elven';
+        const style = elven
+          ? c.stage === 'town' ? { w: 4, fill: '#c2b892', edge: '#8f9a66', dot: '#7fa060' } : c.stage === 'village' ? { w: 4, fill: '#a99a6c', edge: '#7d8a55', dot: '#8fae6a' } : { w: 3, fill: '#9a8c62', edge: '#738050', dot: '' }
+          : c.stage === 'town' ? { w: 4, fill: '#ab9f88', edge: '#857a66', dot: '#c7bca6' } : c.stage === 'village' ? { w: 4, fill: '#a98a5e', edge: '#86693f', dot: '#bfa274' } : { w: 3, fill: '#9c8058', edge: '#7f6644', dot: '' };
+        // The plaza around the main building: the hub every road starts from (trodden earth, or paved in a town).
+        const plaza: number[] = [];
+        if (!preparing(c, st, W)) {
+          for (let dy = -CENTRE_FREE; dy <= CENTRE_FREE; dy++) {
+            for (let dx = -CENTRE_FREE; dx <= CENTRE_FREE; dx++) {
+              const px = st.x + dx;
+              const py = st.y + dy;
+              if (px >= 0 && py >= 0 && px < W && py < this.world.height && !isWater(this.world.terrain[py * W + px])) plaza.push(py * W + px);
+            }
+          }
+        }
+        const block = (t: number) => {
+          const x = t % W;
+          const y = (t - x) / W;
+          const key = Math.floor(y / B) * bw + Math.floor(x / B);
+          let cv = blocks.get(key);
+          if (!cv) {
+            cv = document.createElement('canvas');
+            cv.width = cv.height = B * P;
+            blocks.set(key, cv);
+          }
+          return { ctx: cv.getContext('2d')!, x, y, lx: (x % B) * P, ly: (y % B) * P };
+        };
+        for (const t of plaza) {
+          const { ctx, x, y, lx, ly } = block(t);
+          // Inset from the plaza's outer border (1 px verge, 2 px to the fill), none between plaza tiles.
+          const out = (nx: number, ny: number) => Math.max(Math.abs(nx - st.x), Math.abs(ny - st.y)) > CENTRE_FREE;
+          const [l, r, u, d] = [out(x - 1, y), out(x + 1, y), out(x, y - 1), out(x, y + 1)];
+          const rect = (k: number) => ctx.fillRect(lx + (l ? k : 0), ly + (u ? k : 0), P - (l ? k : 0) - (r ? k : 0), P - (u ? k : 0) - (d ? k : 0));
+          ctx.fillStyle = style.edge;
+          rect(1);
+          ctx.fillStyle = style.fill;
+          rect(2);
+          if (style.dot) {
+            ctx.fillStyle = style.dot;
+            for (let k = 0; k < 2; k++) {
+              const h = hash2(x * 5 + k, y * 11 + k, 0x2f6b8a1d);
+              ctx.fillRect(lx + 1 + Math.floor(h * (P - 2)), ly + 1 + Math.floor(((h * 991) % 1) * (P - 2)), 1, 1);
+            }
+          }
+        }
+        for (const t of c.roads) {
+          const { ctx, x, y, lx, ly } = block(t);
+          const a = (P - style.w) >> 1;
+          const parts: Array<[number, number, number, number]> = [[a, a, style.w, style.w]];
+          if (link(x, y - 1)) parts.push([a, 0, style.w, a]);
+          if (link(x, y + 1)) parts.push([a, a + style.w, style.w, P - a - style.w]);
+          if (link(x - 1, y)) parts.push([0, a, a, style.w]);
+          if (link(x + 1, y)) parts.push([a + style.w, a, P - a - style.w, style.w]);
+          ctx.fillStyle = style.edge; // verges: the strip one pixel wider, darker
+          for (const [px, py, pw, ph] of parts) ctx.fillRect(lx + px - 1, ly + py - 1, pw + 2, ph + 2);
+          ctx.fillStyle = style.fill;
+          for (const [px, py, pw, ph] of parts) ctx.fillRect(lx + px, ly + py, pw, ph);
+          if (style.dot) {
+            // Pebbles (village) or cobbles (town), placed by a fixed hash of the tile.
+            ctx.fillStyle = style.dot;
+            for (let k = 0; k < 3; k++) {
+              const h = hash2(x * 3 + k, y * 7 + k, 0x5bd1e995);
+              ctx.fillRect(lx + a + Math.floor(h * style.w), ly + a + Math.floor(((h * 997) % 1) * style.w), 1, 1);
+            }
+          }
+        }
+      }
+      this.roadCache = { version, blocks };
+    }
+    if (!this.roadCache.blocks.size) return;
+    const ctx = this.ctx;
+    const smooth = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = s < P;
+    const bw = Math.ceil(W / B);
+    const vx0 = camera.x - B;
+    const vy0 = camera.y - B;
+    const vx1 = camera.x + this.canvas.width / s;
+    const vy1 = camera.y + this.canvas.height / s;
+    for (const [key, c] of this.roadCache.blocks) {
+      const bx = (key % bw) * B;
+      const by = Math.floor(key / bw) * B;
+      if (bx < vx0 || by < vy0 || bx > vx1 || by > vy1) continue;
+      ctx.drawImage(c, Math.round(ox + bx * s), Math.round(oy + by * s), Math.round(B * s), Math.round(B * s));
+    }
+    ctx.imageSmoothingEnabled = smooth;
+  }
+
   private kc: KingdomCache | null = null;
 
   /** Rebuilt only when kingdoms or territories change (never per frame). */
@@ -803,14 +948,25 @@ export class Renderer {
         ctx.lineWidth = Math.max(1.5, 1.6 * this.dpr);
         ctx.stroke();
       }
-      // Buildings of a human settlement (finished ones solid, under construction faded).
-      if (st.civ) {
-        const arch = architectureOf(st.species);
-        for (const b of st.civ.buildings) this.drawBuilding(b, st.color, arch, s, ox, oy, x0, y0, x1, y1);
-      }
-      // Centre marker.
       const cx = ox + (st.x + 0.5) * s;
       const cy = oy + (st.y + 0.5) * s;
+      // Buildings of a people's settlement (finished ones solid, under construction faded) and, at the centre, its
+      // landmark: buildings behind it (rows up to the landmark's ground row) first, those in front after it.
+      if (st.civ) {
+        const arch = architectureOf(st.species);
+        // Back to front (larger buildings overlap the row behind them), the landmark at its ground row.
+        const sorted = st.civ.buildings.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+        const ground = Math.floor(landmarkGround(st, camera.zoom));
+        let k = 0;
+        for (; k < sorted.length && sorted[k].y <= ground; k++) this.drawBuilding(sorted[k], st.color, arch, s, ox, oy, x0, y0, x1, y1);
+        if (camera.zoom >= LANDMARK_OVER_DOTS_BELOW) {
+          this.drawLandmark(st, arch, st.civ.stage, cx, cy, s);
+          this.drawLandmarkFire(st, s, ox, oy);
+        }
+        for (; k < sorted.length; k++) this.drawBuilding(sorted[k], st.color, arch, s, ox, oy, x0, y0, x1, y1);
+        continue;
+      }
+      // Centre marker of a settlement without buildings.
       if (cx < -40 || cy < -40 || cx > cw + 40 || cy > ch + 40) continue;
       const r = Math.max(4 * this.dpr, s * 0.7);
       ctx.beginPath();
@@ -837,7 +993,8 @@ export class Renderer {
     ctx.lineWidth = 3 * this.dpr;
     for (const st of list) {
       const cx = ox + (st.x + 0.5) * s;
-      const cy = oy + (st.y + 0.5) * s - Math.max(10 * this.dpr, s * 1.6);
+      const lift = st.civ ? ((4 - landmarkTop(architectureOf(st.species), st.civ.stage)) * s * landmarkScaleFor(st, s / this.dpr)) / 8 + 5 * this.dpr : 0;
+      const cy = oy + (st.y + 0.5) * s - Math.max(10 * this.dpr, s * 1.6, lift);
       if (cx < -80 || cy < -40 || cx > this.canvas.width + 80 || cy > this.canvas.height + 40) continue;
       const label = `${st.name} · ${st.members.length}`;
       ctx.strokeStyle = 'rgba(0,0,0,0.75)';
@@ -857,15 +1014,20 @@ export class Renderer {
     ctx.restore();
   }
 
+  /**
+   * A building at BUILDING_SCALE times the tile (architecture.ts): its art is drawn as if on a tile BUILDING_SCALE
+   * tiles wide, standing on the bottom of its own tile and centred on it. Only the drawing grows; the building
+   * still occupies one tile, and the layout (civ.ts findSite) keeps the tiles around it clear so it fits.
+   */
   private drawBuilding(b: Building, color: number, arch: Architecture, s: number, ox: number, oy: number, x0: number, y0: number, x1: number, y1: number): void {
-    if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) return;
+    if (b.x < x0 - 1 || b.x > x1 + 1 || b.y < y0 || b.y > y1 + 2 * BUILDING_SCALE) return;
     const ctx = this.ctx;
-    const px = Math.round(ox + b.x * s);
-    const py = Math.round(oy + b.y * s);
-    const w = Math.max(2, Math.round(s));
     const a = ctx.globalAlpha;
     ctx.globalAlpha = a * (b.done ? 1 : 0.45);
     const level = b.done ? b.level : 1;
+    const w = Math.max(2, Math.round(s * BUILDING_SCALE));
+    const px = Math.round(ox + (b.x + 0.5) * s - w / 2);
+    const py = Math.round(oy + (b.y + 1) * s - w);
     if (s < 3) {
       // Far away: a coloured dot per building (houses by level, so towns read lighter and larger).
       ctx.fillStyle = buildingDot(arch, b.type, level);
@@ -880,7 +1042,7 @@ export class Renderer {
     ctx.globalAlpha = a;
     if (b.up && s >= 3) {
       // Upgrade under way: wooden scaffolding around the house (which keeps standing and housing its people).
-      const u = s / 8;
+      const u = w / 8;
       const top = b.up >= 3 ? -4 : -1;
       ctx.fillStyle = '#b07a3a';
       for (const x of [0, 7]) ctx.fillRect(Math.round(px + x * u), Math.round(py + top * u), Math.max(1, Math.round(u)), Math.round((8 - top) * u));
@@ -934,6 +1096,143 @@ export class Renderer {
   private spriteCache = new Map<string, { canvas: HTMLCanvasElement; pad: number }>();
 
   /**
+   * A settlement's landmark (render/landmarks.ts) at its centre: the outlined, shadowed sprite cached per look and
+   * size, scaled about the centre tile (landmarkScaleFor: within the free centre from zoom 3 up, an icon further out).
+   * Close up and not in reduced quality, the hearth of a human camp or village flickers.
+   */
+  private drawLandmark(st: Settlement, arch: Architecture, stage: Stage, cx: number, cy: number, s: number): void {
+    const size = Math.max(2, Math.round(s * landmarkScaleFor(st, s / this.dpr)));
+    const B = LANDMARK_BOUNDS;
+    const left = cx + ((B.x0 - 4) * size) / 8;
+    const top = cy + ((B.y0 - 4) * size) / 8;
+    const wpx = ((B.x1 - B.x0) * size) / 8;
+    const hpx = ((B.y1 - B.y0) * size) / 8;
+    if (left > this.canvas.width || top > this.canvas.height || left + wpx < 0 || top + hpx < 0) return;
+    const sp = this.landmarkSprite(arch, stage, st.color, size);
+    // While the founders still clear the centre of trees the main building is only marked out (drawn faded).
+    const prep = !!st.civ && preparing(st.civ, st, this.world.width);
+    const a = this.ctx.globalAlpha;
+    if (prep) this.ctx.globalAlpha = a * 0.4;
+    this.ctx.drawImage(sp.canvas, Math.round(left) - sp.pad, Math.round(top) - sp.pad);
+    this.ctx.globalAlpha = a;
+    if (prep) return;
+    if (!this.quality.reduced && arch === 'human' && stage !== 'town' && s >= 6) {
+      const [hx, hy] = stage === 'camp' ? [4, 14.2] : [12.5, 14.4];
+      const u = size / 8;
+      const f = Math.floor(this.frameNow / 140 + st.id) % 3;
+      this.ctx.fillStyle = f === 0 ? '#ffe27a' : f === 1 ? '#ffb340' : '#ff8a2a';
+      this.ctx.fillRect(Math.round(cx + (hx - 4 - 0.3 + (f - 1) * 0.2) * u), Math.round(cy + (hy - 4 - 1.6 - f * 0.2) * u), Math.max(1, Math.round(0.6 * u)), Math.max(1, Math.round(0.7 * u)));
+    }
+  }
+
+  private landmarkSprite(arch: Architecture, stage: Stage, color: number, size: number): { canvas: HTMLCanvasElement; pad: number } {
+    const key = `L|${arch}|${stage}|${color}|${size}`;
+    const hit = this.spriteCache.get(key);
+    if (hit) return hit;
+    if (this.spriteCache.size > 400) this.spriteCache.clear();
+    const B = LANDMARK_BOUNDS;
+    const u = size / 8;
+    const pad = Math.max(1, Math.round(size / 24));
+    const out = this.outlinedSprite(Math.ceil((B.x1 - B.x0) * u), Math.ceil((B.y1 - B.y0) * u), pad, (ac) =>
+      drawLandmark(
+        (x, y, ww, hh, col) => {
+          ac.fillStyle = col;
+          ac.fillRect(pad + Math.round((x - B.x0) * u), pad + Math.round((y - B.y0) * u), Math.max(1, Math.round(ww * u)), Math.max(1, Math.round(hh * u)));
+        },
+        arch, stage, COLORS[color],
+      ),
+      (fc) => {
+        fc.fillStyle = 'rgba(0,0,0,0.28)'; // ground shadow along the base
+        fc.fillRect(pad + Math.round((-6 - B.x0) * u), pad + Math.round((15 - B.y0) * u), Math.round(22 * u), Math.max(1, Math.round(1.2 * u)));
+      },
+    );
+    const entry = { canvas: out, pad };
+    this.spriteCache.set(key, entry);
+    return entry;
+  }
+
+  /** Art drawn by `draw` on a padded canvas, with a dark outline of `pad` pixels and an optional shadow beneath. */
+  private outlinedSprite(w: number, h: number, pad: number, draw: (c: CanvasRenderingContext2D) => void, shadow?: (c: CanvasRenderingContext2D) => void): HTMLCanvasElement {
+    const make = () => {
+      const c = document.createElement('canvas');
+      c.width = w + 2 * pad;
+      c.height = h + 2 * pad;
+      return c;
+    };
+    const art = make();
+    draw(art.getContext('2d')!);
+    const outline = make();
+    const oc = outline.getContext('2d')!;
+    for (const [dx, dy] of [[pad, 0], [-pad, 0], [0, pad], [0, -pad]]) oc.drawImage(art, dx, dy);
+    oc.globalCompositeOperation = 'source-in';
+    oc.fillStyle = 'rgba(20,14,10,0.85)';
+    oc.fillRect(0, 0, outline.width, outline.height);
+    const out = make();
+    const fc = out.getContext('2d')!;
+    shadow?.(fc);
+    fc.drawImage(outline, 0, 0);
+    fc.drawImage(art, 0, 0);
+    return out;
+  }
+
+  /** Burning tiles on landmarks this frame: drawn after the landmark (`late`) or behind its walls (`hidden`). */
+  private landmarkFire: { late: Map<number, number>; hidden: Map<number, number> } | null = null;
+
+  /**
+   * Sorts burning tiles that a landmark covers, by settlement id: from zoom 3 up, tiles on the landmark's ground row
+   * (in front of its walls) are drawn after it, tiles it covers further back are hidden behind its walls and shown
+   * as glow and smoke; an icon (far away) has every covered fire drawn over it, as a plain marker.
+   */
+  private sortLandmarkFire(o: Overlay, zoom: number): { late: Map<number, number>; hidden: Map<number, number> } | null {
+    if (!o.burning.length) return null;
+    const W = this.world.width;
+    const late = new Map<number, number>();
+    const hidden = new Map<number, number>();
+    for (const st of o.settlements) {
+      if (!st.civ) continue;
+      for (const i of o.burning) {
+        const x = i % W;
+        const side = landmarkFireSide(st, x, (i - x) / W, zoom);
+        if (side === 'behind') hidden.set(i, st.id);
+        else if (side) late.set(i, st.id);
+      }
+    }
+    return late.size || hidden.size ? { late, hidden } : null;
+  }
+
+  /** The fire of one landmark: flames in front of it, and glow on its walls with smoke over its roof for fire behind. */
+  private drawLandmarkFire(st: Settlement, s: number, ox: number, oy: number): void {
+    const lf = this.landmarkFire;
+    if (!lf) return;
+    const mine = (m: Map<number, number>) => [...m].filter(([, id]) => id === st.id).map(([i]) => i);
+    const late = mine(lf.late);
+    if (late.length) this.drawFireTiles(late, s, ox, oy);
+    const hidden = mine(lf.hidden);
+    if (!hidden.length) return;
+    const ctx = this.ctx;
+    const W = this.world.width;
+    const t = this.frameNow / 1000;
+    const zoom = s / this.dpr;
+    const k = landmarkScaleFor(st, zoom);
+    const roof = oy + (st.y + 0.5 + ((landmarkTop(architectureOf(st.species), st.civ!.stage) - 4) * k) / 8) * s;
+    for (const i of hidden) {
+      const x = i % W;
+      const y = (i - x) / W;
+      const px = Math.round(ox + x * s);
+      const py = Math.round(oy + y * s);
+      const a = 0.22 + 0.1 * Math.sin(t * 9 + i);
+      ctx.fillStyle = `rgba(255,120,30,${a.toFixed(3)})`; // firelight on the walls
+      ctx.fillRect(px, py, Math.ceil(s), Math.ceil(s));
+      for (let p = 0; p < 3; p++) {
+        const ph = (t * 0.7 + p / 3 + (i % 5) * 0.2) % 1; // smoke rising over the roof
+        const r = Math.max(2, Math.round(s * (0.25 + ph * 0.35)));
+        ctx.fillStyle = `rgba(70,64,60,${(0.55 * (1 - ph)).toFixed(3)})`;
+        ctx.fillRect(Math.round(px + s * 0.5 + ph * s * 0.4 - r / 2), Math.round(roof - ph * s * 2 - r / 2), r, r);
+      }
+    }
+  }
+
+  /**
    * A building's sprite for one tile size: the art on a canvas one tile wide and two tiles tall (it may rise a tile
    * above its own), with a dark outline so it reads against any ground and a soft shadow that sets it on its tile.
    */
@@ -976,16 +1275,20 @@ export class Renderer {
     return hit;
   }
 
-  private drawFire(o: Overlay, s: number, ox: number, oy: number): void {
+  private drawFire(o: Overlay, s: number, ox: number, oy: number, keep?: (i: number) => boolean): void {
     if (!o.burning.length) return;
+    this.drawFireTiles(keep ? o.burning.filter(keep) : o.burning, s, ox, oy);
+  }
+
+  private drawFireTiles(tiles: readonly number[], s: number, ox: number, oy: number): void {
     const ctx = this.ctx;
     const w = this.world.width;
     const size = Math.max(1, Math.ceil(s));
-    const phase = Math.floor(o.now / 110);
+    const phase = Math.floor(this.frameNow / 110);
     const close = s >= 6;
     const cw = this.canvas.width;
     const ch = this.canvas.height;
-    for (const i of o.burning) {
+    for (const i of tiles) {
       const x = i % w;
       const y = (i - x) / w;
       const px = Math.round(ox + x * s);
@@ -1007,59 +1310,168 @@ export class Renderer {
     }
   }
 
+  /**
+   * Creatures. Close up they are drawn back to front together with the trees standing in front of them (0.23): the
+   * chunk already shows every tree, so only trees whose base is below a creature's feet and whose sprite overlaps it
+   * are drawn again, in order, so people walk under and behind canopies instead of on top of them. Far out: dots.
+   */
   private drawCreatures(camera: Camera, cr: Creatures, s: number, ox: number, oy: number, alpha: number, overlay?: Overlay): void {
-    const workKind = overlay?.workKind;
-    const now = overlay?.now ?? 0;
-    const markFrame = overlay ? Math.floor(overlay.now / 300) & 1 : 0;
-    const ctx = this.ctx;
     const minX = camera.x - 2;
     const minY = camera.y - 2;
     const maxX = camera.x + this.canvas.width / s + 2;
     const maxY = camera.y + this.canvas.height / s + 2;
     const big = camera.zoom >= 3;
+    if (!big) {
+      for (let i = 0; i < cr.count; i++) {
+        const x = cr.px[i] + (cr.x[i] - cr.px[i]) * alpha;
+        const y = cr.py[i] + (cr.y[i] - cr.py[i]) * alpha;
+        if (x < minX || y < minY || x > maxX || y > maxY) continue;
+        this.drawDot(cr.species[i], Math.round(ox + x * s), Math.round(oy + y * s));
+      }
+      return;
+    }
+    // Visible creatures, by the y of their feet.
+    const order: number[] = [];
+    const ys = this.creatureYs.length >= cr.count ? this.creatureYs : (this.creatureYs = new Float32Array(Math.max(64, cr.count * 2)));
     for (let i = 0; i < cr.count; i++) {
       const x = cr.px[i] + (cr.x[i] - cr.px[i]) * alpha;
       const y = cr.py[i] + (cr.y[i] - cr.py[i]) * alpha;
       if (x < minX || y < minY || x > maxX || y > maxY) continue;
-      const sp = cr.species[i];
-      const def = SPECIES[sp];
-      const px = Math.round(ox + x * s);
-      const py = Math.round(oy + y * s);
-      const juvenile = cr.age[i] < def.adultAge;
-      if (big) {
-        // Walking creatures alternate two frames (fleeing ones faster); standing, eating or working ones hold still.
-        const moving = cr.x[i] !== cr.px[i] || cr.y[i] !== cr.py[i];
-        const frame = moving ? (Math.floor(now / (cr.state[i] === STATE.FLEE ? 110 : 190)) + cr.id[i]) & 1 : 0;
-        const set = this.sprites[sp][frame];
-        const sprite = cr.dx[i] >= 0 ? set.right : set.left;
-        // One sprite pixel = 1/8 tile, like terrain; juveniles are drawn smaller. Nothing is drawn smaller than
-        // MIN_SPRITE_PX device pixels (people a little larger), so creatures stay visible and tappable at any zoom.
-        // The sprite canvas carries a 1-pixel outline margin, so the scale is taken from the art inside it.
-        const artW = sprite.width - 2 * OUTLINE_PAD;
-        const minW = (def.sentient ? MIN_PERSON_PX : MIN_SPRITE_PX) * this.dpr;
-        const scale = Math.max(s / TILE_PX, minW / artW) * (juvenile ? 0.75 : 1);
-        const w = Math.max(2, Math.round(sprite.width * scale));
-        const h = Math.max(2, Math.round(sprite.height * scale));
-        // A soft ground shadow under the feet, so nobody floats.
-        if (def.habitat === 'land') {
-          ctx.fillStyle = 'rgba(0,0,0,0.22)';
-          ctx.fillRect(px - Math.round(w * 0.3), py + Math.round(h * 0.2), Math.round(w * 0.6), Math.max(1, Math.round(h * 0.08)));
+      ys[i] = y;
+      order.push(i);
+    }
+    // Trees in front of creatures (only on wooded ground, only at the levels that draw trees).
+    const P = terrainLevel(s, this.quality);
+    const trees: Array<{ y: number; sp: Sprite; x: number; yy: number }> = [];
+    if (P) {
+      const W = this.world.width;
+      const H = this.world.height;
+      const seen = new Set<number>();
+      for (const i of order) {
+        const x = cr.px[i] + (cr.x[i] - cr.px[i]) * alpha;
+        const y = ys[i];
+        const tx = Math.floor(x);
+        const ty = Math.floor(y);
+        for (let dy = 0; dy <= 2; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = tx + dx;
+            const ny = ty + dy;
+            if (nx < 0 || ny < 0 || nx >= W || ny >= H || !WOODED[this.world.terrain[ny * W + nx]]) continue;
+            const key = ny * W + nx;
+            if (seen.has(key)) continue;
+            const fs = this.painter.featuresAt(this.world, nx, ny, P);
+            for (let n = 0; n < fs.length; n++) {
+              const f = fs[n];
+              if (!f.tree) continue;
+              const by = ny + f.fy / 8; // the tree's base (world y)
+              if (by <= y) continue; // behind the creature: the chunk already draws it below
+              // Tree sprite in world units at this level: left/top from its base point and anchor.
+              const left = nx + (Math.floor((f.fx * P) / 8) - f.sp.ax) / P;
+              const top = ny + (Math.floor((f.fy * P) / 8) - f.sp.ay) / P;
+              const cw = 0.35; // half a creature's width and its height, generously (tiles)
+              if (left > x + cw || left + f.sp.w / P < x - cw || top > y || top + f.sp.h / P < y - 0.6) continue;
+              seen.add(key);
+              trees.push({ y: by, sp: f.sp, x: left, yy: top });
+            }
+          }
         }
-        ctx.drawImage(sprite, px - (w >> 1), py - h + Math.round(h * 0.25), w, h);
-        if (workKind && cr.state[i] === STATE.WORK) {
-          const kind = workKind(cr.id[i]);
-          // A tiny tool beside the head, swinging in two frames (cheap: only people at work).
-          if (kind) drawWorkMark(ctx, kind, px + (w >> 1) - Math.round(w * 0.1), py - h + Math.round(h * 0.25) - markFrame * Math.max(1, Math.round(scale)), Math.max(1, Math.round(scale)), markFrame);
-        }
-      } else {
-        // Far out: a dot with a dark rim, large enough to see (people brighter and bigger).
-        const d = Math.max(2, Math.round(this.dpr * (def.sentient ? 4 : def.size > 1.2 ? 3.5 : 3)));
-        ctx.fillStyle = 'rgba(0,0,0,0.7)';
-        ctx.fillRect(px - (d >> 1) - 1, py - (d >> 1) - 1, d + 2, d + 2);
-        ctx.fillStyle = def.marker ?? def.color;
-        ctx.fillRect(px - (d >> 1), py - (d >> 1), d, d);
       }
     }
+    if (!trees.length) {
+      order.sort((a, b) => ys[a] - ys[b] || a - b);
+      for (const i of order) this.drawCreatureSprite(cr, i, s, ox, oy, alpha, overlay);
+      return;
+    }
+    // Merge creatures and trees by y (trees first at equal y).
+    trees.sort((a, b) => a.y - b.y);
+    order.sort((a, b) => ys[a] - ys[b] || a - b);
+    const ctx = this.ctx;
+    const smooth = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    let t = 0;
+    for (const i of order) {
+      while (t < trees.length && trees[t].y <= ys[i]) this.drawTreeSprite(trees[t++], P, s, ox, oy);
+      this.drawCreatureSprite(cr, i, s, ox, oy, alpha, overlay);
+    }
+    while (t < trees.length) this.drawTreeSprite(trees[t++], P, s, ox, oy);
+    ctx.imageSmoothingEnabled = smooth;
+  }
+
+  private creatureYs = new Float32Array(0);
+  private treeCanvas = new Map<Sprite, HTMLCanvasElement>();
+
+  /** A tree sprite (cached as a canvas) at its world position, scaled like the terrain chunk it belongs to. */
+  private drawTreeSprite(tr: { sp: Sprite; x: number; yy: number }, P: number, s: number, ox: number, oy: number): void {
+    let c = this.treeCanvas.get(tr.sp);
+    if (!c) {
+      c = document.createElement('canvas');
+      c.width = tr.sp.w;
+      c.height = tr.sp.h;
+      const img = new ImageData(new Uint8ClampedArray(tr.sp.rgba), tr.sp.w, tr.sp.h);
+      c.getContext('2d')!.putImageData(img, 0, 0);
+      this.treeCanvas.set(tr.sp, c);
+    }
+    const k = s / P;
+    this.ctx.drawImage(c, Math.round(ox + tr.x * s), Math.round(oy + tr.yy * s), Math.round(tr.sp.w * k), Math.round(tr.sp.h * k));
+  }
+
+  private drawCreatureSprite(cr: Creatures, i: number, s: number, ox: number, oy: number, alpha: number, overlay?: Overlay): void {
+    const ctx = this.ctx;
+    const now = overlay?.now ?? 0;
+    const x = cr.px[i] + (cr.x[i] - cr.px[i]) * alpha;
+    const y = cr.py[i] + (cr.y[i] - cr.py[i]) * alpha;
+    const sp = cr.species[i];
+    const def = SPECIES[sp];
+    const px = Math.round(ox + x * s);
+    const py = Math.round(oy + y * s);
+    const juvenile = cr.age[i] < def.adultAge;
+    // Walking creatures alternate two frames (fleeing ones faster); standing, eating or working ones hold still.
+    const moving = cr.x[i] !== cr.px[i] || cr.y[i] !== cr.py[i];
+    const frame = moving ? (Math.floor(now / (cr.state[i] === STATE.FLEE ? 110 : 190)) + cr.id[i]) & 1 : 0;
+    const set = this.sprites[sp][frame];
+    const sprite = cr.dx[i] >= 0 ? set.right : set.left;
+    // Half a terrain pixel per sprite pixel (creatureScale), with a minimum size far away; juveniles smaller.
+    // The sprite canvas carries a 1-pixel outline margin, so the scale is taken from the art inside it.
+    const artW = sprite.width - 2 * OUTLINE_PAD;
+    const scale = creatureScale(s, artW, !!def.sentient, juvenile, this.dpr);
+    const w = Math.max(2, Math.round(sprite.width * scale));
+    const h = Math.max(2, Math.round(sprite.height * scale));
+    // Swimming (0.23): only head and shoulders above the water, bobbing gently, with a ripple at the waterline.
+    if (def.move === MOVE.SWIM) {
+      const id = this.world.terrain[Math.floor(y) * this.world.width + Math.floor(x)];
+      if (isWater(id) && id !== T.RIVER) {
+        const top = py - h + Math.round(h * 0.25) + (Math.floor(now / 400 + cr.id[i]) & 1);
+        const keep = Math.round(h * 0.55);
+        ctx.drawImage(sprite, 0, 0, sprite.width, Math.round(sprite.height * 0.55), px - (w >> 1), top, w, keep);
+        ctx.fillStyle = 'rgba(220,240,255,0.7)';
+        ctx.fillRect(px - Math.round(w * 0.55), top + keep - 1, Math.round(w * 1.1), Math.max(1, Math.round(h * 0.06)));
+        return;
+      }
+    }
+    // A soft ground shadow under the feet, so nobody floats.
+    if (def.habitat === 'land') {
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fillRect(px - Math.round(w * 0.3), py + Math.round(h * 0.2), Math.round(w * 0.6), Math.max(1, Math.round(h * 0.08)));
+    }
+    ctx.drawImage(sprite, px - (w >> 1), py - h + Math.round(h * 0.25), w, h);
+    const workKind = overlay?.workKind;
+    if (workKind && cr.state[i] === STATE.WORK) {
+      const kind = workKind(cr.id[i]);
+      const markFrame = overlay ? Math.floor(overlay.now / 300) & 1 : 0;
+      // A tiny tool beside the head, swinging in two frames (cheap: only people at work).
+      if (kind) drawWorkMark(ctx, kind, px + (w >> 1) - Math.round(w * 0.1), py - h + Math.round(h * 0.25) - markFrame * Math.max(1, Math.round(scale)), Math.max(1, Math.round(scale)), markFrame);
+    }
+  }
+
+  /** Far out: a creature as a dot with a dark rim, large enough to see (people brighter and bigger). */
+  private drawDot(sp: number, px: number, py: number): void {
+    const ctx = this.ctx;
+    const def = SPECIES[sp];
+    const d = Math.max(2, Math.round(this.dpr * (def.sentient ? 4 : def.size > 1.2 ? 3.5 : 3)));
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(px - (d >> 1) - 1, py - (d >> 1) - 1, d + 2, d + 2);
+    ctx.fillStyle = def.marker ?? def.color;
+    ctx.fillRect(px - (d >> 1), py - (d >> 1), d, d);
   }
 
   private drawSelection(cr: Creatures, id: number, s: number, ox: number, oy: number, alpha: number): void {
@@ -1069,7 +1481,7 @@ export class Renderer {
     const sp = SPECIES[cr.species[i]];
     const x = ox + (cr.px[i] + (cr.x[i] - cr.px[i]) * alpha) * s;
     const y = oy + (cr.py[i] + (cr.y[i] - cr.py[i]) * alpha) * s;
-    const r = Math.max(8 * this.dpr, s * sp.size * 0.7);
+    const r = Math.max(7 * this.dpr, s * sp.size * 0.7 * CREATURE_SCALE);
     ctx.lineWidth = Math.max(1.5, this.dpr * 1.5);
     ctx.strokeStyle = '#f2c14e';
     ctx.beginPath();

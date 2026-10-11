@@ -203,6 +203,46 @@ button {
   overscroll-behavior-x: contain;
 }
 
+/* Creatures tab: sections (land, sea) and groups of species as small chips in one scrolling row. */
+#lifegroups {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 2px 2px 4px;
+  scrollbar-width: none;
+}
+#lifegroups::-webkit-scrollbar {
+  display: none;
+}
+#lifegroups[hidden] {
+  display: none;
+}
+#lifegroups button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 3px 9px;
+  border-radius: 15px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+#lifegroups button.section {
+  font-weight: 600;
+}
+#lifegroups button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(242, 193, 78, 0.14);
+}
+#lifegroups .sep {
+  flex: 0 0 1px;
+  margin: 4px 2px;
+  background: var(--line);
+}
+
 #tool-name {
   font-size: 12px;
   line-height: 1.3;

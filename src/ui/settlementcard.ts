@@ -299,7 +299,7 @@ export class SettlementCard {
     this.set('housenext', t('civ.house_next'), `${houseName(s.species, max)} — ${td(req)}`);
     const cap = storage(c);
     const r = c.rate;
-    for (const [key, have, prod, use] of [['food', c.food, r.food, r.foodUse], ['wood', c.wood, r.wood, 0], ['stone', c.stone, r.stone, 0]] as const) {
+    for (const [key, have, prod, use] of [['food', c.food, r.food, r.foodUse], ['wood', c.wood, c.woodFlow, 0], ['stone', c.stone, r.stone, 0]] as const) {
       this.set(key, '', `${ICON[key]} ` + t('civ.res_line', { name: td(`res.${key}`), n: fmt(have), cap, prod: fmt(prod * YEAR_STEPS), use: fmt(use * YEAR_STEPS) }));
     }
     this.set('knowledge', '', `${ICON.knowledge} ` + t('civ.know_line', { name: td('res.knowledge'), n: fmt(c.knowledge), prod: fmt(r.knowledge * YEAR_STEPS) }));

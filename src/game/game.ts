@@ -17,6 +17,7 @@ import { World } from '../world/world';
 import { SHOWER_COUNTS } from '../sim/sky';
 import { areaOf, BRUSH_SIZES, toolById, type AreaRing, type Tool, type ToolContext } from './tools';
 import { UndoHistory, type UndoResult } from './undo';
+import { pickAt } from './pick';
 
 export interface TileReport {
   x: number;
@@ -136,7 +137,9 @@ export class Game {
       inspect: (x, y) => {
         // Tap near a creature selects the nearest one; tapping the same spot again moves on to the next nearest
         // (so crowded creatures can all be picked); otherwise report the tile.
-        const near = this.sim.creatures.candidatesAt(x, y, Math.max(0.9, 24 / this.camera.zoom));
+        // A tap on a settlement's landmark opens its card unless a creature is right under the finger.
+        const picked = pickAt(this.sim.creatures, this.sim.settlements.list, x, y, this.camera.zoom, this.showSettlementBorders);
+        const near = picked?.kind === 'creatures' ? picked.indices : [];
         if (near.length) {
           let pick = near[0];
           const last = this.lastPick;
@@ -152,6 +155,7 @@ export class Game {
         this.lastPick = null;
         this.select(0);
         const r = this.report(x, y);
+        if (r && picked?.kind === 'landmark') r.settlementId = picked.settlement.id; // its top may rise past the territory
         if (r) this.onInspect(r);
       },
     };
@@ -219,6 +223,7 @@ export class Game {
       settlementBorders: this.showSettlementBorders,
       workKind: (id) => this.sim.settlements.workKind(id),
       trails: this.trailView,
+      roadVersion: this.sim.settlements.roadVersion,
       kingdoms: {
         list: this.sim.kingdoms.list,
         version: `${this.sim.kingdoms.version}|${this.sim.settlements.version}`,

@@ -302,7 +302,10 @@ describe('saves', () => {
     const sim = world();
     const elven = sim.settlements.list.find((s) => s.species === ELF)!;
     expect(elven).toBeDefined();
-    const h = { id: elven.civ!.nextBuildingId++, type: 'house' as const, x: elven.x, y: elven.y + 3, started: 0, progress: 2, needed: 8, done: true, reserve: 0, acc: 0, active: false, idle: 0, empty: false, here: 0, level: 2, up: 3 };
+    // A free tile three rows below the centre (the layout may already have a building right there).
+    let hx = elven.x;
+    while (elven.civ!.buildings.some((b) => b.x === hx && b.y === elven.y + 3)) hx++;
+    const h = { id: elven.civ!.nextBuildingId++, type: 'house' as const, x: hx, y: elven.y + 3, started: 0, progress: 2, needed: 8, done: true, reserve: 0, acc: 0, active: false, idle: 0, empty: false, here: 0, level: 2, up: 3 };
     elven.civ!.buildings.push(h);
     const data = serialize(sim);
     expect(data.version).toBe(SAVE_VERSION);

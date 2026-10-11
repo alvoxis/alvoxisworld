@@ -15,7 +15,8 @@ export class FoodMap {
   /** Group index per species. */
   readonly groupOf: number[];
   /** Bitmask of groups that eat each terrain id. */
-  private readonly terrainMask: Uint8Array;
+  /** Bitmask of food groups per terrain id (32 bits: there are more than eight diets since 0.23's new animals). */
+  private readonly terrainMask: Uint32Array;
   readonly groups: number;
   private counts: Uint16Array[] = [];
   w = 0;
@@ -36,9 +37,10 @@ export class FoodMap {
       return g;
     });
     this.groups = keys.length;
-    this.terrainMask = new Uint8Array(256);
+    this.terrainMask = new Uint32Array(256);
+    if (keys.length > 32) throw new Error('Too many food groups for the food map');
     speciesFood.forEach((f, s) => {
-      for (const id of f) this.terrainMask[id] |= 1 << this.groupOf[s];
+      for (const id of f) this.terrainMask[id] |= (1 << this.groupOf[s]) >>> 0;
     });
   }
 

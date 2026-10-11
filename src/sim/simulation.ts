@@ -83,6 +83,7 @@ export class Simulation {
     };
     this.creatures.groupGoal = (id) => this.groups.goalOf(id);
     this.creatures.workGoal = (id) => this.settlements.workGoal(id);
+    this.creatures.workReach = (id) => this.settlements.workReach(id);
     this.settlements.onEmigrate = (ids, st, tick) => this.groups.createGroup(this.world, this.creatures, ids, tick, st.id, tick + EMIGRATE_BAN_TICKS);
     this.creatures.breedBlock = (id) => this.settlements.breedBlocked(id);
     this.settlements.onEvent = (text, code, p) => this.log(text, code, p);
@@ -179,6 +180,7 @@ export class Simulation {
     this.fire.step(this.world, this.rng, this.weather);
     this.creatures.anyFire = this.fire.burning > 0;
     vegetationTick(this.world, this.rng, SEASON_GROWTH[date.season]);
+    this.settlements.forestry.step(this.world, this.tick);
     const before = this.creatures.countAll();
     this.creatures.tick(this.world, this.rng, this.tick);
     this.settlements.step(this.world, this.creatures, this.tick);

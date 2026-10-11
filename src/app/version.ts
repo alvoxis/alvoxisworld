@@ -1,8 +1,10 @@
 /** Game version shown in Settings → About. Keep equal to package.json (a test checks). */
-export const VERSION = '0.21.0';
+export const VERSION = '0.23.0';
 
 /** Changelog entries, newest first; the text lives in the translations (about.cl_*). */
-export const CHANGELOG: ReadonlyArray<{ version: string; key: 'about.cl_visual21' | 'about.cl_world20' | 'about.cl_kingdoms' | 'about.cl_visual' | 'about.cl_elves' | 'about.cl_housing' | 'about.cl_jobs' | 'about.cl_living' | 'about.cl_civ_tech' | 'about.cl_civ_growth' | 'about.cl_civ_economy' | 'about.cl_civ_settlements' | 'about.cl_humans' | 'about.cl_settlements' | 'about.cl_interface' | 'about.cl_technical' | 'about.cl_sky' | 'about.cl_world' }> = [
+export const CHANGELOG: ReadonlyArray<{ version: string; key: 'about.cl_world23' | 'about.cl_landmarks' | 'about.cl_visual21' | 'about.cl_world20' | 'about.cl_kingdoms' | 'about.cl_visual' | 'about.cl_elves' | 'about.cl_housing' | 'about.cl_jobs' | 'about.cl_living' | 'about.cl_civ_tech' | 'about.cl_civ_growth' | 'about.cl_civ_economy' | 'about.cl_civ_settlements' | 'about.cl_humans' | 'about.cl_settlements' | 'about.cl_interface' | 'about.cl_technical' | 'about.cl_sky' | 'about.cl_world' }> = [
+  { version: '0.23.0', key: 'about.cl_world23' },
+  { version: '0.22.0', key: 'about.cl_landmarks' },
   { version: '0.21.0', key: 'about.cl_visual21' },
   { version: '0.20.0', key: 'about.cl_world20' },
   { version: '0.19.0', key: 'about.cl_kingdoms' },

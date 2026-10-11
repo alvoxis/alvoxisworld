@@ -168,7 +168,7 @@ You need Node.js 22.12 or newer (Vite 8 and Vitest 5; CI uses 22).
 
 These are planned (see [docs/ROADMAP.md](docs/ROADMAP.md)) but **do not exist in the game yet**:
 
-- More species (beyond the five above), herds and migration, nests and eggs, sexes and genetics.
+- Domestic animals, birds and reptiles; pack hunting; herds and migration, nests and eggs, sexes and genetics.
 - Humanoid races (humans, elves, dwarves, orcs, demons, demigods), hybrids and genetics.
 - Settlements, buildings, civilizations, diplomacy, alliances and war.
 - Player currency and progression.
@@ -403,3 +403,30 @@ Drawing only; the simulation, tools and save format (14) are unchanged.
 - **Performance:** a 16-px chunk is painted in four bands of eight rows, one band per turn within the existing 6 ms paint budget, while the 8-px chunk (if cached) stands in; at most four chunks are in progress at once and an edit restarts an unfinished one. Only chunks a change touches are repainted. See `docs/PERFORMANCE.md`.
 
 Not done: animated water or swaying trees, day/night light, roads, bridges, ships and sailing. Not measured on a physical phone.
+
+## Settlement landmarks (v0.22.0)
+
+Drawing and tapping only; settlements, buildings, the simulation and the save format (14) are unchanged.
+
+- **Main building at every settlement centre**, replacing the diamond marker (`render/landmarks.ts`). It is not a building record: no housing, no production, no save data. Its look comes from the settlement's people and stage, so it changes in place when a camp becomes a village or a town (nothing is created, reset or duplicated). It stands in the 3×3 centre that the layout always keeps free of houses.
+  - Humans: *camp* a large hide tent on crossed poles with a hearth, log seats and a banner; *village* a long timber-framed hall with a hipped roof, a front gable over a double door, porch, lit windows and a hearth; *town* a stone town hall with wings, an arched entrance, banners and a clock tower with a pointed roof.
+  - Elves (own shapes, not a recolour): *camp* two living trees whose boughs form an arched leaf roof over an open hall with hanging pennants and moss stones; *village* a rounded pale-wood hall held by branches under a crescent roof of long leaves, with a tree growing through it; *town* a terraced white-wood civic hall with curved leaf-roofed wings and a slender spire of stacked leaf tiers.
+  - Same outline, shadow and light direction as the other buildings; cached per look and zoom. From zoom 3 up it stays inside the settlement's free centre: it may be drawn larger (up to 6 CSS px per tile) only while its sides and base stay half a tile short of the nearest building, so it never covers a neighbouring house. Far away (zoom below 3, creatures as dots) it becomes an icon drawn over the dots; the settlement's buildings under the icon are drawn again on top of it, and up to three of its residents standing on it (the existing creatures, at their own positions) are drawn over it. Close up and not in reduced quality, the hearth of a human camp or village flickers.
+  - Fire on the centre: on the landmark's ground row it is drawn in front of the walls; behind the walls it shows as firelight on the building and smoke over its roof (never flames through walls); far away it is drawn over the icon as a marker.
+- **Tapping:** a tap on the landmark's visible shape (its drawn rectangles, at the drawn scale) opens the settlement card, also on parts above the territory. A creature right under the finger (within 0.6 tile) is still selected first at normal and close zoom; far away only the residents drawn over the icon can be picked there. Away from landmarks the usual creature radius applies. When settlement borders are hidden, landmarks are neither drawn nor tapped.
+- The settlement name (and the kingdom name of a capital) sits above the landmark.
+
+Not done: roads, bridges, ships, day/night light. Not tested on a physical phone.
+
+## World simulation and visual evolution (v0.23.0)
+
+Save format 15 (versions 1–14 still load; new data start empty).
+
+- **Proportions (drawing only):** buildings are drawn about twice as large (2 tiles wide, standing on their tile); creatures about half as large (with a minimum size so they stay visible). The settlement layout keeps a free 5×5 centre and space between buildings for the larger drawings. New tree art (tall and broad oaks, palms, tall pines) at a moderate forest density.
+- **Clearing and felling:** a new settlement first clears the trees in its centre, and a building site among trees is cleared before construction starts ("clearing" in the card). Lumberjacks walk to a real tree, fell it and carry the wood: the tile turns to grass, a stump stays and rots after about two years, and the forest can grow back. Wood is credited once per felled tree (10 per tree, by forest kind). Trees never grow on built ground or roads.
+- **Roads:** each settlement lays roads a few tiles at a time from every building door to its centre, around water, trees and buildings, joining the existing network. People walk 20% faster on roads. Human and elven roads look different.
+- **Population:** humans and elves have children about three times less often (only the breeding cycle changed). 20-year runs over 5 seeds: 48 founders grew to 157–220 people (585–805 before); no settlement died out.
+- **Life tab:** creatures are sorted into Land (peoples, herbivores, small animals, predators, dinosaurs) and Sea (fish, sea predators, sea mammals). New animals with their own diet and behaviour: deer, rabbit, wolf, bear (hunt deer and rabbits, never people), shark, orca (hunt fish and sharks), whale (feeds in deep water).
+- **Swimming:** humans and elves can swim across shallow sea, rivers and lakes (slower, tiring), only when the land way is much longer; never through deep ocean; they do not wander into water and swim back to shore. Swimmers are drawn half in the water.
+
+Limits: no domestic animals, birds or reptiles yet; sharks do not attack swimmers; sea animals may also enter rivers and lakes; wolves do not hunt as a pack; the main building is drawn 1.33–1.5× (not 2×) so it fits the free centre; settlements from older saves keep their old building spacing. Not tested on a physical phone.

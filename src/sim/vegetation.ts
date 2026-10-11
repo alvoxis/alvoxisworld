@@ -10,7 +10,8 @@ const NEIGHBOURS: ReadonlyArray<readonly [number, number]> = [
  * Random-tick vegetation: a fixed fraction of tiles is sampled each tick, so cost
  * scales linearly with world area and never needs a full-map pass.
  *  - Bare soil regrows into its natural biome (grass first, as succession).
- *  - Forest and jungle spread into neighbouring grass when the climate is wet enough.
+ *  - Forest and jungle spread into neighbouring grass when the climate is wet enough (not over a stump that has
+ *    not rotted yet, nor onto ground a settlement keeps clear).
  *  - Grass colonises inland sand when the climate is wet enough.
  */
 export function vegetationTick(world: World, rng: Rng, growth: number): void {
@@ -38,6 +39,7 @@ export function vegetationTick(world: World, rng: Rng, growth: number): void {
     const n = world.terrain[world.idx(nx, ny)];
 
     if (id === T.GRASS) {
+      if (world.stump[i] || world.built[i]) continue; // a stump has to rot first; settlements keep their ground clear
       if (n === T.FOREST && moist > 0.48 && temp > 0.3 && rng.chance(0.25)) world.setTerrain(x, y, T.FOREST);
       else if (n === T.JUNGLE && moist > 0.55 && temp > 0.65 && rng.chance(0.25)) world.setTerrain(x, y, T.JUNGLE);
     } else if (id === T.SAND) {
@@ -45,6 +47,7 @@ export function vegetationTick(world: World, rng: Rng, growth: number): void {
         world.setTerrain(x, y, T.GRASS);
       }
     } else if (id === T.SAVANNA) {
+      if (world.stump[i] || world.built[i]) continue;
       if (n === T.JUNGLE && moist > 0.5 && rng.chance(0.15)) world.setTerrain(x, y, T.JUNGLE);
     }
   }

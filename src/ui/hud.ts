@@ -1,4 +1,4 @@
-import { CATEGORIES, TOOLS, BRUSH_SIZES, type Tool, type ToolCategory } from '../game/tools';
+import { CATEGORIES, LIFE_GROUPS, TOOLS, BRUSH_SIZES, type Tool, type ToolCategory } from '../game/tools';
 import { SHOWER_COUNTS } from '../sim/sky';
 import type { Game, TileReport } from '../game/game';
 import { creatureSprite } from '../render/tileset';
@@ -152,9 +152,11 @@ export class Hud {
     }
     $('tool-move').classList.toggle('active', this.game.tool.id === 'move');
     $('tool-inspect').classList.toggle('active', this.game.tool.id === 'inspect');
+    this.renderLifeGroups();
     const row = $('tools');
     row.replaceChildren();
-    for (const tool of TOOLS.filter((t) => t.category === this.category)) {
+    const group = this.category === 'creatures' ? this.lifeGroup : null;
+    for (const tool of TOOLS.filter((t) => t.category === this.category && (!t.group || t.group === group))) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'tool';
@@ -183,6 +185,48 @@ export class Hud {
     const nb = document.createElement('b');
     nb.textContent = name;
     $('tool-name').append(nb, hint ? ` · ${hint}` : '');
+  }
+
+  /** Kinds of life shown in the Creatures tab (LIFE_GROUPS id). */
+  private lifeGroup = LIFE_GROUPS[0].id;
+
+  /**
+   * Creatures tab: the section chips (land, sea) and the groups of the chosen section. A section chip opens its
+   * first group; a group chip shows its species (Select and Remove are always there).
+   */
+  private renderLifeGroups(): void {
+    const box = $('lifegroups');
+    box.hidden = this.category !== 'creatures';
+    if (box.hidden) return;
+    box.replaceChildren();
+    const current = LIFE_GROUPS.find((g) => g.id === this.lifeGroup) ?? LIFE_GROUPS[0];
+    const chip = (text: string, on: boolean, cls: string, pick: () => void) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = cls;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(on));
+      b.classList.toggle('active', on);
+      b.textContent = text;
+      b.addEventListener('click', () => {
+        pick();
+        this.renderTools();
+      });
+      box.appendChild(b);
+    };
+    for (const sec of ['land', 'sea'] as const) {
+      chip(td(`life.section.${sec}`), current.section === sec, 'section', () => {
+        if (current.section !== sec) this.lifeGroup = LIFE_GROUPS.find((g) => g.section === sec)!.id;
+      });
+    }
+    const sep = document.createElement('span');
+    sep.className = 'sep';
+    box.appendChild(sep);
+    for (const g of LIFE_GROUPS.filter((x) => x.section === current.section)) {
+      chip(`${g.icon} ${td(`life.group.${g.id}`)}`, g.id === current.id, 'group', () => {
+        this.lifeGroup = g.id;
+      });
+    }
   }
 
   private layoutMinimap(): void {
@@ -576,8 +620,9 @@ export class Hud {
       const st = game.sim.settlements.settlementOf(now.id);
       const job = st?.civ ? jobOf(st.civ, now.id) : null;
       // What a resident is doing, from the real state and job.
-      doing.textContent =
-        job && now.state === 'Working'
+      doing.textContent = now.swimming
+        ? t('doing.swim')
+        : job && now.state === 'Working'
           ? td(`doing.work.${job.kind}`, { type: td(`build.${job.building.type}`).toLowerCase() })
           : job && now.state === 'Traveling'
             ? t('doing.to_work')

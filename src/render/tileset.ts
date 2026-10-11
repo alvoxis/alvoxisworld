@@ -324,6 +324,120 @@ function treeSprite(r: number, leaf: RGB, trunk: RGB): Sprite {
   });
 }
 
+/**
+ * A tall broadleaf (0.23): a long trunk with a fork of branches showing under an uneven crown of three leaf masses,
+ * lit from the north-west. `k` is 1 for 8 px per tile and 2 for 16.
+ */
+function tallOakSprite(k: 1 | 2, leaf: RGB, trunk: RGB, seed: number): Sprite {
+  const rng = new Rng(seed);
+  const w = 9 * k;
+  const h = 13 * k;
+  const cx = Math.floor(w / 2);
+  return makeSprite(w + k, h, cx, h - 1, (set) => {
+    for (let x = 0; x < 4 * k; x++) set(cx + 1 + x, h - 1, [10, 30, 10], 60); // shadow
+    for (let y = 6 * k; y < h - 1; y++) for (let t = 0; t < k; t++) set(cx + t, y, shade(trunk, t ? 0.78 : 1.08)); // trunk
+    for (let t = 0; t < 2 * k; t++) {
+      set(cx - 1 - Math.floor(t / 2), 6 * k - t, shade(trunk, 1.05)); // branches forking up into the crown
+      set(cx + k + Math.floor(t / 2), 6 * k - t, shade(trunk, 0.8));
+    }
+    const masses: Array<[number, number, number]> = [[cx - 1.6 * k, 3 * k, 2.6 * k], [cx + 1.6 * k, 2.6 * k, 2.4 * k], [cx, 1.8 * k, 2.4 * k]];
+    for (const [mx, my, r] of masses) {
+      for (let y = Math.floor(my - r); y <= Math.ceil(my + r); y++)
+        for (let x = Math.floor(mx - r); x <= Math.ceil(mx + r); x++) {
+          const q = (x - mx) ** 2 + (y - my) ** 2;
+          if (q > r * r || y < 0) continue;
+          const lit = x - mx + (y - my) < -r * 0.5 ? 1.22 : x - mx + (y - my) > r * 0.5 ? 0.74 : 1;
+          if (rng.next() < 0.07) continue; // a gap between leaves
+          set(x, y, shade(leaf, q > (r - 1) ** 2 ? lit * 0.86 : lit));
+        }
+    }
+  });
+}
+
+/** A broad, low broadleaf with a wide round crown and a short thick trunk. */
+function broadOakSprite(k: 1 | 2, leaf: RGB, trunk: RGB, seed: number): Sprite {
+  const rng = new Rng(seed);
+  const r = 4 * k;
+  const w = 2 * r + 2;
+  const h = 2 * r + 3 * k;
+  return makeSprite(w, h, r, h - 1, (set) => {
+    for (let x = 0; x < r + 2; x++) set(r + 1 + x, h - 1, [10, 30, 10], 60);
+    for (let y = 2 * r - k; y < h - 1; y++) for (let t = -Math.floor(k / 2); t <= Math.floor(k / 2); t++) set(r + t, y, shade(trunk, t < 0 ? 1.08 : 0.86));
+    for (let y = 0; y <= 2 * r; y++)
+      for (let x = 0; x <= 2 * r; x++) {
+        const dx = x - r;
+        const dy = (y - r) * 1.15;
+        const q = dx * dx + dy * dy;
+        if (q > r * r) continue;
+        let lit = dx + dy < -r * 0.45 ? 1.2 : dx + dy > r * 0.55 ? 0.72 : 1;
+        if (rng.next() < 0.12) lit *= 0.88; // leaf clusters
+        set(x, y, shade(leaf, q > (r - 1) ** 2 ? lit * 0.84 : lit));
+      }
+    for (let n = 0; n < 2 * k; n++) set(Math.floor(r * 0.5 + rng.next() * r * 0.6), Math.floor(r * 0.4 + rng.next() * r * 0.5), shade(leaf, 1.35)); // sunlit
+  });
+}
+
+/** A palm for the jungle: a curved bare trunk with rings and long drooping fronds. */
+function palmSprite(k: 1 | 2): Sprite {
+  const w = 11 * k;
+  const h = 12 * k;
+  const cx = Math.floor(w / 2);
+  const leaf: RGB = [44, 140, 64];
+  return makeSprite(w, h, cx, h - 1, (set) => {
+    for (let x = 0; x < 3 * k; x++) set(cx + 1 + x, h - 1, [10, 30, 10], 60);
+    for (let y = 3 * k; y < h - 1; y++) {
+      const bend = Math.round(((h - 1 - y) / (h - 3 * k)) * k * 1.4);
+      for (let t = 0; t < k; t++) set(cx + bend + t - 1, y, y % (2 * k) === 0 ? [118, 88, 54] : [140, 108, 66]);
+    }
+    const top = cx + Math.round(k * 1.4) - 1;
+    for (const dir of [-1, 1]) {
+      for (let j = 0; j < 5 * k; j++) {
+        const x = top + dir * j;
+        const y = 2 * k + Math.round((j * j) / (5 * k)) - k;
+        set(x, y, shade(leaf, dir < 0 ? 1.15 : 0.85));
+        set(x, y + 1, shade(leaf, 0.7));
+      }
+      for (let j = 0; j < 3 * k; j++) set(top + dir * j, 2 * k - j, shade(leaf, 1.1)); // fronds reaching up
+    }
+    set(top, 2 * k, [96, 70, 40]); // coconuts
+    if (k === 2) set(top + 1, 2 * k + 1, [96, 70, 40]);
+  });
+}
+
+/** A tall narrow spruce: many short tiers, darker, with a pale tip. */
+function tallPineSprite(k: 1 | 2, leaf: RGB): Sprite {
+  const h = 12 * k;
+  const w = 7 * k;
+  const cx = Math.floor(w / 2);
+  return makeSprite(w, h, cx, h - 1, (set) => {
+    const crown = h - 2 * k;
+    for (let y = 0; y < crown; y++) {
+      const tier = y % (2 * k);
+      const half = Math.min(cx, Math.floor((y * cx) / crown) + (tier === 2 * k - 1 ? 1 : 0));
+      for (let x = -half; x <= half; x++) set(cx + x, y, shade(leaf, x < 0 ? (tier === 0 ? 1.25 : 1.08) : x === half ? 0.62 : 0.8));
+    }
+    set(cx, 0, shade(leaf, 1.4));
+    for (let y = crown; y < h - 1; y++) set(cx, y, [72, 48, 28]);
+    for (let x = 1; x <= 2 * k; x++) set(cx + x, h - 1, [10, 30, 10], 60);
+  });
+}
+
+/** A tree stump where a tree was felled: a short trunk with a pale cut top showing rings, roots and a few chips. */
+function stumpSprite(k: 1 | 2): Sprite {
+  return makeSprite(4 * k, 3 * k, 2 * k, 3 * k - 1, (set) => {
+    for (let y = k; y < 3 * k; y++) for (let x = k; x < 3 * k; x++) set(x, y, x < 2 * k ? [110, 76, 44] : [86, 58, 34]); // bark
+    for (let x = k; x < 3 * k; x++) set(x, k, [214, 180, 128]); // cut top
+    if (k === 2) {
+      set(3, 2, [176, 140, 96]); // rings
+      set(2, 0, [214, 180, 128]);
+      set(3, 0, [200, 166, 116]);
+    }
+    set(0, 3 * k - 1, [96, 64, 38]); // roots
+    set(4 * k - 1, 3 * k - 1, [78, 52, 30]);
+    set(4 * k - 1, k, [230, 200, 150]); // wood chips
+  });
+}
+
 /** Conifer: narrow layered triangle. */
 function pineSprite(leaf: RGB): Sprite {
   return makeSprite(7, 9, 3, 8, (set) => {
@@ -536,9 +650,12 @@ export function doubleSprite(sp: Sprite): Sprite {
 
 /** Sprite catalogue (drawn at 8 px per tile; halved copies are used at 4 px per tile). */
 export const SPRITES = {
-  oak: [treeSprite(3, [52, 118, 52], [92, 60, 34]), treeSprite(2, [64, 132, 58], [92, 60, 34]), treeSprite(3, [44, 106, 50], [84, 56, 32])],
-  jungle: [treeSprite(4, [36, 128, 60], [70, 50, 30]), treeSprite(3, [48, 146, 66], [70, 50, 30])],
-  pine: [pineSprite([40, 92, 60]), pineSprite([52, 104, 68])],
+  oak: [
+    treeSprite(3, [52, 118, 52], [92, 60, 34]), treeSprite(2, [64, 132, 58], [92, 60, 34]), treeSprite(3, [44, 106, 50], [84, 56, 32]),
+    tallOakSprite(1, [58, 124, 54], [96, 64, 36], 21), broadOakSprite(1, [48, 112, 48], [88, 58, 32], 22),
+  ],
+  jungle: [treeSprite(4, [36, 128, 60], [70, 50, 30]), treeSprite(3, [48, 146, 66], [70, 50, 30]), palmSprite(1)],
+  pine: [pineSprite([40, 92, 60]), pineSprite([52, 104, 68]), tallPineSprite(1, [34, 84, 56])],
   acacia: [acaciaSprite()],
   /** Ridge-crest peaks (about two tiles wide) and smaller side peaks; snow-capped copies for high or cold ground. */
   peak: [peakSprite(18, 12, false, 1), peakSprite(16, 11, false, 2)],
@@ -553,6 +670,7 @@ export const SPRITES = {
   birch: [birchSprite(1)],
   log: [logSprite(1)],
   mushrooms: [mushroomSprite(1)],
+  stump: [stumpSprite(1)],
 };
 
 /**
@@ -560,9 +678,12 @@ export const SPRITES = {
  * floor details are redrawn at double size with more structure; small details are doubled.
  */
 export const SPRITES16: { [K in keyof typeof SPRITES]: Sprite[] } = {
-  oak: [treeSprite16(7, [52, 118, 52], [92, 60, 34], 11), treeSprite16(5, [64, 132, 58], [92, 60, 34], 12), treeSprite16(7, [44, 106, 50], [84, 56, 32], 13)],
-  jungle: [treeSprite16(9, [36, 128, 60], [70, 50, 30], 14), treeSprite16(7, [48, 146, 66], [70, 50, 30], 15)],
-  pine: [pineSprite16([40, 92, 60]), pineSprite16([52, 104, 68])],
+  oak: [
+    treeSprite16(7, [52, 118, 52], [92, 60, 34], 11), treeSprite16(5, [64, 132, 58], [92, 60, 34], 12), treeSprite16(7, [44, 106, 50], [84, 56, 32], 13),
+    tallOakSprite(2, [58, 124, 54], [96, 64, 36], 21), broadOakSprite(2, [48, 112, 48], [88, 58, 32], 22),
+  ],
+  jungle: [treeSprite16(9, [36, 128, 60], [70, 50, 30], 14), treeSprite16(7, [48, 146, 66], [70, 50, 30], 15), palmSprite(2)],
+  pine: [pineSprite16([40, 92, 60]), pineSprite16([52, 104, 68]), tallPineSprite(2, [34, 84, 56])],
   acacia: SPRITES.acacia.map(doubleSprite),
   peak: [peakSprite(36, 24, false, 1), peakSprite(32, 22, false, 2)],
   smallPeak: [peakSprite(20, 16, false, 5), peakSprite(16, 14, false, 6)],
@@ -576,6 +697,7 @@ export const SPRITES16: { [K in keyof typeof SPRITES]: Sprite[] } = {
   birch: [birchSprite(2)],
   log: [logSprite(2)],
   mushrooms: [mushroomSprite(2)],
+  stump: [stumpSprite(2)],
 };
 
 /** Half-resolution copy (2×2 box filter with alpha weighting) for 4-px-per-tile chunks. */

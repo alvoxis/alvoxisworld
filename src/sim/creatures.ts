@@ -1,8 +1,9 @@
+import { ROAD_BIT, ROAD_SPEED } from './roads';
 import { Rng } from '../core/rng';
 import { T, isWater } from '../world/terrain';
 import { EFFECT, EFFECT_COUNT } from './effects';
 import { FOOD_CELL, FoodMap } from './foodmap';
-import { MOVE, NO_BUDGET, NOT_FOUND, Pathfinder, UNREACHABLE, WaterField, isDrinkSpot, passable, type MoveClass } from './pathfinding';
+import { MOVE, NO_BUDGET, NOT_FOUND, Pathfinder, UNREACHABLE, WaterField, isDrinkSpot, landClass, passable, swimmable, type MoveClass } from './pathfinding';
 import { NavScheduler, computeNav } from './navjobs';
 import { LEG, RegionGraph } from './regions';
 import { World } from '../world/world';
@@ -93,6 +94,14 @@ export const TYRANT = 3;
 export const FISH = 4;
 export const HUMAN = 5;
 export const ELF = 6;
+// 0.23: a first set of wild animals on land and at sea (appended: saved species ids never change).
+export const DEER = 7;
+export const RABBIT = 8;
+export const WOLF = 9;
+export const BEAR = 10;
+export const SHARK = 11;
+export const WHALE = 12;
+export const ORCA = 13;
 
 export const SPECIES: readonly SpeciesDef[] = [
   {
@@ -136,7 +145,7 @@ export const SPECIES: readonly SpeciesDef[] = [
     id: HUMAN, key: 'human', name: 'Human', plural: 'Humans', diet: 'herbivore', habitat: 'land',
     speed: 0.12, size: 1, adultAge: 600, maxAge: 3000, maxHealth: 50, hungerRate: 0.17, thirstRate: 0.14,
     food: [T.GRASS, T.FOREST, T.JUNGLE, T.SAVANNA, T.HILLS], biteGain: 3, prey: [], attack: 0, meat: 0,
-    move: MOVE.LOWLAND, sight: 12, breedCooldown: 500, breedChance: 0.02, litter: 1, crowdLimit: 3, maxShare: 0.2,
+    move: MOVE.SWIM, sight: 12, breedCooldown: 1500, breedChance: 0.02, litter: 1, crowdLimit: 3, maxShare: 0.2,
     color: '#e0a878', sentient: true, marker: '#6fa8ff',
     civ: {
       affinity: { [T.GRASS]: 1, [T.SAVANNA]: 0.8, [T.FOREST]: 0.7, [T.HILLS]: 0.5, [T.JUNGLE]: 0.5, [T.SAND]: 0.3, [T.TUNDRA]: 0.3, [T.SWAMP]: 0.2, [T.SOIL]: 0.4 },
@@ -157,7 +166,7 @@ export const SPECIES: readonly SpeciesDef[] = [
     id: ELF, key: 'elf', name: 'Elf', plural: 'Elves', diet: 'herbivore', habitat: 'land',
     speed: 0.13, size: 1, adultAge: 700, maxAge: 3800, maxHealth: 45, hungerRate: 0.16, thirstRate: 0.14,
     food: [T.FOREST, T.JUNGLE, T.GRASS, T.SAVANNA], biteGain: 3, prey: [], attack: 0, meat: 0,
-    move: MOVE.LOWLAND, sight: 13, breedCooldown: 650, breedChance: 0.015, litter: 1, crowdLimit: 3, maxShare: 0.15,
+    move: MOVE.SWIM, sight: 13, breedCooldown: 1950, breedChance: 0.015, litter: 1, crowdLimit: 3, maxShare: 0.15,
     color: '#8fd08a', sentient: true, marker: '#7fe08a',
     civ: {
       affinity: { [T.FOREST]: 1, [T.JUNGLE]: 0.8, [T.GRASS]: 0.6, [T.HILLS]: 0.3, [T.SAVANNA]: 0.3, [T.TUNDRA]: 0.2, [T.SOIL]: 0.2, [T.SAND]: 0.1 },
@@ -170,6 +179,63 @@ export const SPECIES: readonly SpeciesDef[] = [
       gap: 20,
       architecture: 'elven',
     },
+  },
+  // ---- 0.23 wild animals ---------------------------------------------------------------------------------------
+  {
+    // Forest and meadow browsers; quick to flee; prey of wolves and bears.
+    id: DEER, key: 'deer', name: 'Deer', plural: 'Deer', diet: 'herbivore', habitat: 'land',
+    speed: 0.15, size: 1.1, adultAge: 360, maxAge: 2400, maxHealth: 45, hungerRate: 0.22, thirstRate: 0.15,
+    food: [T.GRASS, T.FOREST, T.SAVANNA, T.HILLS, T.TUNDRA], biteGain: 3, prey: [], attack: 0, meat: 0,
+    move: MOVE.LOWLAND, sight: 12, breedCooldown: 400, breedChance: 0.02, litter: 1, crowdLimit: 3, maxShare: 0.15,
+    color: '#a8703c',
+  },
+  {
+    // Small and many: they breed fast in open land and feed the predators.
+    id: RABBIT, key: 'rabbit', name: 'Rabbit', plural: 'Rabbits', diet: 'herbivore', habitat: 'land',
+    speed: 0.13, size: 0.6, adultAge: 150, maxAge: 1000, maxHealth: 15, hungerRate: 0.2, thirstRate: 0.12,
+    food: [T.GRASS, T.SAVANNA, T.TUNDRA, T.HILLS], biteGain: 3, prey: [], attack: 0, meat: 0,
+    move: MOVE.LOWLAND, sight: 7, breedCooldown: 200, breedChance: 0.03, litter: 2, crowdLimit: 4, maxShare: 0.15,
+    color: '#b8a58a',
+  },
+  {
+    // Hunts deer, rabbits and grazers (not people); breeds only where prey is plentiful.
+    id: WOLF, key: 'wolf', name: 'Wolf', plural: 'Wolves', diet: 'carnivore', habitat: 'land',
+    speed: 0.2, size: 0.9, adultAge: 400, maxAge: 2600, maxHealth: 45, hungerRate: 0.13, thirstRate: 0.13,
+    food: [], biteGain: 0, prey: [DEER, RABBIT, GRAZER], attack: 12, meat: 80,
+    move: MOVE.LAND, sight: 14, breedCooldown: 520, breedChance: 0.02, litter: 2, crowdLimit: 2, maxShare: 0.06,
+    color: '#7d7f86',
+  },
+  {
+    // Big and rare: an ambush hunter of deer and rabbits (a heavy blow when it gets close), keeps out of the mountains.
+    id: BEAR, key: 'bear', name: 'Bear', plural: 'Bears', diet: 'carnivore', habitat: 'land',
+    speed: 0.15, size: 1.4, adultAge: 600, maxAge: 3400, maxHealth: 90, hungerRate: 0.1, thirstRate: 0.12,
+    food: [], biteGain: 0, prey: [DEER, RABBIT], attack: 22, meat: 100,
+    move: MOVE.LOWLAND, sight: 11, breedCooldown: 900, breedChance: 0.012, litter: 1, crowdLimit: 2, maxShare: 0.04,
+    color: '#6b4a32',
+  },
+  {
+    // Sea hunter of fish.
+    id: SHARK, key: 'shark', name: 'Shark', plural: 'Sharks', diet: 'carnivore', habitat: 'water',
+    speed: 0.16, size: 1.2, adultAge: 500, maxAge: 3000, maxHealth: 60, hungerRate: 0.13, thirstRate: 0,
+    food: [], biteGain: 0, prey: [FISH], attack: 10, meat: 80,
+    move: MOVE.WATER, sight: 12, breedCooldown: 600, breedChance: 0.015, litter: 1, crowdLimit: 2, maxShare: 0.05,
+    color: '#7b8a99',
+  },
+  {
+    // Gentle giant of the open sea: feeds on the plankton of deep water, breeds slowly.
+    id: WHALE, key: 'whale', name: 'Whale', plural: 'Whales', diet: 'herbivore', habitat: 'water',
+    speed: 0.08, size: 2.2, adultAge: 900, maxAge: 5000, maxHealth: 150, hungerRate: 0.08, thirstRate: 0,
+    food: [T.DEEP_WATER], biteGain: 2, prey: [], attack: 0, meat: 0,
+    move: MOVE.WATER, sight: 14, breedCooldown: 1400, breedChance: 0.01, litter: 1, crowdLimit: 2, maxShare: 0.03,
+    color: '#4a5d78',
+  },
+  {
+    // Top sea predator: hunts fish and sharks.
+    id: ORCA, key: 'orca', name: 'Orca', plural: 'Orcas', diet: 'carnivore', habitat: 'water',
+    speed: 0.15, size: 1.5, adultAge: 700, maxAge: 4000, maxHealth: 100, hungerRate: 0.11, thirstRate: 0,
+    food: [], biteGain: 0, prey: [FISH, SHARK], attack: 16, meat: 100,
+    move: MOVE.WATER, sight: 14, breedCooldown: 1000, breedChance: 0.012, litter: 1, crowdLimit: 2, maxShare: 0.03,
+    color: '#1d2330',
   },
 ];
 
@@ -220,6 +286,8 @@ export const CAUSE_COUNT = CAUSE_NAMES.length;
 const FIRE_DAMAGE = 0.08;
 /** How far (tiles) an animal in the wrong terrain looks for a place it can live, and health lost per tick meanwhile. */
 const ESCAPE_RADIUS = 8;
+/** Swimming speed relative to walking (people, 0.23). */
+const SWIM_SPEED = 0.55;
 const ESCAPE_DAMAGE = 0.045;
 /** Animals notice fire this many tiles away and run from it. */
 const FIRE_SIGHT = 3;
@@ -280,6 +348,8 @@ export interface CreatureInfo {
   /** Active buffs/debuffs: effect id, remaining ticks, strength 1..3. */
   effects: Array<{ id: number; ticks: number; power: number }>;
   effectMask: number;
+  /** A person in open water (0.23). */
+  swimming: boolean;
 }
 
 export interface DeathRecord {
@@ -293,6 +363,7 @@ function habitatOk(world: World, sp: SpeciesDef, tx: number, ty: number): boolea
   if (!world.inBounds(tx, ty)) return false;
   const id = world.terrain[world.idx(tx, ty)];
   if (sp.move === MOVE.WATER) return isWater(id);
+  if (sp.move === MOVE.SWIM) return !isWater(id) || swimmable(id); // swimmers drown only in deep ocean
   return !isWater(id) || id === T.RIVER;
 }
 
@@ -367,6 +438,8 @@ export class Creatures {
   groupGoal: ((id: number) => number) | null = null;
   /** Workplace tile of a settlement worker (-1 = no job); it wins over the group goal. */
   workGoal: ((id: number) => number) | null = null;
+  /** How close (tiles) a worker must come to its work tile to start working (felling needs to be beside the tree). */
+  workReach: ((id: number) => number) | null = null;
   /** Told when a creature dies or is removed (its id). */
   onDeath: ((id: number) => void) | null = null;
   /** Deaths since the last call to drainDeaths() (for UI/history). */
@@ -474,7 +547,7 @@ export class Creatures {
     const out: Array<{ i: number; d: number }> = [];
     for (let i = 0; i < this.count; i++) {
       if (this.dead[i]) continue;
-      const lift = SPECIES[this.species[i]].size * 0.3;
+      const lift = SPECIES[this.species[i]].size * 0.15; // the body, half a sprite up (sprites are drawn at half size)
       const d = Math.min(Math.hypot(this.x[i] - x, this.y[i] - y), Math.hypot(this.x[i] - x, this.y[i] - lift - y));
       if (d <= radius) out.push({ i, d });
     }
@@ -506,6 +579,7 @@ export class Creatures {
       effects: Array.from({ length: EFFECT_COUNT }, (_, e) => ({ id: e, ticks: this.effectTicks(i, e), power: this.effectPower(i, e) }))
         .filter((x) => x.ticks > 0),
       effectMask: this.effMask[i],
+      swimming: this.worldRef ? this.swimming(this.worldRef, i) : false,
     };
   }
 
@@ -524,7 +598,25 @@ export class Creatures {
 
   /** Whether a species may stand on the given tile. */
   static canEnter(world: World, species: number, tx: number, ty: number): boolean {
-    return passable(world, SPECIES[species].move, tx, ty);
+    return passable(world, landClass(SPECIES[species].move), tx, ty); // people are placed on land, never in a lake
+  }
+
+  /**
+   * The class a creature moves with when not on a planned route: swimmers on land walk (they do not wander or flee
+   * into the water); one already swimming keeps swimming until it reaches land.
+   */
+  private freeClass(world: World, i: number): number {
+    const cls = SPECIES[this.species[i]].move;
+    if (cls !== MOVE.SWIM) return cls;
+    const id = world.terrain[world.idx(Math.floor(this.x[i]), Math.floor(this.y[i]))];
+    return isWater(id) && id !== T.RIVER ? MOVE.SWIM : MOVE.LOWLAND;
+  }
+
+  /** Whether creature i is swimming (a person in open water: shallow sea or a lake). */
+  swimming(world: World, i: number): boolean {
+    if (SPECIES[this.species[i]].move !== MOVE.SWIM) return false;
+    const id = world.terrain[world.idx(Math.floor(this.x[i]), Math.floor(this.y[i]))];
+    return isWater(id) && id !== T.RIVER;
   }
 
   // ---- lifecycle -------------------------------------------------------
@@ -740,7 +832,11 @@ export class Creatures {
     }
   }
 
+  /** The world of the last tick (for info(): whether a person is swimming). */
+  private worldRef: World | null = null;
+
   tick(world: World, rng: Rng, tick: number): void {
+    this.worldRef = world;
     this.updateNavigation(world, tick);
     this.pathfinder.beginTick(NODE_BUDGET);
     this.buildGrid(world);
@@ -757,7 +853,7 @@ export class Creatures {
       this.age[i] += 1;
       if (this.breedTimer[i] > 0) this.breedTimer[i]--;
       if (this.searchCd[i] > 0) this.searchCd[i]--;
-      const exertion = this.state[i] === STATE.FLEE || this.state[i] === STATE.HUNT ? 1.5 : 1;
+      const exertion = this.state[i] === STATE.FLEE || this.state[i] === STATE.HUNT || this.swimming(world, i) ? 1.5 : 1; // swimming tires too
       let needs = 1;
       if (this.effMask[i]) {
         if (this.effMask[i] & (1 << EFFECT.FED)) needs = 0;
@@ -967,7 +1063,8 @@ export class Creatures {
       if (goal >= 0) {
         const gx = goal % world.width;
         const gy = Math.floor(goal / world.width);
-        if (Math.hypot(this.x[i] - gx - 0.5, this.y[i] - gy - 0.5) <= ARRIVED) {
+        const reach = work >= 0 && this.workReach ? this.workReach(this.id[i]) : ARRIVED;
+        if (Math.hypot(this.x[i] - gx - 0.5, this.y[i] - gy - 0.5) <= reach) {
           if (work >= 0) {
             if (s !== STATE.WORK) {
               this.state[i] = STATE.WORK;
@@ -1003,8 +1100,12 @@ export class Creatures {
     const sp = SPECIES[this.species[i]];
     const tx = Math.floor(this.x[i]);
     const ty = Math.floor(this.y[i]);
-    const wading = sp.move !== MOVE.WATER && world.terrain[world.idx(tx, ty)] === T.RIVER;
-    const speed = this.speedOf(i) * (wading ? 0.6 : 1);
+    const ti = world.idx(tx, ty);
+    const wading = sp.move !== MOVE.WATER && world.terrain[ti] === T.RIVER;
+    // People walk a little faster on their settlements' roads, and swim slowly (0.23).
+    const road = sp.sentient && (world.built[ti] & ROAD_BIT) !== 0;
+    const swim = sp.move === MOVE.SWIM && isWater(world.terrain[ti]) && world.terrain[ti] !== T.RIVER;
+    const speed = this.speedOf(i) * (wading ? 0.6 : 1) * (road ? ROAD_SPEED : 1) * (swim ? SWIM_SPEED : 1);
 
     switch (this.state[i]) {
       case STATE.EAT: {
@@ -1578,7 +1679,7 @@ export class Creatures {
   }
 
   /** Moves straight toward a point (normally an adjacent tile centre). Returns false if blocked. */
-  private moveToPoint(world: World, i: number, x: number, y: number, speed: number): boolean {
+  private moveToPoint(world: World, i: number, x: number, y: number, speed: number, routed = true): boolean {
     const ddx = x - this.x[i];
     const ddy = y - this.y[i];
     const d = Math.hypot(ddx, ddy);
@@ -1587,7 +1688,7 @@ export class Creatures {
     const k = Math.min(1, speed / d);
     const nx = this.x[i] + ddx * k;
     const ny = this.y[i] + ddy * k;
-    if (this.canMove(world, i, nx, ny)) {
+    if (this.canMove(world, i, nx, ny, routed)) {
       this.x[i] = nx;
       this.y[i] = ny;
       return true;
@@ -1610,8 +1711,9 @@ export class Creatures {
    * blocked ground is moved off it by unstick() before it can act, never by walking
    * through more blocked ground.
    */
-  private canMove(world: World, i: number, nx: number, ny: number): boolean {
-    const cls = SPECIES[this.species[i]].move;
+  private canMove(world: World, i: number, nx: number, ny: number, routed = false): boolean {
+    // On a planned route the species' own class (swimmers may cross water); otherwise its free class.
+    const cls = routed ? SPECIES[this.species[i]].move : this.freeClass(world, i);
     const tx = Math.floor(nx);
     const ty = Math.floor(ny);
     if (!passable(world, cls, tx, ty)) return false;
@@ -1715,7 +1817,7 @@ export class Creatures {
    * close to the current heading, and (when fleeing) moving away from (awayX, awayY).
    */
   private chooseHeading(world: World, rng: Rng, i: number, awayX?: number, awayY?: number): void {
-    const cls = SPECIES[this.species[i]].move;
+    const cls = this.freeClass(world, i);
     let ax = 0;
     let ay = 0;
     if (awayX !== undefined && awayY !== undefined) {

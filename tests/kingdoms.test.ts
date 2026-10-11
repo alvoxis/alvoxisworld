@@ -173,6 +173,7 @@ describe('rulers', () => {
   it('a ruler who dies is removed at once and succeeded on the next step', () => {
     const { sim, k } = kingdom();
     const old = k.ruler;
+    const before = sim.history.filter((h) => h.code === 'kingdom_succession').length; // earlier natural successions
     sim.creatures.removeById(old);
     expect(k.ruler).toBe(0); // never shown as ruling while dead
     expect(k.status).toBe('succession');
@@ -180,7 +181,7 @@ describe('rulers', () => {
     expect(k.ruler).toBeGreaterThan(0);
     expect(k.ruler).not.toBe(old);
     expect(k.rulers.find((r) => r.id === old)?.end).toBe('died');
-    expect(sim.history.filter((h) => h.code === 'kingdom_succession').length).toBe(1);
+    expect(sim.history.filter((h) => h.code === 'kingdom_succession').length).toBe(before + 1);
     checkKingdoms(sim);
   });
 
@@ -265,6 +266,8 @@ describe('saves and determinism', () => {
   it('kingdoms, membership and the ruler survive a save, and the world continues exactly', () => {
     const { sim } = world([[HUMAN, 60, 60], [HUMAN, 90, 60], [ELF, 150, 60], [ELF, 180, 60]]);
     mature(sim);
+    // Membership varies (people wander off and come back): allow a few more formation checks for both kingdoms.
+    for (let k = 0; k < 6 && sim.kingdoms.list.length < 2; k++) run(sim, FORM_TICKS);
     expect(sim.kingdoms.list.length).toBe(2);
     const data = serialize(sim);
     expect(data.version).toBe(SAVE_VERSION);

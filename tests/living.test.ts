@@ -89,8 +89,8 @@ describe('picking creatures', () => {
     const near = c.candidatesAt(c.x[at(a)], c.y[at(a)], 2);
     expect(near.map((i) => c.id[i])).toEqual([a, b]);
     expect(c.candidatesAt(c.x[at(b)], c.y[at(b)], 2).map((i) => c.id[i])[0]).toBe(b);
-    // The sprite is drawn above the creature's feet: a tap on its middle still selects it.
-    expect(c.candidatesAt(c.x[at(a)], c.y[at(a)] - 0.3, 0.1).map((i) => c.id[i])).toContain(a);
+    // The sprite is drawn above the creature's feet: a tap on its middle still selects it (sprites are half size).
+    expect(c.candidatesAt(c.x[at(a)], c.y[at(a)] - 0.15, 0.1).map((i) => c.id[i])).toContain(a);
     expect(c.candidatesAt(c.x[at(a)] + 20, c.y[at(a)], 2)).toEqual([]);
     c.removeById(a);
     expect(c.candidatesAt(30, 30, 2).map((i) => c.id[i])).not.toContain(a);

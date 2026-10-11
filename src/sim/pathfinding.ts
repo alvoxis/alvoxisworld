@@ -13,9 +13,27 @@ export const MOVE = {
   LOWLAND: 1,
   /** Swims in any water (sea, lakes, rivers); never leaves it. */
   WATER: 2,
+  /**
+   * People (0.23): walk like LOWLAND and can also swim across shallow sea, lakes and rivers (never deep ocean).
+   * Swimming is slow and tiring and water costs much more than land, so routes stay on land unless a crossing is
+   * clearly shorter; outside a planned route people do not wander into water (Creatures).
+   */
+  SWIM: 3,
 } as const;
 export type MoveClass = (typeof MOVE)[keyof typeof MOVE];
-export const MOVE_CLASSES = 3;
+export const MOVE_CLASSES = 4;
+/** Route cost of one tile of open water (shallow sea or lake) for swimmers. */
+export const SWIM_COST = 6;
+
+/** Water a swimmer can be in: shallow sea, lakes and rivers (not deep ocean). */
+export function swimmable(id: number): boolean {
+  return id === T.SHALLOW_WATER || id === T.LAKE || id === T.RIVER;
+}
+
+/** The class of a species on dry ground: swimmers walk like LOWLAND (homes, territory, sites and roads stay on land). */
+export function landClass(cls: number): number {
+  return cls === MOVE.SWIM ? MOVE.LOWLAND : cls;
+}
 
 /** Whether a movement class may stand on tile (x, y): its terrain and its slope (see world/passability.ts). */
 export function passable(world: World, cls: number, x: number, y: number): boolean {
@@ -34,10 +52,11 @@ export function passable(world: World, cls: number, x: number, y: number): boole
 export function passableId(cls: number, code: number): boolean {
   const id = code & TERRAIN_MASK;
   if (cls === MOVE.WATER) return isWater(id);
+  if (cls === MOVE.SWIM && isWater(id)) return swimmable(id);
   if (isWater(id) && id !== T.RIVER) return false;
   const slope = code >> SLOPE_SHIFT;
   if (slope >= SLOPE.CLIFF) return false;
-  if (cls === MOVE.LOWLAND && (id === T.MOUNTAIN || id === T.SNOW || slope === SLOPE.STEEP)) return false;
+  if ((cls === MOVE.LOWLAND || cls === MOVE.SWIM) && (id === T.MOUNTAIN || id === T.SNOW || slope === SLOPE.STEEP)) return false;
   return true;
 }
 
@@ -45,6 +64,7 @@ export function passableId(cls: number, code: number): boolean {
 export function tileCost(cls: number, code: number): number {
   if (cls === MOVE.WATER) return 1;
   if ((code & TERRAIN_MASK) === T.RIVER) return 3;
+  if (cls === MOVE.SWIM && isWater(code & TERRAIN_MASK)) return SWIM_COST;
   return code >> SLOPE_SHIFT === SLOPE.STEEP ? 2 : 1;
 }
 
@@ -430,6 +450,8 @@ export function computeWaterDist(grid: NavGrid): Uint16Array[] {
       if (pr && pd && pass[c + w + 1] && dist[c + w + 1] === UNREACHABLE) { dist[c + w + 1] = d; queue[tail++] = c + w + 1; }
     }
   }
+  // Swimmers drink from the shore like any walker (they never swim out to drink): the same field.
+  out[MOVE.SWIM] = out[MOVE.LOWLAND];
   return out;
 }
 
@@ -440,8 +462,8 @@ export function computeWaterDist(grid: NavGrid): Uint16Array[] {
  * per step and is shared by every animal. Rebuilt only when passability changes.
  */
 export class WaterField {
-  /** dist[cls] for MOVE.LAND and MOVE.LOWLAND (water animals never need to drink). */
-  dist: Uint16Array[] = [new Uint16Array(0), new Uint16Array(0)];
+  /** dist[cls] for MOVE.LAND, MOVE.LOWLAND and MOVE.SWIM (water animals never need to drink). */
+  dist: Uint16Array[] = [new Uint16Array(0), new Uint16Array(0), new Uint16Array(0), new Uint16Array(0)];
   /** world.passVersion the field was built for (-1 = never built). */
   version = -1;
   private owner: World | null = null;

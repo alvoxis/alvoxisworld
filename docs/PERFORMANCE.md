@@ -272,3 +272,13 @@ Method: chunk paint cost measured in Node (Vitest, `TerrainPainter.paintChunk`, 
 - Browser, close zoom (12×, 16-px level), fresh view: 8 band paints at 2.94 ms each; frame interval median 16.7 ms, p90 16.7 ms, max 16.8 ms. Steady close zoom with the simulation running: median 16.7 ms, p90 16.7 ms.
 - A jump straight to close zoom fills the view within about 0.8 s (bands are spread over frames); before the per-chunk band state was added, chunks in the same frame restarted each other and never finished.
 - Memory: up to 24 cached 16-px chunks (1 MB each) plus at most 4 band buffers (1 MB each). Low-resolution mode never uses the 16-px level.
+
+## Settlement landmarks 0.22
+
+Each landmark is one cached sprite per look, colour and size (built once, then one `drawImage` per visible settlement per frame); hit testing checks at most a few dozen rectangles per settlement and only on a tap. Browser (headless Chromium, iPhone 13 emulation, software rendering, production build): frame interval median 16.7 ms, p90 16.7 ms at zoom 5 over two towns with the simulation running. Not measured on a physical phone.
+
+## World simulation 0.23
+
+- Site search (where the next building goes) now counts neighbouring buildings with per-row prefix sums instead of a scan per candidate; the result is identical (deterministic, no cache that a save could miss). Settlement benchmark with 12 settlements (Node, same seed): 0.565 ms per tick in total, 0.206 ms in the settlement step (0.21 baseline: 0.577 and 0.125). The settlement step grew by clearing jobs, felling and road planning (A* inside the territory, at most two attempts every second step); the whole tick did not.
+- Roads are drawn from cached 32×32-tile blocks, rebuilt only when `roadVersion` changes; trees in front of creatures reuse the cached tree sprites.
+- Browser (headless Chromium, iPhone 13 emulation, software rendering, production build, about 245 creatures with a growing settlement): frame interval median 16.7 ms, p90 16.8 ms at zoom 12, 5 and 1.5. Not measured on a physical phone.

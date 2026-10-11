@@ -45,7 +45,7 @@ function humans(sim: Simulation): number[] {
 describe('humans as a species', () => {
   it('are a sixth, sentient species and every earlier species is unchanged', () => {
     expect(SPECIES.length).toBeGreaterThanOrEqual(6); // elves came later as the seventh
-    expect(SPECIES[HUMAN]).toMatchObject({ key: 'human', sentient: true, habitat: 'land', move: MOVE.LOWLAND });
+    expect(SPECIES[HUMAN]).toMatchObject({ key: 'human', sentient: true, habitat: 'land', move: MOVE.SWIM }); // 0.23: people can swim
     expect(SPECIES.slice(0, 5).map((s) => s.key)).toEqual(['grazer', 'raptor', 'hadrosaur', 'tyrant', 'fish']);
     expect(SPECIES.slice(0, 5).some((s) => s.sentient)).toBe(false);
     // Predators may hunt people, and still hunt what they hunted before.

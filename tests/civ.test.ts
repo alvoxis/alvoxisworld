@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { deserializeInto, serialize } from '../src/save/serialize';
-import { GRAZER, HUMAN } from '../src/sim/creatures';
+import { GRAZER, HUMAN, STATE } from '../src/sim/creatures';
 import {
+  CHOP_PER_WORKER,
   BASE_CAPACITY, BASE_STORAGE, BUILDINGS, FEED_HUNGER, HOUSE_CAPACITY, MAX_CONSTRUCTIONS, SLOTS, START_KIT, STONE_PER_TILE, TECHS, WOOD_PER_TREE,
-  BUILDERS, BUILD_PER_WORKER, WORK_SLOTS, costOf, farmOutput, housing, importCiv, newCiv, storage, stepsOf, type BuildingType, type Civ,
+  BUILDERS, BUILD_PER_WORKER, costOf, farmOutput, housing, importCiv, newCiv, storage, stepsOf, type BuildingType, type Civ,
 } from '../src/sim/civ';
 import { STEP_TICKS, MIN_FOUNDERS, type Settlement } from '../src/sim/settlements';
 import { Simulation } from '../src/sim/simulation';
@@ -304,13 +305,13 @@ describe('buildings', () => {
     expect(build(bare.sim, bare.s, 'lumber')).toBe('site');
     expect(build(bare.sim, bare.s, 'quarry')).toBe('site');
     const w = flat(120, 100, T.DESERT);
-    block(w, 38, 38, 42, 42, T.GRASS);
+    block(w, 36, 36, 44, 44, T.GRASS); // the 5×5 centre stays free: fields go around it
     const d = quiet(w);
     d.spawnInCircle(HUMAN, 40, 40, 2, 10);
     const ds = d.foundSettlement(40, 40, 'human') as Settlement;
     rich(ds.civ!);
     expect(build(d, ds, 'farm')).not.toBe('site'); // the grass patch is inside the territory
-    block(d.world, 38, 38, 42, 42, T.DESERT);
+    block(d.world, 36, 36, 44, 44, T.DESERT);
     const ds2 = d.settlements.list[0];
     ds2.civ!.buildings = [];
     expect(build(d, ds2, 'farm')).toBe('site');
@@ -355,8 +356,8 @@ describe('buildings', () => {
     void STONE_PER_TILE;
     civ.wood = 0;
     civ.stone = 0;
-    steps(sim, 20);
-    expect(civ.rate.wood).toBeGreaterThan(0);
+    // 0.23: lumberjacks walk to a tree, chop it and bring its wood when it falls (a whole tree at a time).
+    steps(sim, 60);
     expect(civ.wood).toBeGreaterThan(10);
     expect(forest()).toBeLessThan(trees0);
     expect(quarry.reserve).toBeLessThan(reserve0);
@@ -505,14 +506,26 @@ describe('technologies', () => {
     const lumber = civ.buildings[0];
     expect(until(sim, () => lumber.done)).toBeGreaterThan(0);
     civ.wood = 0;
-    // Compare steps with the lumber camp fully staffed.
-    expect(until(sim, () => lumber.here === WORK_SLOTS.lumber)).toBeGreaterThan(0);
-    const plain = civ.rate.wood;
-    expect(plain).toBeCloseTo(1, 5);
+    // Felling speed of a lumberjack at work beside its tree, without and with Harvesting (0.23: real felling).
+    const chopping = () => civ.jobs.find((j) => j.b === lumber.id && j.t >= 0 && sim.creatures.state[sim.creatures.indexOf(j.id)] === STATE.WORK && j.chop > 0);
+    const speed = () => {
+      expect(until(sim, () => !!chopping(), 200)).toBeGreaterThan(0);
+      for (let k = 0; k < 50; k++) {
+        const j = chopping();
+        if (j) {
+          const t = j.t;
+          const c0 = j.chop;
+          steps(sim, 1);
+          if (j.t === t && j.chop > c0 && sim.creatures.state[sim.creatures.indexOf(j.id)] === STATE.WORK) return j.chop - c0;
+        } else steps(sim, 1);
+      }
+      return NaN;
+    };
+    const plain = speed();
+    expect(plain).toBeCloseTo(CHOP_PER_WORKER, 5);
     civ.techs.push('harvesting');
     civ.wood = 0;
-    expect(until(sim, () => lumber.here === WORK_SLOTS.lumber)).toBeGreaterThan(0);
-    expect(civ.rate.wood).toBeCloseTo(plain * 1.5, 5);
+    expect(speed()).toBeCloseTo(plain * 1.5, 5);
   });
 
   it('settlements that run themselves build and research; with that off, nothing happens', () => {

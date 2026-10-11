@@ -30,9 +30,13 @@ import { WATER_FLAG, World } from '../world/world';
  * 13 = kingdoms (optional `kingdoms` block: settlement ids, capital, ruler id, rulers and events); absent = none,
  *      references are validated on load. Saves 1–12 load unchanged,
  * 14 = terrain and settlement visuals: optional settlement `wear` (trails as [tile, wear] pairs) and the `shipyard`
- *      building type; absent = no trails. Heights and water depth were already part of every save. Saves 1–13 load unchanged.
+ *      building type; absent = no trails. Heights and water depth were already part of every save. Saves 1–13 load unchanged,
+ * 15 = forestry and roads (0.23): optional `stumps` ([tile, tick cut] pairs); per settlement `civ.clear` (ground to
+ *      clear), `civ.roads` (road tiles) and per job `t`/`at`/`chop` (the tree being felled). Absent = no stumps,
+ *      nothing to clear, no roads, no tree chosen yet. Saves 1–14 load unchanged; trees are part of the terrain, so
+ *      nothing about existing forests changes on load.
  */
-export const SAVE_VERSION = 14;
+export const SAVE_VERSION = 15;
 
 /** Version 6 additions. Everything in it is optional in a save and validated on load. */
 export interface SkySave {
@@ -140,6 +144,8 @@ export interface SaveData {
   sky?: SkySave;
   /** Version 8. */
   settlements?: SettlementsSave;
+  /** Version 15: tree stumps as [tile, tick cut] pairs. */
+  stumps?: number[];
   /** Version 11. */
   groups?: GroupsSave;
   /** Version 13: kingdoms (absent = none). */
@@ -186,6 +192,7 @@ export function serialize(sim: Simulation): SaveData {
     creatures,
     history: sim.history.map((h) => ({ ...h })),
     settlements: sim.settlements.exportState(),
+    stumps: sim.settlements.forestry.export(),
     groups: sim.groups.exportState(),
     kingdoms: sim.kingdoms.exportState(),
     sky: {
@@ -428,6 +435,8 @@ export function deserializeInto(sim: Simulation, data: SaveData): World {
   else loadCreatures(sim.creatures, data.creatures as CreatureSave);
   sim.creatures.reindex();
   sim.settlements.importState(data.settlements, world, sim.creatures);
+  sim.settlements.forestry.import(world, data.stumps, Number.isFinite(data.tick) ? data.tick : 0); // after: importState resets
+  sim.settlements.markBuilt(world); // built ground and roads are derived: rebuilt now, so the loaded world moves the same
   sim.groups.importState(data.groups, world, sim.creatures, sim.settlements);
   sim.kingdoms.importState(data.kingdoms, world, sim.creatures, sim.settlements);
   sim.history = data.history.map((h) => ({ ...h }));

@@ -1,5 +1,5 @@
 import { t, td, tn } from '../i18n';
-import { SPECIES } from '../sim/creatures';
+import { BEAR, DEER, ELF, FISH, GRAZER, HADROSAUR, HUMAN, ORCA, RABBIT, RAPTOR, SHARK, SPECIES, TYRANT, WHALE, WOLF } from '../sim/creatures';
 import { EFFECTS } from '../sim/effects';
 import { Simulation } from '../sim/simulation';
 import { WEATHER_KIND } from '../sim/weather';
@@ -45,10 +45,38 @@ export interface ToolContext {
   notify(text: string): void;
 }
 
+/**
+ * Kinds of life in the Creatures tab (0.23): two sections (land, sea) with groups of species, so the list stays short
+ * on a phone. Every species is in exactly one group; groups only exist when they have species (no empty promises).
+ */
+export interface LifeGroup {
+  id: string;
+  section: 'land' | 'sea';
+  icon: string;
+  species: readonly number[];
+}
+export const LIFE_GROUPS: readonly LifeGroup[] = [
+  { id: 'peoples', section: 'land', icon: '👥', species: [HUMAN, ELF] },
+  { id: 'herbivores', section: 'land', icon: '🦌', species: [GRAZER, DEER] },
+  { id: 'small', section: 'land', icon: '🐇', species: [RABBIT] },
+  { id: 'predators', section: 'land', icon: '🐺', species: [WOLF, BEAR] },
+  { id: 'dinosaurs', section: 'land', icon: '🦖', species: [HADROSAUR, RAPTOR, TYRANT] },
+  { id: 'fish', section: 'sea', icon: '🐟', species: [FISH] },
+  { id: 'sea_predators', section: 'sea', icon: '🦈', species: [SHARK, ORCA] },
+  { id: 'sea_mammals', section: 'sea', icon: '🐋', species: [WHALE] },
+];
+
+/** The group a species is listed in. */
+export function lifeGroupOf(species: number): LifeGroup {
+  return LIFE_GROUPS.find((g) => g.species.includes(species))!;
+}
+
 export interface Tool {
   id: string;
   label: string;
   category: ToolCategory;
+  /** Creatures tab: the kind of life it belongs to (LIFE_GROUPS id); tools without one are always shown. */
+  group?: string;
   icon: ToolIcon;
   /** One-line explanation shown when the tool is picked. */
   hint?: string;
@@ -93,6 +121,7 @@ const spawnTool = (species: number): Tool => {
     id: `spawn_${sp.key}`,
     label: sp.name,
     category: 'creatures',
+    group: lifeGroupOf(species).id,
     icon: { species },
     hint: `${sp.diet === 'carnivore' ? 'Predator' : 'Herbivore'} · ${sp.move === 2 ? 'lives in water' : 'lives on land'}`,
     usesBrush: true,

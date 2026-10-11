@@ -4,7 +4,7 @@ import { en } from '../src/i18n/en';
 import { HOUSE_STYLES, WORKPLACES, architectureOf, buildingDot, drawBuildingArt, type Rect } from '../src/render/architecture';
 import { deserializeInto, serialize } from '../src/save/serialize';
 import { BUILDING_TYPES, findSite, type Building, type BuildingType, type Civ } from '../src/sim/civ';
-import { ELF, GRAZER, HUMAN } from '../src/sim/creatures';
+import { ELF, GRAZER, HUMAN, SPECIES } from '../src/sim/creatures';
 import type { Settlement } from '../src/sim/settlements';
 import { Simulation } from '../src/sim/simulation';
 import { SEA_LEVEL, T, isWater } from '../src/world/terrain';
@@ -210,9 +210,10 @@ describe('tool palette', () => {
     const ctx = { sim, notify: () => {}, inspect: () => {}, durationTicks: 100, intensity: 1 } as never;
     for (const tool of TOOLS.filter((t) => t.id.startsWith('spawn_'))) {
       const key = tool.id.slice(6);
+      const water = SPECIES.find((s) => s.key === key)!.habitat === 'water';
       const before = sim.creatures.count;
-      tool.apply(ctx, key === 'fish' ? 20 : 40, key === 'fish' ? 20 : 40, 2);
-      if (key === 'fish') continue; // needs water, tested elsewhere
+      tool.apply(ctx, water ? 20 : 40, water ? 20 : 40, 2);
+      if (water) continue; // fish and sea animals need water, tested elsewhere
       expect(sim.creatures.count).toBeGreaterThan(before);
     }
     TOOLS.find((t) => t.id === 'paint_forest')!.apply(ctx, 10, 10, 2);

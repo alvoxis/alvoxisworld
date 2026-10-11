@@ -14,12 +14,14 @@
  * yield (or of the construction work). Foraging and knowledge stay settlement-wide: they come from all
  * people and their land and are not tied to a building.
  */
+import { treesOn } from '../world/trees';
+import { WOOD_PER_TREE, fellable, woodOf } from './forestry';
 import { hash2 } from '../core/rng';
 import { T, isWater } from '../world/terrain';
 import type { World } from '../world/world';
 import type { Creatures } from './creatures';
 import { SPECIES, STATE } from './creatures';
-import { passable } from './pathfinding';
+import { landClass, passable } from './pathfinding';
 import type { Settlement } from './settlements';
 
 export type BuildingType = 'house' | 'storehouse' | 'farm' | 'lumber' | 'quarry' | 'shipyard';
@@ -80,7 +82,7 @@ export const FARM_YIELD = 1.0;
 export const LUMBER_YIELD = 1.0;
 export const QUARRY_YIELD = 0.7;
 export const KNOWLEDGE_PER_ADULT = 0.05;
-export const WOOD_PER_TREE = 10;
+export { WOOD_PER_TREE };
 export const STONE_PER_TILE = 60;
 export const STONE_RESERVE_CAP = 1500;
 export const LUMBER_RADIUS = 6;
@@ -121,7 +123,29 @@ export interface Job {
   /** Closest distance to the workplace so far, and steps without getting closer. */
   best: number;
   stuck: number;
+  /**
+   * Felling (0.23; lumber camps and clearing): the tree tile being cut (-1 = none yet), the tile the worker stands on
+   * beside it, and the work put into it so far (in wood units; the tree falls when it reaches the tree's wood).
+   */
+  t: number;
+  at: number;
+  chop: number;
 }
+
+/** Job "building" id of clearing work: no building, the settlement's clearing list (Civ.clear). */
+export const CLEAR_JOB = -1;
+/** People clearing ground at once (founders all help: nothing else can be done before the centre is clear). */
+export const CLEARERS = 4;
+/** Clearing is quick work (the timber is not cut up carefully): it goes this much faster than a lumberjack's felling. */
+export const CLEAR_SPEED = 3;
+/** Work (wood units) one worker puts into felling per step (a tree of 10 wood takes 10 steps of work; walking to it, drinking and eating come on top, so two lumberjacks cut a little less than a camp did before 0.23). */
+export const CHOP_PER_WORKER = 1;
+/** Work needed to clear a gap in the woods (undergrowth, no timber). */
+export const CLEAR_WORK = 2;
+/** A worker chops when standing within this distance (tiles) of the tile beside the tree. */
+export const CHOP_RANGE = 1.2;
+/** Most tiles waiting to be cleared at once. */
+export const MAX_CLEAR = 48;
 
 /** Stage requirements: people, finished buildings, and what must exist. */
 export const STAGE_REQ = {
@@ -175,13 +199,22 @@ export interface Civ {
   jobs: Job[];
   /** Workers that could not reach a building: [creature id, building id, tick until]. */
   skip: Array<[number, number, number]>;
+  /**
+   * Ground to clear before building (0.23): tiles with trees (or woodland) in the settlement's centre when it was
+   * founded, and around the sites of buildings started among trees. Cleared by felling, one tile at a time.
+   */
+  clear: number[];
+  /** Road tiles (0.23, see sim/roads.ts): built step by step between the centre and the buildings. */
+  roads: number[];
+  /** Wood felled per step, averaged over recent steps (0.23; trees fall one at a time, so `rate.wood` comes in lumps). */
+  woodFlow: number;
 }
 
 export function newCiv(): Civ {
   return {
     food: START_KIT.food, wood: START_KIT.wood, stone: START_KIT.stone, knowledge: 0, stage: 'camp', buildings: [], techs: [],
     research: null, nextBuildingId: 1, famine: false, rate: { food: 0, foodUse: 0, wood: 0, stone: 0, knowledge: 0 },
-    jobs: [], skip: [],
+    jobs: [], skip: [], clear: [], roads: [], woodFlow: 0,
   };
 }
 
@@ -292,7 +325,50 @@ export function techNeedsMet(c: Civ, id: TechId): boolean {
   return TECHS[id].needs.some((t) => done(c, t).length > 0);
 }
 
-export type BuildFail = 'resources' | 'site' | 'slots' | 'busy';
+export type BuildFail = 'resources' | 'site' | 'slots' | 'busy' | 'clearing';
+
+/**
+ * The same count as countNear for many tiles of a box at once (0.23: site search asks it for every tile of a
+ * territory): per-row prefix sums over the box, so each count costs one lookup per row of the circle.
+ */
+function nearCounter(world: World, terrains: readonly number[], r: number, x0: number, y0: number, x1: number, y1: number): (x: number, y: number) => number {
+  const W = world.width;
+  const H = world.height;
+  const bx0 = Math.max(0, x0 - r);
+  const by0 = Math.max(0, y0 - r);
+  const bx1 = Math.min(W - 1, x1 + r);
+  const by1 = Math.min(H - 1, y1 + r);
+  const bw = bx1 - bx0 + 1;
+  const bh = by1 - by0 + 1;
+  const pre = new Int32Array(Math.max(0, bh) * (bw + 1));
+  const want = new Uint8Array(256);
+  for (const t of terrains) want[t] = 1;
+  for (let y = 0; y < bh; y++) {
+    let acc = 0;
+    const row = y * (bw + 1);
+    for (let x = 0; x < bw; x++) {
+      acc += want[world.terrain[(by0 + y) * W + bx0 + x]];
+      pre[row + x + 1] = acc;
+    }
+  }
+  // Half-width of the circle's row at each dy: dx² + dy² <= r², exactly the tiles countNear counts.
+  const half = Array.from({ length: 2 * r + 1 }, (_, k) => Math.floor(Math.sqrt(r * r - (k - r) * (k - r))));
+  return (x, y) => {
+    if (x < x0 || x > x1 || y < y0 || y > y1) return countNear(world, x, y, r, terrains); // outside the box: count directly
+    let n = 0;
+    for (let dy = -r; dy <= r; dy++) {
+      const yy = y + dy;
+      if (yy < by0 || yy > by1) continue;
+      const h = half[dy + r];
+      const a = Math.max(bx0, x - h);
+      const b = Math.min(bx1, x + h);
+      if (a > b) continue;
+      const row = (yy - by0) * (bw + 1);
+      n += pre[row + b - bx0 + 1] - pre[row + a - bx0];
+    }
+    return n;
+  };
+}
 
 function countNear(world: World, x: number, y: number, r: number, terrains: readonly number[]): number {
   let n = 0;
@@ -314,11 +390,21 @@ function countNear(world: World, x: number, y: number, r: number, terrains: read
  * per tile (from the settlement id, no random generator) keeps settlements from all looking the same.
  * Hard rules are unchanged: own territory, dry gentle passable ground, no fire, a free tile.
  */
-export function findSite(world: World, s: Settlement, owner: Uint16Array, type: BuildingType): number {
+export function findSite(world: World, s: Settlement, owner: Uint16Array, type: BuildingType, allowTrees = false): number {
+  return searchSite(world, s, owner, type, allowTrees);
+}
+
+function searchSite(world: World, s: Settlement, owner: Uint16Array, type: BuildingType, allowTrees: boolean): number {
   const c = s.civ!;
+  // Counters of forest, rock or sea around each candidate (the territory lies within the radius of the centre).
+  const R = s.radius + 2;
+  const counter = (terrains: readonly number[], r: number) => nearCounter(world, terrains, r, s.x - R, s.y - R, s.x + R, s.y + R);
+  const forestNear = type === 'lumber' ? counter(FOREST_TERRAIN, LUMBER_RADIUS) : null;
+  const rockNear = type === 'quarry' ? counter(STONE_TERRAIN, QUARRY_RADIUS) : null;
+  const seaNear = type === 'shipyard' ? counter(OPEN_SEA, SHIPYARD_REACH) : null;
   const W = world.width;
   const at = new Map(c.buildings.map((b) => [b.y * W + b.x, b.type] as const));
-  const cls = SPECIES[s.species].move;
+  const cls = landClass(SPECIES[s.species].move); // on dry land
   const houses = c.buildings.filter((b) => b.type === 'house').length;
   const farms = c.buildings.filter((b) => b.type === 'farm').length;
   let best = -1;
@@ -330,7 +416,8 @@ export function findSite(world: World, s: Settlement, owner: Uint16Array, type: 
     const t = world.terrain[i];
     if (isWater(t) || world.slopeClass[i] !== 0 || world.fire[i] > 0 || !passable(world, cls, x, y)) continue;
     const d = Math.hypot(x - s.x, y - s.y);
-    if (d < 1.5) continue; // the centre stays open
+    if (Math.max(Math.abs(x - s.x), Math.abs(y - s.y)) <= CENTRE_FREE) continue; // the centre stays open (landmark)
+    if (!siteClear(world, at, x, y, type, allowTrees)) continue;
     // Crowding: buildings on the sides weigh more than on the corners; houses next to fields count extra for fields.
     let side = 0;
     let corner = 0;
@@ -350,15 +437,15 @@ export function findSite(world: World, s: Settlement, owner: Uint16Array, type: 
     let score: number;
     if (type === 'farm') {
       if (!FARM_TERRAIN.includes(t) || world.moisture[i] < 40) continue;
-      score = -Math.abs(d - (4 + 1.2 * farms)) - 1.5 * houseNear + world.moisture[i] / 100 + 0.5 * vary;
+      score = -Math.abs(d - (5 + 1.2 * farms)) - 1.5 * houseNear + world.moisture[i] / 100 + 0.5 * vary;
     } else if (type === 'lumber') {
       if (FOREST_TERRAIN.includes(t)) continue; // stands next to the forest, not in it
-      const trees = countNear(world, x, y, LUMBER_RADIUS, FOREST_TERRAIN);
+      const trees = forestNear!(x, y);
       if (trees < 6) continue;
       score = trees * 10 - d - 2 * crowd + vary;
     } else if (type === 'quarry') {
       if (STONE_TERRAIN.includes(t) && t === T.MOUNTAIN) continue;
-      const rock = countNear(world, x, y, QUARRY_RADIUS, STONE_TERRAIN);
+      const rock = rockNear!(x, y);
       if (rock < 3) continue;
       score = rock * 10 - d - 2 * crowd + vary;
     } else if (type === 'shipyard') {
@@ -366,20 +453,60 @@ export function findSite(world: World, s: Settlement, owner: Uint16Array, type: 
       let side = false;
       for (const n of [i - W, i + W, x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1]) if (n >= 0 && n < world.terrain.length && OPEN_SEA.includes(world.terrain[n])) side = true;
       if (!side) continue;
-      const sea = countNear(world, x, y, SHIPYARD_REACH, OPEN_SEA);
+      const sea = seaNear!(x, y);
       if (sea < SHIPYARD_SEA) continue;
       score = sea - d - 2 * crowd + vary;
     } else if (type === 'storehouse') {
-      score = -Math.abs(d - 2.5) - 2 * crowd + vary;
+      score = -Math.abs(d - 3.5) - 2 * crowd + vary;
     } else {
-      score = -1.2 * Math.abs(d - (2.5 + 0.8 * Math.sqrt(houses))) - 2.5 * crowd + 0.8 * vary;
+      score = -1.2 * Math.abs(d - (3.5 + 1.1 * Math.sqrt(houses))) - 2.5 * crowd + 0.8 * vary;
     }
+    if (allowTrees) score -= 2 * siteTrees(world, x, y).length; // the fewer trees to clear, the better
     if (score > bestScore) {
       bestScore = score;
       best = i;
     }
   }
   return best;
+}
+
+/**
+ * The site for a new building: a clear one if there is any; otherwise one among trees, which are then cleared before
+ * the building goes up (0.23). -1 if neither exists.
+ */
+export function pickSite(world: World, s: Settlement, owner: Uint16Array, type: BuildingType): number {
+  const i = findSite(world, s, owner, type);
+  return i >= 0 ? i : findSite(world, s, owner, type, true);
+}
+
+/** The centre tile and its neighbours up to this Chebyshev distance stay free of buildings (the landmark stands there). */
+export const CENTRE_FREE = 2;
+
+/**
+ * Buildings are drawn twice the tile (render/architecture.ts BUILDING_SCALE), so a site needs room around it: no
+ * other building on the eight tiles around, nor two rows in front or behind (doors stay open for roads; fields may
+ * still touch fields), and no trees on the eight tiles around or on the site
+ * itself (world/trees.ts, the same trees the map shows), so the larger drawing never covers a tree, and no house
+ * stands in a trunk. The site itself is never woodland, even a gap in it.
+ */
+export function siteClear(world: World, at: ReadonlyMap<number, BuildingType>, x: number, y: number, type: BuildingType, allowTrees = false): boolean {
+  const W = world.width;
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= world.height) continue;
+      const n = ny * W + nx;
+      const near = Math.abs(dy) <= 1;
+      if (near && !allowTrees && (treesOn(world, nx, ny) > 0 || (FOREST_TERRAIN.includes(world.terrain[n]) && !dx && !dy))) return false;
+      if (!dx && !dy) continue;
+      // Two rows in front or behind: that building's door (the tile in front of it) would be closed in by this one's
+      // larger drawing, or this one's door by it, and no road could reach it (sim/roads.ts).
+      const k = at.get(n);
+      if (k && !(k === 'farm' && type === 'farm')) return false;
+    }
+  }
+  return true;
 }
 
 /** Why a building cannot be started now (null = it can). */
@@ -390,7 +517,8 @@ export function buildBlock(world: World, s: Settlement, owner: Uint16Array | nul
   if (constructions(c) >= MAX_CONSTRUCTIONS) return 'busy';
   const cost = costOf(c, type);
   if (c.wood < cost.wood || c.stone < cost.stone) return 'resources';
-  if (findSite(world, s, owner, type) < 0) return 'site';
+  if (preparing(c, s, world.width)) return 'clearing';
+  if (pickSite(world, s, owner, type) < 0) return 'site';
   return null;
 }
 
@@ -399,7 +527,7 @@ export function startBuilding(world: World, s: Settlement, owner: Uint16Array | 
   const block = buildBlock(world, s, owner, type);
   if (block) return block;
   const c = s.civ!;
-  const i = findSite(world, s, owner!, type);
+  const i = pickSite(world, s, owner!, type);
   const cost = costOf(c, type);
   c.wood -= cost.wood;
   c.stone -= cost.stone;
@@ -409,6 +537,8 @@ export function startBuilding(world: World, s: Settlement, owner: Uint16Array | 
     done: false, reserve: 0, acc: 0, active: false, idle: 0, empty: false, here: 0, level: 1, up: 0,
   };
   c.buildings.push(b);
+  // Trees on and around the site are felled first (construction waits for them).
+  for (const t of siteTrees(world, b.x, b.y)) if (!c.clear.includes(t) && c.clear.length < MAX_CLEAR) c.clear.push(t);
   return b;
 }
 
@@ -420,6 +550,10 @@ export interface CivHost {
   auto: boolean;
   /** Records a history event for the settlement (and the world). */
   event(s: Settlement, text: string, code: string, p: Record<string, string | number>): void;
+  /** Fells the trees on a tile (sim/forestry.ts): returns their wood, once. */
+  fell(i: number): number;
+  /** Tree tiles any worker of any settlement is cutting now (one worker per tree). */
+  taken: Set<number>;
 }
 
 function stageFor(s: Settlement, c: Civ): Stage {
@@ -467,10 +601,18 @@ export function civStep(host: CivHost, s: Settlement): number {
   const here = workersHere(c, creatures);
   for (const b of c.buildings) b.here = here.get(b.id) ?? 0;
 
-  // 3. Construction and house upgrades: builders at the site do the work.
+  // 3. Construction and house upgrades: builders at the site do the work, once the ground around it is clear
+  //    (0.23: trees on the site are queued for clearing and felled first).
   for (const b of c.buildings) {
     if (b.done && !b.up) continue;
     const n = here.get(b.id) ?? 0;
+    if (!b.done) {
+      const trees = siteTrees(world, b.x, b.y);
+      if (trees.length) {
+        for (const t of trees) if (!c.clear.includes(t) && c.clear.length < MAX_CLEAR) c.clear.push(t);
+        continue;
+      }
+    }
     if (!n) continue;
     b.progress = Math.min(b.needed, b.progress + BUILD_PER_WORKER * n);
     if (b.progress >= b.needed - 1e-9) {
@@ -493,9 +635,13 @@ export function civStep(host: CivHost, s: Settlement): number {
   // A finished site or upgrade needs no builders: free them now (a new farm keeps at most its own places).
   const left = new Map<number, number>();
   c.jobs = c.jobs.filter((j) => {
+    if (j.b === CLEAR_JOB) return true; // clearing has no building
     const b = c.buildings.find((x) => x.id === j.b);
     const n = left.get(j.b) ?? 0;
-    if (!b || n >= slotsOf(b)) return false;
+    if (!b || n >= slotsOf(b)) {
+      release(host, j);
+      return false;
+    }
     left.set(j.b, n + 1);
     return true;
   });
@@ -524,31 +670,8 @@ export function civStep(host: CivHost, s: Settlement): number {
       host.event(s, `${s.name}: a farm stopped working.`, 'settlement_farm_stopped', { name: s.name });
     }
   }
-  const step = Math.floor(host.tick / STEP);
-  for (const b of done(c, 'lumber')) {
-    if (b.empty) {
-      if (step % RECHECK_STEPS === 0 && nearestTree(world, b) >= 0) b.empty = false;
-      continue;
-    }
-    if (c.wood >= cap) continue; // the store is full: no trees are cut for nothing
-    // `acc` is the wood still on the tree being cut; a new tree is felled (the forest thins) when it is used up.
-    let left = LUMBER_YIELD * harvest * Math.min(1, (here.get(b.id) ?? 0) / WORK_SLOTS.lumber);
-    while (left > 1e-9) {
-      if (b.acc <= 1e-9) {
-        if (!fellTree(world, b)) {
-          // No forest within reach: nothing to cut.
-          b.empty = true;
-          host.event(s, `${s.name}: the forest near a lumber camp is gone.`, 'settlement_exhausted', { name: s.name, type: b.type });
-          break;
-        }
-        b.acc = WOOD_PER_TREE;
-      }
-      const take = Math.min(left, b.acc);
-      b.acc -= take;
-      rate.wood += take;
-      left -= take;
-    }
-  }
+  // Wood comes only from trees the lumberjacks (and clearers) actually fell (0.23).
+  rate.wood += chop(host, s, harvest, cap);
   for (const b of done(c, 'quarry')) {
     if (b.empty || c.stone >= cap) continue;
     const take = Math.min(b.reserve, QUARRY_YIELD * harvest * Math.min(1, (here.get(b.id) ?? 0) / WORK_SLOTS.quarry));
@@ -575,6 +698,7 @@ export function civStep(host: CivHost, s: Settlement): number {
   rate.foodUse = used;
   c.food = Math.max(0, Math.min(cap, c.food + rate.food - used));
   c.wood = Math.min(cap, c.wood + rate.wood);
+  c.woodFlow += (rate.wood - c.woodFlow) * 0.05;
   c.stone = Math.min(cap, c.stone + rate.stone);
   c.knowledge = Math.min(KNOWLEDGE_CAP, c.knowledge + rate.knowledge);
   c.rate = rate;
@@ -627,7 +751,6 @@ export function farmOutput(world: World, b: Building, farming: number): number {
   return FARM_YIELD * farming * fertility * Math.min(1, b.here / WORK_SLOTS.farm);
 }
 
-const STEP = 20; // settlement step in ticks (STEP_TICKS in settlements.ts)
 
 /** Kind of work a building gives (null: it needs no workers now). */
 export function jobKind(b: Building): JobKind | null {
@@ -672,19 +795,32 @@ export function assignJobs(host: CivHost, s: Settlement, adults: number[]): void
   const { world, creatures, tick } = host;
   const c = s.civ!;
   const sp = s.species;
+  const W = world.width;
   const adultSet = new Set(adults);
   const byId = new Map(c.buildings.map((b) => [b.id, b] as const));
-  c.skip = c.skip.filter((k) => k[2] > tick && adultSet.has(k[0]) && byId.has(k[1]));
+  // Clearing: drop tiles that no longer need it (felled, burnt, flooded).
+  c.clear = c.clear.filter((t) => fellable(world, t));
+  c.skip = c.skip.filter((k) => k[2] > tick && adultSet.has(k[0]) && (k[1] < 0 || byId.has(k[1])));
   const skipped = (id: number, b: number) => c.skip.some((k) => k[0] === id && k[1] === b);
   const count = new Map<number, number>();
   const kept: Job[] = [];
-  for (const j of c.jobs) {
+  const clearSlots = Math.min(CLEARERS, c.clear.length);
+  // Where a job's worker should be: beside its tree when felling, else at the building.
+  const goal = (j: Job): [number, number] => {
+    if (j.at >= 0) return [(j.at % W) + 0.5, Math.floor(j.at / W) + 0.5];
     const b = byId.get(j.b);
-    if (!b || !adultSet.has(j.id) || kept.some((k) => k.id === j.id) || (count.get(b.id) ?? 0) >= slotsOf(b)) continue;
+    return b ? [b.x + 0.5, b.y + 0.5] : [s.x + 0.5, s.y + 0.5];
+  };
+  for (const j of c.jobs) {
+    const clearing = j.b === CLEAR_JOB;
+    const b = byId.get(j.b);
+    if ((!b && !clearing) || !adultSet.has(j.id) || kept.some((k) => k.id === j.id)) continue;
+    if ((count.get(j.b) ?? 0) >= (clearing ? clearSlots : slotsOf(b!))) continue;
     const i = creatures.indexOf(j.id);
-    const d = Math.hypot(creatures.x[i] - b.x - 0.5, creatures.y[i] - b.y - 0.5);
+    const [gx, gy] = goal(j);
+    const d = Math.hypot(creatures.x[i] - gx, creatures.y[i] - gy);
     const st = creatures.state[i];
-    if (d <= WORK_RANGE) {
+    if (d <= (j.at >= 0 ? CHOP_RANGE : WORK_RANGE)) {
       j.best = d;
       j.stuck = 0;
     } else if (d < j.best - 0.5) {
@@ -693,28 +829,55 @@ export function assignJobs(host: CivHost, s: Settlement, adults: number[]): void
     } else if (st === STATE.TRAVEL || st === STATE.WANDER || st === STATE.WORK) {
       // Only time spent trying to get there counts (not eating, drinking or running away).
       if (++j.stuck >= STUCK_STEPS) {
-        if (c.skip.length < 64) c.skip.push([j.id, b.id, tick + SKIP_TICKS]);
-        continue;
+        if (j.t >= 0) {
+          // That tree cannot be reached: leave it for a while and pick another one.
+          if (c.skip.length < 64) c.skip.push([j.id, treeSkip(j.t), tick + SKIP_TICKS]);
+          release(host, j);
+          j.stuck = 0;
+          j.best = Infinity;
+        } else {
+          if (c.skip.length < 64 && b) c.skip.push([j.id, b.id, tick + SKIP_TICKS]);
+          continue;
+        }
       }
     }
     kept.push(j);
-    count.set(b.id, (count.get(b.id) ?? 0) + 1);
+    count.set(j.b, (count.get(j.b) ?? 0) + 1);
   }
+  // Jobs that were dropped give their tree back.
+  for (const j of c.jobs) if (!kept.includes(j)) release(host, j);
   c.jobs = kept;
   const working = new Set(kept.map((j) => j.id));
   const free = adults.filter((id) => !working.has(id));
   const foodShort = c.food < Math.max(10, s.members.length);
   const rank = (b: Building) => (!b.done || b.up ? (foodShort ? 1 : 0) : b.type === 'farm' ? (foodShort ? 0 : 1) : b.type === 'lumber' ? 2 : 3);
   const order = c.buildings.filter((b) => slotsOf(b) > 0).sort((a, b) => rank(a) - rank(b) || a.id - b.id);
-  const give = (id: number, b: Building) => {
+  const give = (id: number, b: number) => {
     const i = creatures.indexOf(id);
-    c.jobs.push({ id, b: b.id, since: tick, best: Math.hypot(creatures.x[i] - b.x - 0.5, creatures.y[i] - b.y - 0.5), stuck: 0 });
-    count.set(b.id, (count.get(b.id) ?? 0) + 1);
+    const bb = byId.get(b);
+    const [gx, gy] = bb ? [bb.x + 0.5, bb.y + 0.5] : [s.x + 0.5, s.y + 0.5];
+    c.jobs.push({ id, b, since: tick, best: Math.hypot(creatures.x[i] - gx, creatures.y[i] - gy), stuck: 0, t: -1, at: -1, chop: 0 });
+    count.set(b, (count.get(b) ?? 0) + 1);
   };
   const canReach = (id: number, b: Building) => {
     const i = creatures.indexOf(id);
     return !skipped(id, b.id) && creatures.reachable(world, sp, Math.floor(creatures.x[i]), Math.floor(creatures.y[i]), b.x, b.y);
   };
+  // Clearing comes first: nothing can be built on ground that is not clear.
+  while ((count.get(CLEAR_JOB) ?? 0) < clearSlots && free.length) {
+    let pick = 0;
+    let pd = Infinity;
+    for (let k = 0; k < free.length; k++) {
+      const i = creatures.indexOf(free[k]);
+      const d = Math.hypot(creatures.x[i] - s.x, creatures.y[i] - s.y);
+      if (d < pd) {
+        pd = d;
+        pick = k;
+      }
+    }
+    give(free[pick], CLEAR_JOB);
+    free.splice(pick, 1);
+  }
   let moved = false;
   for (const b of order) {
     while ((count.get(b.id) ?? 0) < slotsOf(b)) {
@@ -730,7 +893,7 @@ export function assignJobs(host: CivHost, s: Settlement, adults: number[]): void
         }
       }
       if (pick >= 0) {
-        give(free[pick], b);
+        give(free[pick], b.id);
         free.splice(pick, 1);
         continue;
       }
@@ -738,39 +901,169 @@ export function assignJobs(host: CivHost, s: Settlement, adults: number[]): void
       if (moved) break;
       let from: Job | null = null;
       for (const j of c.jobs) {
-        const jb = byId.get(j.b)!;
-        if (rank(jb) <= rank(b) || tick - j.since < MIN_JOB_TICKS || !canReach(j.id, b)) continue;
+        const jb = byId.get(j.b);
+        if (!jb || rank(jb) <= rank(b) || tick - j.since < MIN_JOB_TICKS || !canReach(j.id, b)) continue;
         if (!from || rank(jb) > rank(byId.get(from.b)!) || (rank(jb) === rank(byId.get(from.b)!) && j.id < from.id)) from = j;
       }
       if (!from) break;
       c.jobs.splice(c.jobs.indexOf(from), 1);
+      release(host, from);
       count.set(from.b, (count.get(from.b) ?? 1) - 1);
-      give(from.id, b);
+      give(from.id, b.id);
       moved = true;
     }
   }
-}
-
-function nearestTree(world: World, b: Building): number {
-  let best = -1;
-  let bd = Infinity;
-  for (let y = Math.max(0, b.y - LUMBER_RADIUS); y <= Math.min(world.height - 1, b.y + LUMBER_RADIUS); y++) {
-    for (let x = Math.max(0, b.x - LUMBER_RADIUS); x <= Math.min(world.width - 1, b.x + LUMBER_RADIUS); x++) {
-      const d = Math.hypot(x - b.x, y - b.y);
-      if (d <= LUMBER_RADIUS && d < bd && FOREST_TERRAIN.includes(world.terrain[y * world.width + x])) {
-        bd = d;
-        best = y * world.width + x;
-      }
+  // Felling jobs (lumber camps and clearing) without a tree get the nearest free one they can reach.
+  for (const j of c.jobs) {
+    if (j.t >= 0) {
+      if (fellable(world, j.t)) continue;
+      release(host, j); // the tree is gone (felled by someone else, burnt, flooded)
+    }
+    const b = byId.get(j.b);
+    if (j.b === CLEAR_JOB) pickTree(host, s, j, c.clear, skipped);
+    else if (b && b.done && !b.up && b.type === 'lumber') {
+      if (!pickTree(host, s, j, treesNear(world, b.x, b.y, LUMBER_RADIUS), skipped)) {
+        if (!b.empty) {
+          b.empty = true;
+          host.event(s, `${s.name}: the forest near a lumber camp is gone.`, 'settlement_exhausted', { name: s.name, type: b.type });
+        }
+      } else b.empty = false;
     }
   }
-  return best;
 }
 
-function fellTree(world: World, b: Building): boolean {
-  const i = nearestTree(world, b);
+/** Skip-list code of a tree tile (buildings use positive ids). */
+const treeSkip = (t: number) => -2 - t;
+
+/** Frees a job's tree (another worker may take it). Work already done on it is kept with the tree being left. */
+function release(host: CivHost, j: Job): void {
+  if (j.t >= 0) host.taken.delete(j.t);
+  j.t = -1;
+  j.at = -1;
+  j.chop = 0;
+}
+
+/** Tiles with trees within r of (x, y), nearest first (ties by tile index, so the choice is deterministic). */
+function treesNear(world: World, x: number, y: number, r: number): number[] {
+  const out: Array<[number, number]> = [];
+  for (let yy = Math.max(0, y - r); yy <= Math.min(world.height - 1, y + r); yy++) {
+    for (let xx = Math.max(0, x - r); xx <= Math.min(world.width - 1, x + r); xx++) {
+      const d = Math.hypot(xx - x, yy - y);
+      if (d <= r && treesOn(world, xx, yy) > 0) out.push([yy * world.width + xx, d]);
+    }
+  }
+  out.sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  return out.map((o) => o[0]);
+}
+
+/**
+ * Gives a felling job a tree: the first candidate that nobody is cutting, that the worker has not given up on, and
+ * that has a tile beside it the worker can stand on and reach. Returns whether one was found.
+ */
+function pickTree(host: CivHost, s: Settlement, j: Job, candidates: readonly number[], skipped: (id: number, b: number) => boolean): boolean {
+  const { world, creatures } = host;
+  const i = creatures.indexOf(j.id);
   if (i < 0) return false;
-  world.setTerrain(i % world.width, Math.floor(i / world.width), T.GRASS);
-  return true;
+  const W = world.width;
+  const cls = landClass(SPECIES[s.species].move); // on dry land
+  const fx = Math.floor(creatures.x[i]);
+  const fy = Math.floor(creatures.y[i]);
+  let tries = 0;
+  for (const t of candidates) {
+    if (host.taken.has(t) || skipped(j.id, treeSkip(t)) || !fellable(world, t)) continue;
+    if (++tries > 12) break; // a bounded search per step
+    const tx = t % W;
+    const ty = (t - tx) / W;
+    // The tile to stand on: a passable neighbour (open ground first, then woods), nearest to the worker.
+    let at = -1;
+    let best = Infinity;
+    for (const [dx, dy] of [[0, 1], [-1, 0], [1, 0], [0, -1], [-1, 1], [1, 1], [-1, -1], [1, -1]]) {
+      const nx = tx + dx;
+      const ny = ty + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= world.height || !passable(world, cls, nx, ny)) continue;
+      const n = ny * W + nx;
+      const score = Math.hypot(nx - fx, ny - fy) + (FOREST_TERRAIN.includes(world.terrain[n]) ? 3 : 0) + (dx && dy ? 0.5 : 0);
+      if (score < best) {
+        best = score;
+        at = n;
+      }
+    }
+    if (at < 0) continue;
+    if (!creatures.reachable(world, s.species, fx, fy, at % W, Math.floor(at / W))) continue;
+    j.t = t;
+    j.at = at;
+    j.chop = 0;
+    j.best = Math.hypot(creatures.x[i] - (at % W) - 0.5, creatures.y[i] - Math.floor(at / W) - 0.5);
+    j.stuck = 0;
+    host.taken.add(t);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Felling work of one step: each worker standing at work beside its tree adds CHOP_PER_WORKER (more with
+ * Harvesting); when the work reaches the tree's wood the tree falls (host.fell) and its wood is added, once.
+ * Lumberjacks rest while the store is full. Returns the wood felled. Counts lumberjacks at work per camp.
+ */
+function chop(host: CivHost, s: Settlement, harvest: number, cap: number): number {
+  const { world, creatures } = host;
+  const c = s.civ!;
+  const W = world.width;
+  let wood = 0;
+  for (const b of c.buildings) if (b.type === 'lumber') b.here = 0;
+  for (const j of c.jobs) {
+    if (j.t < 0 || j.at < 0) continue;
+    const i = creatures.indexOf(j.id);
+    if (i < 0 || creatures.state[i] !== STATE.WORK) continue;
+    if (Math.hypot(creatures.x[i] - (j.at % W) - 0.5, creatures.y[i] - Math.floor(j.at / W) - 0.5) > CHOP_RANGE) continue;
+    const clearing = j.b === CLEAR_JOB;
+    if (!clearing && c.wood + wood >= cap) continue; // the store is full: no trees are cut for nothing
+    const b = clearing ? null : c.buildings.find((x) => x.id === j.b);
+    if (b) b.here++;
+    j.chop += CHOP_PER_WORKER * harvest * (clearing ? CLEAR_SPEED : 1);
+    const need = Math.max(CLEAR_WORK, woodOf(world, j.t));
+    if (j.chop + 1e-9 < need) continue;
+    wood += host.fell(j.t);
+    c.clear = c.clear.filter((t) => t !== j.t);
+    release(host, j);
+  }
+  return wood;
+}
+
+/** Tiles to clear around a building site: its own tile and the eight around it, where trees (or woodland) stand. */
+export function siteTrees(world: World, x: number, y: number): number[] {
+  const out: number[] = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= world.width || ny >= world.height) continue;
+      const n = ny * world.width + nx;
+      if (treesOn(world, nx, ny) > 0 || (!dx && !dy && FOREST_TERRAIN.includes(world.terrain[n]))) out.push(n);
+    }
+  }
+  return out;
+}
+
+/** Tiles of a settlement's free centre that still have trees or woodland (cleared before anything is built). */
+export function centreTrees(world: World, s: { x: number; y: number }): number[] {
+  const out: number[] = [];
+  for (let dy = -CENTRE_FREE; dy <= CENTRE_FREE; dy++) {
+    for (let dx = -CENTRE_FREE; dx <= CENTRE_FREE; dx++) {
+      const nx = s.x + dx;
+      const ny = s.y + dy;
+      if (nx < 0 || ny < 0 || nx >= world.width || ny >= world.height) continue;
+      const n = ny * world.width + nx;
+      if (fellable(world, n)) out.push(n);
+    }
+  }
+  return out;
+}
+
+/** Whether the settlement is still preparing its site: trees in its centre wait to be cleared. */
+export function preparing(c: Civ, s: { x: number; y: number }, W: number): boolean {
+  return c.clear.some((t) => Math.max(Math.abs((t % W) - s.x), Math.abs(Math.floor(t / W) - s.y)) <= CENTRE_FREE);
 }
 
 /** Simple, readable rules for a settlement that builds and researches by itself. */
@@ -854,6 +1147,7 @@ export function importCiv(raw: unknown, world: World): Civ {
   c.wood = num(r.wood, 0, 1e6, c.wood);
   c.stone = num(r.stone, 0, 1e6, c.stone);
   c.knowledge = num(r.knowledge, 0, KNOWLEDGE_CAP, 0);
+  c.woodFlow = num(r.woodFlow, 0, 100, 0);
   c.stage = STAGES.includes(r.stage as Stage) ? (r.stage as Stage) : 'camp';
   c.famine = r.famine === true;
   c.techs = Array.isArray(r.techs) ? Array.from(new Set((r.techs as unknown[]).filter((t): t is TechId => TECH_IDS.includes(t as TechId)))) : [];
@@ -889,9 +1183,29 @@ export function importCiv(raw: unknown, world: World): Civ {
   const ids = new Set(c.buildings.map((b) => b.id));
   const workers = new Set<number>();
   for (const j of (Array.isArray(r.jobs) ? r.jobs : []).slice(0, 2000)) {
-    if (!j || typeof j !== 'object' || typeof j.id !== 'number' || !Number.isInteger(j.id) || workers.has(j.id) || !ids.has(j.b)) continue;
+    if (!j || typeof j !== 'object' || typeof j.id !== 'number' || !Number.isInteger(j.id) || workers.has(j.id) || !(ids.has(j.b) || j.b === CLEAR_JOB)) continue;
     workers.add(j.id);
-    c.jobs.push({ id: j.id, b: j.b, since: num(j.since, 0, 1e12, 0), best: num(j.best, 0, 1e6, 0), stuck: Math.floor(num(j.stuck, 0, STUCK_STEPS, 0)) });
+    // Felling (0.23; older saves: no tree yet, one is picked on the next step).
+    const n = world.width * world.height;
+    const tile = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < n ? v : -1);
+    let t = tile(j.t);
+    let at = tile(j.at);
+    if (t < 0 || at < 0) t = at = -1;
+    c.jobs.push({
+      id: j.id, b: j.b, since: num(j.since, 0, 1e12, 0), best: num(j.best, 0, 1e6, 0), stuck: Math.floor(num(j.stuck, 0, STUCK_STEPS, 0)),
+      t, at, chop: t >= 0 ? num(j.chop, 0, 1e4, 0) : 0,
+    });
+  }
+  // Roads (0.23; older saves: none, they are laid over the next years).
+  const roadSet = new Set<number>();
+  for (const t of (Array.isArray(r.roads) ? r.roads : []).slice(0, 600)) {
+    if (Number.isInteger(t) && t >= 0 && t < world.width * world.height && !isWater(world.terrain[t])) roadSet.add(t);
+  }
+  c.roads = [...roadSet];
+  // Ground to clear (0.23; older saves: nothing queued, buildings among trees queue their site on the next step).
+  const cells = world.width * world.height;
+  for (const t of (Array.isArray(r.clear) ? r.clear : []).slice(0, MAX_CLEAR)) {
+    if (Number.isInteger(t) && t >= 0 && t < cells && !c.clear.includes(t)) c.clear.push(t);
   }
   for (const k of (Array.isArray(r.skip) ? r.skip : []).slice(0, 64)) {
     if (Array.isArray(k) && k.length === 3 && k.every((v) => typeof v === 'number' && Number.isFinite(v)) && ids.has(k[1])) c.skip.push([k[0], k[1], k[2]]);

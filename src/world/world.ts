@@ -50,6 +50,17 @@ export class World {
   /** Fire: remaining burn ticks (0 = not burning). */
   readonly fire: Uint8Array;
   /**
+   * Felled trees (0.23): non-zero where a tree was cut and its stump stands (see world/trees.ts). A tile with a stump
+   * shows no tree; the stump rots away after a while (sim/forestry.ts), and only then may a tree grow there again.
+   */
+  readonly stump: Uint8Array;
+  /**
+   * Built ground (0.23): non-zero where a settlement keeps the land clear (its centre, the ground around its buildings,
+   * its roads). Derived from the settlements every step (Settlements.markBuilt), not saved. No tree shows or grows
+   * there (world/trees.ts, sim/vegetation.ts).
+   */
+  readonly built: Uint8Array;
+  /**
    * Slope class per tile (see passability.ts), derived from heights and kept up to
    * date by setHeight/writeTile. Code that fills `heights` directly (the generator,
    * loading, tests) must call recomputeSlopes() afterwards; until then every tile is gentle.
@@ -82,6 +93,8 @@ export class World {
     this.waterFlags = new Uint8Array(n);
     this.under = new Uint8Array(n);
     this.fire = new Uint8Array(n);
+    this.stump = new Uint8Array(n);
+    this.built = new Uint8Array(n);
     this.slopeClass = new Uint8Array(n);
     this.chunksX = Math.ceil(width / CHUNK);
     this.chunksY = Math.ceil(height / CHUNK);

@@ -4,10 +4,12 @@
  * settlement needs. It reads the real world: terrain, water, fire, predators, existing territories.
  * What a species likes comes from its CivProfile (creatures.ts), so another people only needs data.
  */
+import { CENTRE_FREE } from './civ';
+import { fellable } from './forestry';
 import { T, isWater } from '../world/terrain';
 import type { World } from '../world/world';
 import { PREDATORS_OF, SPECIES, type Creatures } from './creatures';
-import { passable } from './pathfinding';
+import { passable, landClass } from './pathfinding';
 import type { Settlements } from './settlements';
 
 /** Closest allowed distance between the centres of a new home and any settlement. */
@@ -41,7 +43,7 @@ export function assessSite(world: World, creatures: Creatures, settlements: Sett
   if (!prof || !world.inBounds(tx, ty)) return bad('ground');
   const W = world.width;
   const here = world.terrain[ty * W + tx];
-  if (isWater(here) || prof.avoid.includes(here) || !passable(world, sp.move, tx, ty)) return bad('ground');
+  if (isWater(here) || prof.avoid.includes(here) || !passable(world, landClass(sp.move), tx, ty)) return bad('ground');
   if (settlements.ownerAt(tx, ty)) return bad('claimed');
   for (const s of settlements.list) if (Math.hypot(s.x - tx, s.y - ty) < Math.max(MIN_GAP, prof.gap)) return bad('gap');
 
@@ -96,9 +98,16 @@ export function assessSite(world: World, creatures: Creatures, settlements: Sett
       }
     }
   }
+  // Trees in the centre itself must be cleared before anything is built (0.23): with otherwise similar places, the one
+  // with the clearer centre wins (a small penalty, up to 0.12 for a centre that is all woods).
+  let centre = 0;
+  for (let y = ty - CENTRE_FREE; y <= ty + CENTRE_FREE; y++) {
+    for (let x = tx - CENTRE_FREE; x <= tx + CENTRE_FREE; x++) if (x >= 0 && y >= 0 && x < W && y < world.height && fellable(world, y * W + x)) centre++;
+  }
   const k = prof.weights;
   const score =
     k.food * Math.min(1, foodShare / 0.6) + k.like * Math.min(1, like / Math.max(1, land)) + k.trees * Math.min(1, trees / 30) + k.rock * Math.min(1, rock / 15) +
-    k.space * Math.min(1, free / 150) + k.coast * Math.min(1, sea / 20) - Math.min(0.3, predators * 0.1);
+    k.space * Math.min(1, free / 150) + k.coast * Math.min(1, sea / 20) - Math.min(0.3, predators * 0.1) -
+    (0.12 * centre) / ((2 * CENTRE_FREE + 1) ** 2);
   return { ok: true, score, capacity: Math.max(3, Math.min(16, Math.floor(edible8 / 12))) };
 }

@@ -2,6 +2,7 @@ import { hash2, Rng } from '../core/rng';
 import { SLOPE } from '../world/passability';
 import { MOUNTAIN_LEVEL, SEA_LEVEL, T, TERRAIN, TERRAIN_COUNT } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
+import { forestEdge, treeHashes, treesOn } from '../world/trees';
 import { SPRITES, SPRITES16, Tileset, VARIANTS, halfSprite, type Sprite } from './tileset';
 import { FINE_PX, FINE_VARIANTS, makeFineGround } from './groundart';
 
@@ -95,6 +96,7 @@ const FEATURES = {
   birch: feature(SPRITES.birch, SPRITES16.birch),
   log: feature(SPRITES.log, SPRITES16.log),
   mushrooms: feature(SPRITES.mushrooms, SPRITES16.mushrooms),
+  stump: feature(SPRITES.stump, SPRITES16.stump),
 };
 
 /**
@@ -404,118 +406,129 @@ export class TerrainPainter {
 
   /** Trees, peaks and reeds, back to front, including those of margin tiles that overlap the chunk. */
   private paintFeatures(world: World, x0: number, y0: number, P: ChunkPx, out: Uint8ClampedArray): void {
-    const ids = this.ids;
     const S = CHUNK * P;
-    const seed = world.seed;
     for (let my = 0; my < M; my++) {
       for (let mx = 0; mx < M; mx++) {
-        const k = my * M + mx;
-        const id = ids[k];
         const tx = x0 + mx - 1;
         const ty = y0 + my - 1;
         if (tx < 0 || ty < 0 || tx >= world.width || ty >= world.height) continue;
-        const h1 = hash2(tx, ty, seed ^ 0x68e31da4);
-        const h2 = hash2(ty, tx, seed ^ 0x1b56c4e9);
-        let feat: Feature | null = null;
-        let count = 1;
-        switch (id) {
-          case T.FOREST: {
-            feat = FEATURES.oak;
-            // Dense in the interior, thinning toward the edge with clearings, so forests do not end in a hard line.
-            const ti = ty * world.width + tx;
-            const tt = world.terrain;
-            const W = world.width;
-            const open =
-              (tx > 0 && tt[ti - 1] !== T.FOREST && tt[ti - 1] !== T.JUNGLE) ||
-              (tx < W - 1 && tt[ti + 1] !== T.FOREST && tt[ti + 1] !== T.JUNGLE) ||
-              (ty > 0 && tt[ti - W] !== T.FOREST && tt[ti - W] !== T.JUNGLE) ||
-              (ty < world.height - 1 && tt[ti + W] !== T.FOREST && tt[ti + W] !== T.JUNGLE);
-            count = open ? (h1 < 0.7 ? 1 : 0) : h1 < 0.55 ? 2 : 1;
-            // Variety: some birches (mostly at the edge), and in the open spots a fallen log or mushrooms.
-            const h3 = hash2(tx * 3 + 1, ty * 5 + 2, seed ^ 0x2c1b3c6d);
-            if (count === 0) {
-              count = 1;
-              feat = h3 < 0.35 ? FEATURES.log : h3 < 0.55 ? FEATURES.mushrooms : null;
-            } else if (h3 < (open ? 0.3 : 0.1)) feat = FEATURES.birch;
-            break;
-          }
-          case T.GRASS:
-            // Sparse ground detail: a bush on about 6% of grass tiles, a few flowers on another 7%.
-            if (h1 < 0.06) feat = FEATURES.bush;
-            else if (h1 < 0.13) feat = FEATURES.flowers;
-            break;
-          case T.HILLS:
-            if (h1 < 0.12) feat = FEATURES.stones;
-            break;
-          case T.DESERT:
-          case T.SAND:
-            if (h1 < 0.04) feat = FEATURES.sandStones;
-            break;
-          case T.JUNGLE:
-            feat = FEATURES.jungle;
-            count = 2;
-            break;
-          case T.TUNDRA:
-            if (h1 < 0.22) feat = FEATURES.pine;
-            break;
-          case T.SAVANNA:
-            if (h1 < 0.28) feat = FEATURES.acacia;
-            break;
-          case T.SNOW:
-          case T.MOUNTAIN: {
-            // Big peaks on ridge crests (highest tile among its neighbours), smaller ones scattered elsewhere.
-            // Snow at mountain height is a snow-capped mountain too; snow on cold lowland has no peaks.
-            const ti = ty * world.width + tx;
-            const hh = world.heights[ti];
-            if (id === T.SNOW && hh < MOUNTAIN_LEVEL) break;
-            let crest = true;
-            let ties = 0;
-            for (let dy = -1; dy <= 1 && crest; dy++) {
-              for (let dx = -1; dx <= 1; dx++) {
-                const nx = tx + dx;
-                const ny = ty + dy;
-                if (!(dx || dy) || nx < 0 || ny < 0 || nx >= world.width || ny >= world.height) continue;
-                const nh = world.heights[ny * world.width + nx];
-                if (nh > hh) {
-                  crest = false;
-                  break;
-                }
-                if (nh === hh) ties++;
-              }
-            }
-            if (crest && ties > 0 && h1 < 0.6) crest = false; // flat tops: only some tiles carry a big peak
-            const snowy = hh > 200 || world.temperature[ti] < 70;
-            if (crest) feat = snowy ? FEATURES.snowPeak : FEATURES.peak;
-            else if (h1 < 0.22) feat = snowy ? FEATURES.smallSnowPeak : FEATURES.smallPeak;
-            break;
-          }
-          case T.SWAMP:
-            if (h1 < 0.4) feat = FEATURES.reed;
-            break;
-        }
-        if (!feat) continue;
-        // Keep river banks clear so canopies never hide where the water runs.
-        // (Checked on the world, not the chunk scratch, so neighbouring chunks agree at their seams.)
-        const ti = ty * world.width + tx;
-        const tt = world.terrain;
-        if (
-          (tx > 0 && tt[ti - 1] === T.RIVER) || (tx < world.width - 1 && tt[ti + 1] === T.RIVER) ||
-          (ty > 0 && tt[ti - world.width] === T.RIVER) || (ty < world.height - 1 && tt[ti + world.width] === T.RIVER)
-        ) continue;
-        const list = P === 16 ? feat.sprites16 : P === 8 ? feat.sprites8 : feat.sprites4;
-        for (let n = 0; n < count; n++) {
-          const r1 = n === 0 ? h1 : h2;
-          const r2 = n === 0 ? h2 : (h1 * 7.31) % 1;
-          const sp = list[Math.floor(r1 * 997) % list.length];
-          // Feature base position inside the tile (in 1/8 tiles).
-          const fx = n === 0 ? 2 + Math.floor(r1 * 4) : 4 + Math.floor(r2 * 3) - 2 * (Math.floor(r1 * 3) % 2);
-          const fy = n === 0 ? 4 + Math.floor(r2 * 3) : 7;
-          const bx = Math.floor((((mx - 1) * 8 + fx) * P) / 8) - sp.ax;
-          const by = Math.floor((((my - 1) * 8 + fy) * P) / 8) - sp.ay;
-          blit(sp, bx, by, out, S);
+        for (const f of this.featuresAt(world, tx, ty, P)) {
+          blit(f.sp, Math.floor((((mx - 1) * 8 + f.fx) * P) / 8) - f.sp.ax, Math.floor((((my - 1) * 8 + f.fy) * P) / 8) - f.sp.ay, out, S);
         }
       }
     }
+  }
+
+  /**
+   * The features drawn on tile (tx, ty) at P pixels per tile, back to front: each a sprite with its base point
+   * (fx, fy) inside the tile in 1/8 tiles. Deterministic (from the world seed and the tile), so the chunk painter and
+   * the renderer's canopy pass (trees drawn again over creatures walking behind them) agree.
+   */
+  featuresAt(world: World, tx: number, ty: number, P: ChunkPx): Array<{ sp: Sprite; fx: number; fy: number; tree: boolean }> {
+    const W = world.width;
+    const ti = ty * W + tx;
+    const tt = world.terrain;
+    const id = tt[ti];
+    const { h1, h2, h3 } = treeHashes(world, tx, ty);
+    let feat: Feature | null = null;
+    let count = 1;
+    let tree = false;
+    const trees = treesOn(world, tx, ty); // shared with building placement and felling (world/trees.ts)
+    if (world.stump[ti]) {
+      feat = FEATURES.stump; // a felled tree
+    } else switch (id) {
+      case T.FOREST: {
+        feat = FEATURES.oak;
+        tree = true;
+        count = trees;
+        // Variety: some birches (mostly at the edge), and in the open spots a fallen log or mushrooms.
+        const open = forestEdge(world, tx, ty);
+        if (count === 0) {
+          count = 1;
+          tree = false;
+          feat = h3 < 0.35 ? FEATURES.log : h3 < 0.55 ? FEATURES.mushrooms : null;
+        } else if (h3 < (open ? 0.3 : 0.12)) feat = FEATURES.birch;
+        break;
+      }
+      case T.GRASS:
+        // Sparse ground detail: a bush on about 6% of grass tiles, a few flowers on another 7%.
+        if (h1 < 0.06) feat = FEATURES.bush;
+        else if (h1 < 0.13) feat = FEATURES.flowers;
+        break;
+      case T.HILLS:
+        if (h1 < 0.12) feat = FEATURES.stones;
+        break;
+      case T.DESERT:
+      case T.SAND:
+        if (h1 < 0.04) feat = FEATURES.sandStones;
+        break;
+      case T.JUNGLE:
+        feat = FEATURES.jungle;
+        tree = true;
+        count = trees;
+        break;
+      case T.TUNDRA:
+        if (trees) {
+          feat = FEATURES.pine;
+          tree = true;
+        }
+        break;
+      case T.SAVANNA:
+        if (trees) {
+          feat = FEATURES.acacia;
+          tree = true;
+        }
+        break;
+      case T.SNOW:
+      case T.MOUNTAIN: {
+        // Big peaks on ridge crests (highest tile among its neighbours), smaller ones scattered elsewhere.
+        // Snow at mountain height is a snow-capped mountain too; snow on cold lowland has no peaks.
+        const hh = world.heights[ti];
+        if (id === T.SNOW && hh < MOUNTAIN_LEVEL) break;
+        let crest = true;
+        let ties = 0;
+        for (let dy = -1; dy <= 1 && crest; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = tx + dx;
+            const ny = ty + dy;
+            if (!(dx || dy) || nx < 0 || ny < 0 || nx >= world.width || ny >= world.height) continue;
+            const nh = world.heights[ny * world.width + nx];
+            if (nh > hh) {
+              crest = false;
+              break;
+            }
+            if (nh === hh) ties++;
+          }
+        }
+        if (crest && ties > 0 && h1 < 0.6) crest = false; // flat tops: only some tiles carry a big peak
+        const snowy = hh > 200 || world.temperature[ti] < 70;
+        if (crest) feat = snowy ? FEATURES.snowPeak : FEATURES.peak;
+        else if (h1 < 0.22) feat = snowy ? FEATURES.smallSnowPeak : FEATURES.smallPeak;
+        break;
+      }
+      case T.SWAMP:
+        if (h1 < 0.4) feat = FEATURES.reed;
+        break;
+    }
+    if (!feat || !count) return [];
+    // Keep river banks clear so canopies never hide where the water runs (trees: treesOn does the same).
+    // (Checked on the world, not the chunk scratch, so neighbouring chunks agree at their seams.)
+    if (
+      (tx > 0 && tt[ti - 1] === T.RIVER) || (tx < world.width - 1 && tt[ti + 1] === T.RIVER) ||
+      (ty > 0 && tt[ti - world.width] === T.RIVER) || (ty < world.height - 1 && tt[ti + world.width] === T.RIVER)
+    ) return [];
+    const list = P === 16 ? feat.sprites16 : P === 8 ? feat.sprites8 : feat.sprites4;
+    const out: Array<{ sp: Sprite; fx: number; fy: number; tree: boolean }> = [];
+    for (let n = 0; n < count; n++) {
+      const r1 = n === 0 ? h1 : h2;
+      const r2 = n === 0 ? h2 : (h1 * 7.31) % 1;
+      const sp = list[Math.floor(r1 * 997) % list.length];
+      // Feature base position inside the tile (in 1/8 tiles).
+      const fx = n === 0 ? 2 + Math.floor(r1 * 4) : 4 + Math.floor(r2 * 3) - 2 * (Math.floor(r1 * 3) % 2);
+      const fy = n === 0 ? 4 + Math.floor(r2 * 3) : 7;
+      out.push({ sp, fx, fy, tree });
+    }
+    return out;
   }
 }
 

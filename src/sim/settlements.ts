@@ -17,13 +17,18 @@ import { hash2 } from '../core/rng';
 import { T, isWater } from '../world/terrain';
 import type { World } from '../world/world';
 import { SPECIES, STATE, type Creatures } from './creatures';
-import { MOVE, passable } from './pathfinding';
+import { MOVE, landClass, passable } from './pathfinding';
+import { Forestry, fellable } from './forestry';
+import { ROAD_BIT, buildRoads } from './roads';
 import {
-  RADIUS_BONUS, civStep, exportCiv, housing, importCiv, jobKind, newCiv, startBuilding, startResearch, startUpgrade, type JobKind, type UpgradeFail,
+  CENTRE_FREE, CLEAR_JOB, MAX_CLEAR, RADIUS_BONUS, centreTrees, civStep, exportCiv, housing, importCiv, jobKind, newCiv, startBuilding, startResearch, startUpgrade, type JobKind, type UpgradeFail,
   type Building, type BuildFail, type BuildingType, type Civ, type CivHost, type CivSave, type TechId,
 } from './civ';
 
 export const STEP_TICKS = 20;
+/** Arrival distance (tiles) at a work tile: felling right beside the tree; other work anywhere near the building. */
+export const FELL_REACH = 0.7;
+export const WORK_REACH = 2.5;
 /** Creatures needed within FOUND_RADIUS tiles of the spot, all of one species and not yet in a settlement. */
 export const MIN_FOUNDERS = 6;
 export const FOUND_RADIUS = 8;
@@ -151,10 +156,16 @@ export class Settlements {
   /** Workplace tile of every worker (creature id → tile), rebuilt from the jobs each step. */
   private workTile = new Map<number, number>();
   private workKindOf = new Map<number, JobKind>();
+  /** Workers felling a tree (they work right beside it). */
+  private fellers = new Set<number>();
   private terrainVersion = -1;
   private dirty = false;
   /** Settlements run themselves (build, research) unless the player turns it off. */
   auto = true;
+  /** Bumped whenever any settlement's roads change (the renderer caches road drawing on it). */
+  roadVersion = 0;
+  /** Tree felling and stumps (sim/forestry.ts); set by the simulation. */
+  forestry: Forestry = new Forestry();
   /**
    * Trails: how worn each land tile is by people of a settlement walking over it (0..255, sampled every step from
    * real positions; fades slowly). Tiles at TRAIL_WEAR show as a trail, at PATH_WEAR as a worn path. Drawing only:
@@ -196,6 +207,11 @@ export class Settlements {
     return this.workTile.get(id) ?? -1;
   }
 
+  /** How close a worker must come to its work tile: beside the tree when felling, nearby otherwise. */
+  workReach(id: number): number {
+    return this.fellers.has(id) ? FELL_REACH : WORK_REACH;
+  }
+
   /** Kind of work of a worker (for drawing). */
   workKind(id: number): JobKind | undefined {
     return this.workKindOf.get(id);
@@ -208,6 +224,8 @@ export class Settlements {
 
   reset(): void {
     this.list = [];
+    this.forestry.reset();
+    this.builtTiles = [];
     this.nextId = 1;
     this.owner = null;
     this.bans.clear();
@@ -277,7 +295,11 @@ export class Settlements {
       founded: tick, radius: radiusFor(pop), members: check.founders.slice(), peak: pop, born: 0, died: 0, joined: pop, left: 0,
       status: 'founding', prevPop: pop, sampleTick: tick, lowSince: -1, stress: 0, lastEmigration: tick, events: [], tiles: new Int32Array(0), edges: new Int32Array(0),
     };
-    if (SPECIES[s.species].sentient) s.civ = newCiv();
+    if (SPECIES[s.species].sentient) {
+      s.civ = newCiv();
+      // The centre is cleared of trees before anything is built (the site is being prepared until then).
+      s.civ.clear = centreTrees(world, s).slice(0, MAX_CLEAR);
+    }
     this.list.push(s);
     for (const m of s.members) this.memberOf.set(m, id);
     this.dirty = true;
@@ -405,9 +427,14 @@ export class Settlements {
       }
     }
     // Growth, status, milestones, disappearance.
+    // Trees being cut by anyone (one worker per tree), from every settlement's jobs.
+    const taken = new Set<number>();
+    for (const st of this.list) for (const j of st.civ?.jobs ?? []) if (j.t >= 0) taken.add(j.t);
     const host: CivHost = {
       world, creatures, owner: this.owner!, tick, auto: this.auto,
       event: (st, text, code, p) => this.event(st, tick, text, code, p),
+      fell: (i) => this.forestry.fell(world, i, tick),
+      taken,
     };
     for (const s of [...this.list]) {
       const pop = s.members.length;
@@ -426,7 +453,10 @@ export class Settlements {
         }
       } else s.lowSince = -1;
       if (s.civ && this.owner) {
+        const stage = s.civ.stage;
         const pressure = civStep(host, s);
+        // Roads grow a little; their look follows the stage (both redraw the cached roads).
+        if (buildRoads(world, s, this.owner, Math.floor(tick / STEP_TICKS)) || s.civ.stage !== stage) this.roadVersion++;
         s.stress = pressure > 0 ? Math.min(100, s.stress + pressure) : Math.max(0, s.stress - 2);
         if (s.stress >= EMIGRATE_STRESS && s.members.length >= EMIGRATE_MIN_POP && tick - s.lastEmigration >= EMIGRATE_COOLDOWN) this.emigrate(s, tick);
       }
@@ -444,6 +474,7 @@ export class Settlements {
       } else if (pop < MIN_VIABLE) s.status = 'fading';
     }
     this.rebuildWork(world);
+    this.markBuilt(world);
     this.wearTrails(world, creatures, tick);
     // The land can change under a settlement (floods, craters, snow): territories follow.
     if (world.passVersion !== this.terrainVersion) this.dirty = true;
@@ -535,17 +566,54 @@ export class Settlements {
   private rebuildWork(world: World): void {
     this.workTile.clear();
     this.workKindOf.clear();
+    this.fellers.clear();
     for (const s of this.list) {
       if (!s.civ) continue;
       for (const j of s.civ.jobs) {
+        // Felling (lumber and clearing): beside the tree; clearing without a tree yet has nowhere to go.
+        if (j.b === CLEAR_JOB) {
+          if (j.at >= 0) {
+            this.workTile.set(j.id, j.at);
+            this.workKindOf.set(j.id, 'wood');
+            this.fellers.add(j.id);
+          }
+          continue;
+        }
         const b = s.civ.buildings.find((x) => x.id === j.b);
         const kind = b && jobKind(b);
         if (!b || !kind) continue;
-        this.workTile.set(j.id, b.y * world.width + b.x);
+        this.workTile.set(j.id, j.at >= 0 ? j.at : b.y * world.width + b.x);
         this.workKindOf.set(j.id, kind);
+        if (j.at >= 0) this.fellers.add(j.id);
       }
     }
   }
+
+  /**
+   * Marks built ground (World.built): every settlement's free centre once it is cleared, and the ground around its
+   * buildings once clear. No tree shows or grows there. Cheap (only tiles of settlements), redone every step.
+   */
+  markBuilt(world: World): void {
+    const built = world.built;
+    for (const i of this.builtTiles) built[i] = 0;
+    this.builtTiles = [];
+    const W = world.width;
+    const mark = (x: number, y: number, bit = 1) => {
+      if (x < 0 || y < 0 || x >= W || y >= world.height) return;
+      const i = y * W + x;
+      if (built[i] & bit || fellable(world, i)) return; // trees still standing there are cleared first
+      if (!built[i]) this.builtTiles.push(i);
+      built[i] |= bit;
+    };
+    for (const s of this.list) {
+      if (!s.civ) continue;
+      for (let dy = -CENTRE_FREE; dy <= CENTRE_FREE; dy++) for (let dx = -CENTRE_FREE; dx <= CENTRE_FREE; dx++) mark(s.x + dx, s.y + dy);
+      for (const b of s.civ.buildings) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) mark(b.x + dx, b.y + dy);
+      for (const r of s.civ.roads) mark(r % W, Math.floor(r / W), ROAD_BIT);
+    }
+  }
+
+  private builtTiles: number[] = [];
 
   private pickLeavers(s: Settlement, ids: number[], n: number): number[] {
     const c = this.creaturesRef;
@@ -601,7 +669,7 @@ export class Settlements {
     owner.fill(0);
     const W = world.width;
     for (const s of [...this.list].sort((a, b) => a.id - b.id)) {
-      const cls = SPECIES[s.species].move;
+      const cls = landClass(SPECIES[s.species].move); // territory is land: swimmers' water is not home ground
       const r = s.radius;
       const x0 = Math.max(0, s.x - r);
       const y0 = Math.max(0, s.y - r);

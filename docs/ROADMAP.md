@@ -44,6 +44,12 @@ Residents take jobs (construction, field work, woodcutting, quarrying), walk to 
 ## ✅ Housing Evolution 0.16 (done)
 Houses go from huts to wooden, reinforced and urban houses with the settlement's stage and Better building; upgrades cost resources, take builders and time and add room; visible on the map and in the card. Save format still 11. Next logical step: architecture per people, more building types growing the same way.
 
+## ✅ World Simulation & Visual Evolution 0.23 (done)
+Buildings drawn 2×, creatures 0.5×, new trees; clearing before building and real tree felling with stumps and regrowth; roads from doors to the centre; births about 3× slower; Life tab in land and sea groups with deer, rabbit, wolf, bear, shark, whale and orca; people swim across shallow water. Save format 15. Next: domestic animals, birds and reptiles, pack hunting, danger in the water, bridges and boats.
+
+## ✅ Settlement Landmarks 0.22 (done)
+A main building at every settlement centre by people and stage (human tent, hall, town hall; elven living-wood shelter, leaf hall, spire hall), tappable to open the settlement card. Drawing only; save format 14. Next: landmarks for later stages or kingdoms' capitals, roads and bridges.
+
 ## ✅ Visual Evolution 0.21 (done)
 Close-up 16-px terrain level with biome variants, wet shores, rock strata and snow lines, ridge shadows, birches, logs and mushrooms; painted in bands within the frame budget. Save format unchanged (14). Next: animated water and vegetation, day/night light, roads and bridges.
 

@@ -11,6 +11,13 @@
 import type { BuildingType } from '../sim/civ';
 import { SPECIES, type Architecture } from '../sim/creatures';
 
+/**
+ * Buildings are drawn this many times larger than one tile (0.23): a house's art spans two tiles and rises up to two
+ * more above, standing on the bottom of its own tile, centred on it. Drawing only: a building still occupies one
+ * tile; the layout keeps its neighbours clear (civ.ts findSite) so the larger art fits.
+ */
+export const BUILDING_SCALE = 2;
+
 /** Draws a rectangle in grid units (x, y, width, height, colour). */
 export type Rect = (x: number, y: number, w: number, h: number, c: string) => void;
 
@@ -304,4 +311,36 @@ export function drawBuildingArt(r: Rect, arch: Architecture, type: BuildingType,
 export function buildingDot(arch: Architecture, type: BuildingType, level: number): string {
   if (type === 'shipyard') return '#6b8fb3';
   return type === 'house' ? HOUSE_STYLES[arch].dots[Math.max(1, Math.min(4, level))] : WORKPLACES[type].dot;
+}
+
+const boundsCache = new Map<string, { x0: number; y0: number; x1: number; y1: number }>();
+
+/** Grid-unit bounds of a building's art (x 0..8 on its tile, y up to -8 above it, ground at 8). */
+export function buildingArtBounds(arch: Architecture, type: BuildingType, level: number): { x0: number; y0: number; x1: number; y1: number } {
+  const key = `${arch}|${type}|${level}`;
+  let b = boundsCache.get(key);
+  if (!b) {
+    const r = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    drawBuildingArt((x, y, w, h) => {
+      r.x0 = Math.min(r.x0, x);
+      r.y0 = Math.min(r.y0, y);
+      r.x1 = Math.max(r.x1, x + w);
+      r.y1 = Math.max(r.y1, y + h);
+    }, arch, type, level, '#808080');
+    b = r;
+    boundsCache.set(key, b);
+  }
+  return b;
+}
+
+/**
+ * The world rectangle (tiles) a building's drawn art covers at BUILDING_SCALE: used for hit testing and to check
+ * that buildings do not overlap. `bx, by` is the building's tile.
+ */
+export function buildingRect(bx: number, by: number, arch: Architecture, type: BuildingType, level: number): { x0: number; y0: number; x1: number; y1: number } {
+  const a = buildingArtBounds(arch, type, level);
+  const k = BUILDING_SCALE / 8; // tiles per grid unit
+  const left = bx + 0.5 - BUILDING_SCALE / 2;
+  const top = by + 1 - BUILDING_SCALE; // the scaled tile's top; art y 0..8 maps onto it, negative y rises above
+  return { x0: left + Math.max(0, a.x0) * k, y0: top + a.y0 * k, x1: left + Math.min(8, a.x1) * k, y1: top + Math.min(8, a.y1) * k };
 }

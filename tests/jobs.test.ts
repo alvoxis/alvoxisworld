@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deserializeInto, serialize } from '../src/save/serialize';
 import {
-  BUILDERS, FORAGE_PER_PERSON, FORAGE_PER_TILE, MIN_JOB_TICKS, WORK_RANGE, WORK_SLOTS, importCiv, jobOf, slotsOf, storage, type Building, type BuildingType, type Civ,
+  BUILDERS, FORAGE_PER_PERSON, FORAGE_PER_TILE, MIN_JOB_TICKS, WOOD_PER_TREE, WORK_RANGE, WORK_SLOTS, importCiv, jobOf, slotsOf, storage, type Building, type BuildingType, type Civ,
 } from '../src/sim/civ';
 import { GRAZER, HUMAN, SPECIES, STATE } from '../src/sim/creatures';
 import { passable } from '../src/sim/pathfinding';
@@ -104,8 +104,9 @@ describe('jobs', () => {
     const { sim, s, civ } = camp(8);
     const farm = put(civ, 'farm', 50, 50);
     const lumber = put(civ, 'lumber', 44, 40);
+    civ.wood = 0; // with a full store lumberjacks rest (0.23: they work beside the tree they fell)
     const cls = SPECIES[HUMAN].move;
-    for (let k = 0; k < 40; k++) {
+    for (let k = 0; k < 120; k++) {
       steps(sim, 1);
       for (const id of s.members) {
         const i = sim.creatures.indexOf(id);
@@ -249,8 +250,8 @@ describe('production comes from work', () => {
       expect(civ.wood).toBeCloseTo(before.wood + civ.rate.wood, 6);
       expect(civ.stone).toBeCloseTo(before.stone + civ.rate.stone, 6);
       expect(civ.food).toBeCloseTo(Math.min(storage(civ), Math.max(0, before.food + civ.rate.food - civ.rate.foodUse)), 6);
-      // Never more than a fully staffed building gives.
-      expect(civ.rate.wood).toBeLessThanOrEqual(1 + 1e-9);
+      // Never more than a fully staffed building gives (wood: at most one tree per lumberjack per step, 0.23).
+      expect(civ.rate.wood).toBeLessThanOrEqual(WORK_SLOTS.lumber * WOOD_PER_TREE * 2 * 1.2 + 1e-9);
       expect(civ.rate.stone).toBeLessThanOrEqual(0.7 + 1e-9);
     }
     expect(civ.wood).toBeGreaterThan(5);
@@ -351,7 +352,7 @@ describe('settings, saves and determinism', () => {
     // A world with jobs for people who are not members: the jobs are dropped on load.
     const data = serialize(sim);
     const st = data.settlements!.list[0];
-    st.civ!.jobs.push({ id: 987654, b: st.civ!.buildings[0].id, since: 0, best: 0, stuck: 0 });
+    st.civ!.jobs.push({ id: 987654, b: st.civ!.buildings[0].id, since: 0, best: 0, stuck: 0, t: -1, at: -1, chop: 0 });
     const other = quiet(flat(8, 8));
     deserializeInto(other, data);
     expect(other.settlements.list[0].civ!.jobs.some((j) => j.id === 987654)).toBe(false);
