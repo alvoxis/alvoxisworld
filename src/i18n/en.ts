@@ -548,6 +548,7 @@ export const en = {
   'msg.settlement_farm_started': '{name}: a farm started working.',
   'msg.settlement_farm_stopped': '{name}: a farm stopped working.',
   'msg.settlement_exhausted': '{name}: {type} has nothing left to take.',
+  'about.cl_visual21': '0.21: close zoom paints the ground in finer detail with variants for every biome (grass, leaf litter, ferns, dunes, drifts, rock strata), wet shores, snow lines on high mountains, shadows cast by ridges, birches, fallen logs and mushrooms in forests, and softer snow fields. Save format unchanged (14).',
   'about.cl_world20': '0.20: a Terrain tab (raise, lower, deepen water, smooth, with strength), creatures carried out of raised rock, outlined two-frame creature sprites with distinct elves, trails worn by real walking, a shipyard foundation on sea coasts, chimney smoke, elven window light, soot near fire and more ground detail. Save format 14.',
   'about.cl_kingdoms': '0.19: kingdoms form by themselves from neighbouring settlements of one people, with a real living ruler, succession, a capital, a territory on the map and a kingdom card. Save format 13.',
   'about.cl_visual': '0.18: outlined, grounded building sprites with clearer house levels for humans and elves and recognisable farms, lumber camps, quarries and storehouses; houses ring an open centre and fields lie further out; an icon palette and a compact settlement card with details on demand; the manual founding tools are gone (settlements found themselves).',

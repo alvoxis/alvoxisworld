@@ -44,6 +44,9 @@ Residents take jobs (construction, field work, woodcutting, quarrying), walk to 
 ## ✅ Housing Evolution 0.16 (done)
 Houses go from huts to wooden, reinforced and urban houses with the settlement's stage and Better building; upgrades cost resources, take builders and time and add room; visible on the map and in the card. Save format still 11. Next logical step: architecture per people, more building types growing the same way.
 
+## ✅ Visual Evolution 0.21 (done)
+Close-up 16-px terrain level with biome variants, wet shores, rock strata and snow lines, ridge shadows, birches, logs and mushrooms; painted in bands within the frame budget. Save format unchanged (14). Next: animated water and vegetation, day/night light, roads and bridges.
+
 ## ✅ World Evolution 0.20 (done, with foundations)
 Terrain tab (raise, lower, deepen water, smooth, strength, limits), rescue of walled-in creatures, outlined two-frame creature art with distinct elves, trails from real movement, a shipyard foundation on sea coasts, chimney smoke, elven window light, soot and ground detail. Save format 14. Next: built roads and bridges, ships and sailing, swaying vegetation, day/night light.
 

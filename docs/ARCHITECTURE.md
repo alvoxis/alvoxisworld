@@ -183,7 +183,8 @@ The RNG state is saved, so a loaded game is deterministic from that point on.
 - **Three levels**, chosen by device pixels per tile `s`:
   - `s < 3`: the **1 px per tile** `base` canvas (an `ImageData` updated per dirty chunk). Land is slope-shaded and the sea is coloured by depth. It is drawn with smoothing when shrunk (`s < 1`) and also feeds the minimap.
   - `3 ≤ s < 9`: **4 px per tile** chunks (128×128 canvases, LRU of 160).
-  - `s ≥ 9`: **8 px per tile** chunks (256×256, LRU of 80).
+  - `9 ≤ s < 18`: **8 px per tile** chunks (256×256, LRU of 80).
+  - `s ≥ 18` (not in low-resolution mode): **16 px per tile** chunks (512×512, LRU of 24) from native ground art (`src/render/groundart.ts`, 4 variants per terrain) and 16-px sprites (`SPRITES16` in `tileset.ts`). A chunk costs about four 8-px chunks, so it is painted in four bands of 8 rows (`paintChunk(..., ly0, ly1)`; features are added with the last band), one band per paint turn, at most four chunks in progress; the cached 8-px chunk is drawn meanwhile, and a stale chunk keeps its old picture until the repaint completes. `terrainLevel(s, quality)` picks the level.
 - Chunks are painted by **`TerrainPainter`** (`src/render/painter.ts`), a pure function over the world arrays, so it is deterministic and unit-tested without a DOM:
   - Each pixel samples terrain at a slightly **warped** position (a tileable smooth offset field, ±0.34 tile), so biome borders and coasts are organic instead of square. Rivers are never warped, so their tiles stay exact; their staircase corners are cut and filled diagonally.
   - Light comes from tile-corner slopes, interpolated bilinearly per pixel, plus a fine grain table and mirrored art variants so tiles don't repeat visibly.

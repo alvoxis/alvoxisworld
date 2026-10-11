@@ -2,7 +2,11 @@ import { hash2, Rng } from '../core/rng';
 import { SLOPE } from '../world/passability';
 import { MOUNTAIN_LEVEL, SEA_LEVEL, T, TERRAIN, TERRAIN_COUNT } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
-import { SPRITES, Tileset, VARIANTS, halfSprite, type Sprite } from './tileset';
+import { SPRITES, SPRITES16, Tileset, VARIANTS, halfSprite, type Sprite } from './tileset';
+import { FINE_PX, FINE_VARIANTS, makeFineGround } from './groundart';
+
+/** Pixels per tile of a chunk level: 16 (close zoom), 8 (normal) or 4 (far). */
+export type ChunkPx = 16 | 8 | 4;
 
 /** Options that change how chunks look (changing one requires repainting). */
 export interface PaintOptions {
@@ -68,25 +72,29 @@ function makeWarp(seed: number): { wx: Float32Array; wy: Float32Array } {
 }
 
 interface Feature {
+  sprites16: Sprite[];
   sprites8: Sprite[];
   sprites4: Sprite[];
 }
 
-const feature = (list: Sprite[]): Feature => ({ sprites8: list, sprites4: list.map(halfSprite) });
+const feature = (list: Sprite[], list16: Sprite[]): Feature => ({ sprites16: list16, sprites8: list, sprites4: list.map(halfSprite) });
 const FEATURES = {
-  oak: feature(SPRITES.oak),
-  jungle: feature(SPRITES.jungle),
-  pine: feature(SPRITES.pine),
-  acacia: feature(SPRITES.acacia),
-  peak: feature(SPRITES.peak),
-  smallPeak: feature(SPRITES.smallPeak),
-  snowPeak: feature(SPRITES.snowPeak),
-  smallSnowPeak: feature(SPRITES.smallSnowPeak),
-  reed: feature(SPRITES.reed),
-  bush: feature(SPRITES.bush),
-  flowers: feature(SPRITES.flowers),
-  stones: feature(SPRITES.stones),
-  sandStones: feature(SPRITES.sandStones),
+  oak: feature(SPRITES.oak, SPRITES16.oak),
+  jungle: feature(SPRITES.jungle, SPRITES16.jungle),
+  pine: feature(SPRITES.pine, SPRITES16.pine),
+  acacia: feature(SPRITES.acacia, SPRITES16.acacia),
+  peak: feature(SPRITES.peak, SPRITES16.peak),
+  smallPeak: feature(SPRITES.smallPeak, SPRITES16.smallPeak),
+  snowPeak: feature(SPRITES.snowPeak, SPRITES16.snowPeak),
+  smallSnowPeak: feature(SPRITES.smallSnowPeak, SPRITES16.smallSnowPeak),
+  reed: feature(SPRITES.reed, SPRITES16.reed),
+  bush: feature(SPRITES.bush, SPRITES16.bush),
+  flowers: feature(SPRITES.flowers, SPRITES16.flowers),
+  stones: feature(SPRITES.stones, SPRITES16.stones),
+  sandStones: feature(SPRITES.sandStones, SPRITES16.sandStones),
+  birch: feature(SPRITES.birch, SPRITES16.birch),
+  log: feature(SPRITES.log, SPRITES16.log),
+  mushrooms: feature(SPRITES.mushrooms, SPRITES16.mushrooms),
 };
 
 /**
@@ -109,6 +117,12 @@ export class TerrainPainter {
   private readonly slope = new Uint8Array(M * M);
   private readonly vLight = new Float32Array((CHUNK + 1) * (CHUNK + 1));
   private readonly vDepth = new Float32Array((CHUNK + 1) * (CHUNK + 1));
+  /** Height at tile corners (for rock strata and the snow line on mountains). */
+  private readonly vHeight = new Float32Array((CHUNK + 1) * (CHUNK + 1));
+  /** Land tiles of the chunk plus margin that touch open water (wet shore). */
+  private readonly coast = new Uint8Array(M * M);
+  /** Ground art at 16 px per tile for the finest level (groundart.ts). */
+  private readonly fine = makeFineGround();
 
   /** Per-pixel brightness grain (±5%, tileable) that breaks up repeated tile art. */
   private readonly grain: Float32Array;
@@ -120,7 +134,11 @@ export class TerrainPainter {
   }
 
   /** Paints chunk (cx, cy) at `P` (8 or 4) pixels per tile into out (CHUNK·P squared RGBA). */
-  paintChunk(world: World, cx: number, cy: number, P: 8 | 4, out: Uint8ClampedArray, opts: PaintOptions): void {
+  /**
+   * Paints tile rows ly0..ly1-1 of the chunk (all by default); the features (trees, peaks…) are added with the last
+   * band, so a chunk can be painted over several frames into the same buffer.
+   */
+  paintChunk(world: World, cx: number, cy: number, P: ChunkPx, out: Uint8ClampedArray, opts: PaintOptions, ly0 = 0, ly1 = CHUNK): void {
     const W = world.width;
     const H = world.height;
     const x0 = cx * CHUNK;
@@ -145,6 +163,14 @@ export class TerrainPainter {
         frost[k] = opts.winter && !OPEN_WATER[id] && id !== T.RIVER && id !== T.SNOW && world.temperature[i] < FROST_TEMPERATURE ? 1 : 0;
       }
     }
+    // Land beside open water gets a darker, wet band along the shore.
+    const coast = this.coast;
+    for (let my = 1; my < M - 1; my++) {
+      for (let mx = 1; mx < M - 1; mx++) {
+        const k = my * M + mx;
+        coast[k] = !OPEN_WATER[ids[k]] && ids[k] !== T.RIVER && (OPEN_WATER[ids[k - 1]] | OPEN_WATER[ids[k + 1]] | OPEN_WATER[ids[k - M]] | OPEN_WATER[ids[k + M]]) ? 1 : 0;
+      }
+    }
 
     // Light and water depth at tile corners: corner (vx, vy) touches tiles (vx-1..vx, vy-1..vy).
     const heights = world.heights;
@@ -162,20 +188,28 @@ export class TerrainPainter {
         const sy = c + d - a - b;
         const avg = (a + b + c + d) * 0.25;
         const k = vy * (CHUNK + 1) + vx;
-        this.vLight[k] = 1 + Math.max(-0.32, Math.min(0.32, (sx + sy) * 0.016)) + Math.max(0, avg - SEA_LEVEL) * 0.0008;
+        // Shadow cast by higher ground to the north-west (light comes from there): valleys under ridges are darker.
+        const ridge = Math.max(hAt(gx - 2, gy - 2), hAt(gx - 1, gy - 2), hAt(gx - 2, gy - 1));
+        const cast = Math.min(0.22, Math.max(0, ridge - avg - 8) * 0.01);
+        this.vLight[k] = (1 + Math.max(-0.32, Math.min(0.32, (sx + sy) * 0.016)) + Math.max(0, avg - SEA_LEVEL) * 0.0008) * (1 - cast);
         this.vDepth[k] = Math.max(0, Math.min(1, (SEA_LEVEL - avg) / 90));
+        this.vHeight[k] = avg;
       }
     }
 
     const S = CHUNK * P;
-    const art = this.tiles.ground;
+    // The finest level has its own 16-pixel art; the others sample the 8-pixel tiles (every 2nd pixel at 4).
+    const fineArt = P === 16;
+    const art = fineArt ? this.fine : this.tiles.ground;
+    const TP = fineArt ? FINE_PX : 8;
+    const AV = fineArt ? FINE_VARIANTS : VARIANTS;
     const wx = this.warp.wx;
     const wy = this.warp.wy;
-    const step = 8 / P; // art pixels per output pixel
+    const step = TP / P; // art pixels per output pixel (1 at 16 and 8, 2 at 4)
     const pass = opts.passOverlay;
     const VL = CHUNK + 1;
 
-    for (let ly = 0; ly < CHUNK; ly++) {
+    for (let ly = ly0; ly < ly1; ly++) {
       for (let lx = 0; lx < CHUNK; lx++) {
         const ownK = (ly + 1) * M + (lx + 1);
         const own = ids[ownK];
@@ -190,13 +224,18 @@ export class TerrainPainter {
         const d10 = this.vDepth[v00 + 1];
         const d01 = this.vDepth[v00 + VL];
         const d11 = this.vDepth[v00 + VL + 1];
+        const h00 = this.vHeight[v00];
+        const h10 = this.vHeight[v00 + 1];
+        const h01 = this.vHeight[v00 + VL];
+        const h11 = this.vHeight[v00 + VL + 1];
+        const high = Math.max(h00, h10, h01, h11) > 160; // strata and the snow line only on high ground
         for (let py = 0; py < P; py++) {
           const fy = (py + 0.5) / P;
-          const gpy = ((y0 + ly) * 8 + py * step) & (WARP_SIZE - 1);
+          const gpy = ((y0 + ly) * 8 + ((py * 8) / P | 0)) & (WARP_SIZE - 1);
           let o = ((ly * P + py) * S + lx * P) * 4;
           for (let px = 0; px < P; px++, o += 4) {
             const fx = (px + 0.5) / P;
-            const gpx = ((x0 + lx) * 8 + px * step) & (WARP_SIZE - 1);
+            const gpx = ((x0 + lx) * 8 + ((px * 8) / P | 0)) & (WARP_SIZE - 1);
             const wk = gpy * WARP_SIZE + gpx;
             // Warped sample (stays within the one-tile margin).
             const sxf = lx + 1 + fx + wx[wk];
@@ -228,8 +267,9 @@ export class TerrainPainter {
               }
             }
             const vk = variant[k];
-            const ax = vk & 1 ? 7 - px * step : px * step; // odd variants mirrored: more variety from the same art
-            const so = ((id * VARIANTS + vk) * 64 + (py * step) * 8 + ax) * 4;
+            const av = vk % AV;
+            const ax = vk & 1 ? TP - 1 - px * step : px * step; // odd variants mirrored: more variety from the same art
+            const so = ((id * AV + av) * TP * TP + (py * step) * TP + ax) * 4;
             let r = art[so];
             let g = art[so + 1];
             let b = art[so + 2];
@@ -277,9 +317,48 @@ export class TerrainPainter {
               }
             } else {
               const light = (top + (bot - top) * fy) * this.grain[((gpy + 23) & (WARP_SIZE - 1)) * WARP_SIZE + ((gpx + 41) & (WARP_SIZE - 1))];
+              if (id === T.SNOW) {
+                // Snow is toned down and cooled before lighting so lit slopes do not clip to a flat white slab.
+                r *= 0.86;
+                g *= 0.89;
+                b *= 0.93;
+              }
               r *= light;
               g *= light;
               b *= light;
+              if (high && (id === T.MOUNTAIN || id === T.HILLS || id === T.SNOW)) {
+                // Rock strata: thin dark contour lines with a lit edge every 9 height steps, so raised ground reads
+                // as layered slopes; above the snow line rock turns to snow with a ragged edge.
+                const ht = h00 + (h10 - h00) * fx;
+                const hb = h01 + (h11 - h01) * fx;
+                const hp = ht + (hb - ht) * fy;
+                if (id !== T.SNOW) {
+                  const band = hp / 9;
+                  const fr = band - Math.floor(band);
+                  const f = fr < 0.1 ? (id === T.HILLS ? 0.93 : 0.86) : fr < 0.18 ? 1.05 : 1;
+                  r *= f;
+                  g *= f;
+                  b *= f;
+                }
+                const snow = (hp - 214 + (this.grain[((gpy + 5) & (WARP_SIZE - 1)) * WARP_SIZE + ((gpx + 9) & (WARP_SIZE - 1))] - 1) * 160) / 10;
+                if (id === T.MOUNTAIN && snow > 0) {
+                  const t = Math.min(1, snow);
+                  r += (204 * light - r) * t;
+                  g += (216 * light - g) * t;
+                  b += (232 * light - b) * t;
+                }
+              }
+              if (coast[ownK] && k === ownK) {
+                // Wet ground at the water's edge.
+                const edge = Math.min(fx, 1 - fx, fy, 1 - fy);
+                const wetSide =
+                  (fx < 0.3 && OPEN_WATER[ids[ownK - 1]]) || (fx > 0.7 && OPEN_WATER[ids[ownK + 1]]) || (fy < 0.3 && OPEN_WATER[ids[ownK - M]]) || (fy > 0.7 && OPEN_WATER[ids[ownK + M]]);
+                if (wetSide && edge < 0.3) {
+                  r *= 0.84;
+                  g *= 0.86;
+                  b *= 0.88;
+                }
+              }
               if (frost[k] && ((px + py * 2) & 3) !== 0) {
                 r = r * 0.42 + 140;
                 g = g * 0.42 + 145;
@@ -320,11 +399,11 @@ export class TerrainPainter {
       }
     }
 
-    this.paintFeatures(world, x0, y0, P, out);
+    if (ly1 >= CHUNK) this.paintFeatures(world, x0, y0, P, out);
   }
 
   /** Trees, peaks and reeds, back to front, including those of margin tiles that overlap the chunk. */
-  private paintFeatures(world: World, x0: number, y0: number, P: 8 | 4, out: Uint8ClampedArray): void {
+  private paintFeatures(world: World, x0: number, y0: number, P: ChunkPx, out: Uint8ClampedArray): void {
     const ids = this.ids;
     const S = CHUNK * P;
     const seed = world.seed;
@@ -352,6 +431,12 @@ export class TerrainPainter {
               (ty > 0 && tt[ti - W] !== T.FOREST && tt[ti - W] !== T.JUNGLE) ||
               (ty < world.height - 1 && tt[ti + W] !== T.FOREST && tt[ti + W] !== T.JUNGLE);
             count = open ? (h1 < 0.7 ? 1 : 0) : h1 < 0.55 ? 2 : 1;
+            // Variety: some birches (mostly at the edge), and in the open spots a fallen log or mushrooms.
+            const h3 = hash2(tx * 3 + 1, ty * 5 + 2, seed ^ 0x2c1b3c6d);
+            if (count === 0) {
+              count = 1;
+              feat = h3 < 0.35 ? FEATURES.log : h3 < 0.55 ? FEATURES.mushrooms : null;
+            } else if (h3 < (open ? 0.3 : 0.1)) feat = FEATURES.birch;
             break;
           }
           case T.GRASS:
@@ -417,7 +502,7 @@ export class TerrainPainter {
           (tx > 0 && tt[ti - 1] === T.RIVER) || (tx < world.width - 1 && tt[ti + 1] === T.RIVER) ||
           (ty > 0 && tt[ti - world.width] === T.RIVER) || (ty < world.height - 1 && tt[ti + world.width] === T.RIVER)
         ) continue;
-        const list = P === 8 ? feat.sprites8 : feat.sprites4;
+        const list = P === 16 ? feat.sprites16 : P === 8 ? feat.sprites8 : feat.sprites4;
         for (let n = 0; n < count; n++) {
           const r1 = n === 0 ? h1 : h2;
           const r2 = n === 0 ? h2 : (h1 * 7.31) % 1;

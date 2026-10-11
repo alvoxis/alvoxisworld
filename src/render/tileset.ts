@@ -422,6 +422,118 @@ function stoneSprite(base: RGB, pair: boolean): Sprite {
   });
 }
 
+/** A birch: a pale trunk with dark marks under a small, light canopy (scale 1 = 8 px per tile, 2 = 16). */
+function birchSprite(k: 1 | 2): Sprite {
+  const r = 2 * k;
+  const d = r * 2 + 1;
+  return makeSprite(d + 2, d + 3 * k, r, d + 3 * k - 1, (set) => {
+    for (let y = 0; y < 3 * k; y++) {
+      for (let t = 0; t < k; t++) set(r + t, d - 1 + y, y % 3 === 1 ? [60, 56, 52] : [226, 222, 210]);
+    }
+    for (let y = -r; y <= r; y++)
+      for (let x = -r; x <= r; x++) {
+        if (x * x + y * y > r * r + r * 0.5) continue;
+        const lit = x + y < -r * 0.4 ? 1.2 : x + y > r * 0.6 ? 0.78 : 1;
+        set(r + x, r + y, shade([128, 172, 70], lit));
+      }
+  });
+}
+
+/** A fallen log on the forest floor: bark, a pale cut end and a little moss. */
+function logSprite(k: 1 | 2): Sprite {
+  const w = 5 * k;
+  const h = 2 * k;
+  return makeSprite(w + 1, h + 1, Math.floor(w / 2), h, (set) => {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) set(x, y, y === 0 ? [122, 84, 48] : [92, 62, 36]);
+    for (let y = 0; y < h; y++) set(w - 1, y, [196, 160, 112]);
+    set(1, 0, [110, 150, 70]);
+    if (k === 2) set(2, 0, [110, 150, 70]);
+    for (let x = 1; x <= w; x++) set(x, h, [10, 20, 10], 60);
+  });
+}
+
+/** A few mushrooms: red caps with white dots on pale stems. */
+function mushroomSprite(k: 1 | 2): Sprite {
+  return makeSprite(4 * k, 3 * k, 2 * k, 3 * k - 1, (set) => {
+    for (const [cx, cy] of [[1, 0], [3, 1]] as const) {
+      for (let j = 0; j < k; j++) for (let i = -k + 1; i < k + 1; i++) set(cx * k + i, cy * k + j, j === 0 && i === 0 ? [250, 240, 230] : [196, 52, 44]);
+      for (let j = k; j < 2 * k; j++) set(cx * k, cy * k + j, [236, 226, 206]);
+    }
+  });
+}
+
+/**
+ * A broadleaf tree at 16 px per tile: a canopy of three overlapping leaf masses, lit from the north-west with darker
+ * gaps and clusters of highlights, a two-pixel trunk with a root flare, and a soft shadow to the south-east.
+ */
+function treeSprite16(r: number, leaf: RGB, trunk: RGB, seed: number): Sprite {
+  const rng = new Rng(seed);
+  const d = r * 2 + 1;
+  const w = d + 4;
+  const h = d + 6;
+  return makeSprite(w, h, r, d + 4, (set) => {
+    for (let y = -r; y <= r; y++)
+      for (let x = -r; x <= r; x++) if (x * x + y * y * 3 <= r * r) set(r + 3 + x, d + 3 + Math.round(y * 0.4), [10, 30, 10], 70);
+    for (let y = 0; y < 5; y++) {
+      set(r, d - 1 + y, shade(trunk, 1.1));
+      set(r + 1, d - 1 + y, shade(trunk, 0.8));
+    }
+    set(r - 1, d + 3, shade(trunk, 0.9));
+    set(r + 2, d + 3, shade(trunk, 0.7));
+    const blobs: Array<[number, number, number]> = [[0, 1, r * 0.75], [-r * 0.35, -r * 0.3, r * 0.7], [r * 0.35, -r * 0.2, r * 0.65]];
+    for (const [bx, by, br] of blobs) {
+      for (let y = -r; y <= r; y++)
+        for (let x = -r; x <= r; x++) {
+          const q = (x - bx) * (x - bx) + (y - by) * (y - by);
+          if (q > br * br) continue;
+          const edge = q > (br - 1.2) * (br - 1.2);
+          const ux = x - bx;
+          const uy = y - by;
+          let lit = ux + uy < -br * 0.45 ? 1.24 : ux + uy > br * 0.55 ? 0.72 : 1;
+          if (edge) lit *= 0.84;
+          if (rng.next() < 0.1) lit *= 0.86; // gaps between leaves
+          set(r + x, r + y, shade(leaf, lit));
+        }
+    }
+    for (let k2 = 0; k2 < r; k2++) {
+      const x = Math.round(-r * 0.6 + rng.next() * r * 0.8);
+      const y = Math.round(-r * 0.7 + rng.next() * r * 0.7);
+      set(r + x, r + y, shade(leaf, 1.38)); // sunlit clusters
+    }
+  });
+}
+
+/** A conifer at 16 px per tile: tiers of boughs, lit on the west, with a trunk and shadow. */
+function pineSprite16(leaf: RGB): Sprite {
+  return makeSprite(13, 18, 6, 17, (set) => {
+    for (let y = 0; y < 14; y++) {
+      const tier = y % 5;
+      const half = Math.floor(y * 0.42) + (tier >= 3 ? 1 : 0);
+      for (let x = -half; x <= half; x++) set(6 + x, y, shade(leaf, x < 0 ? (tier === 3 ? 1.28 : 1.12) : x === half ? 0.66 : 0.82));
+    }
+    for (let y = 14; y < 17; y++) {
+      set(6, y, [86, 58, 34]);
+      set(7, y, [64, 42, 26]);
+    }
+    for (let x = 7; x <= 11; x++) set(x, 17, [10, 30, 10], 70);
+  });
+}
+
+/** Nearest-neighbour double size (for small details that read fine at twice the size). */
+export function doubleSprite(sp: Sprite): Sprite {
+  const w = sp.w * 2;
+  const h = sp.h * 2;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const si = ((y >> 1) * sp.w + (x >> 1)) * 4;
+      const di = (y * w + x) * 4;
+      for (let k = 0; k < 4; k++) rgba[di + k] = sp.rgba[si + k];
+    }
+  }
+  return { w, h, ax: sp.ax * 2, ay: sp.ay * 2, rgba };
+}
+
 /** Sprite catalogue (drawn at 8 px per tile; halved copies are used at 4 px per tile). */
 export const SPRITES = {
   oak: [treeSprite(3, [52, 118, 52], [92, 60, 34]), treeSprite(2, [64, 132, 58], [92, 60, 34]), treeSprite(3, [44, 106, 50], [84, 56, 32])],
@@ -438,6 +550,32 @@ export const SPRITES = {
   flowers: [flowerSprite([235, 92, 110]), flowerSprite([250, 220, 90]), flowerSprite([170, 140, 235])],
   stones: [stoneSprite([138, 134, 126], false), stoneSprite([150, 144, 132], true)],
   sandStones: [stoneSprite([196, 176, 138], false), stoneSprite([180, 160, 124], true)],
+  birch: [birchSprite(1)],
+  log: [logSprite(1)],
+  mushrooms: [mushroomSprite(1)],
+};
+
+/**
+ * The same features drawn natively for 16 px per tile (the finest map level): trees, conifers, peaks and the forest
+ * floor details are redrawn at double size with more structure; small details are doubled.
+ */
+export const SPRITES16: { [K in keyof typeof SPRITES]: Sprite[] } = {
+  oak: [treeSprite16(7, [52, 118, 52], [92, 60, 34], 11), treeSprite16(5, [64, 132, 58], [92, 60, 34], 12), treeSprite16(7, [44, 106, 50], [84, 56, 32], 13)],
+  jungle: [treeSprite16(9, [36, 128, 60], [70, 50, 30], 14), treeSprite16(7, [48, 146, 66], [70, 50, 30], 15)],
+  pine: [pineSprite16([40, 92, 60]), pineSprite16([52, 104, 68])],
+  acacia: SPRITES.acacia.map(doubleSprite),
+  peak: [peakSprite(36, 24, false, 1), peakSprite(32, 22, false, 2)],
+  smallPeak: [peakSprite(20, 16, false, 5), peakSprite(16, 14, false, 6)],
+  snowPeak: [peakSprite(36, 24, true, 3), peakSprite(32, 22, true, 4)],
+  smallSnowPeak: [peakSprite(20, 16, true, 7), peakSprite(16, 14, true, 8)],
+  reed: SPRITES.reed.map(doubleSprite),
+  bush: SPRITES.bush.map(doubleSprite),
+  flowers: SPRITES.flowers.map(doubleSprite),
+  stones: SPRITES.stones.map(doubleSprite),
+  sandStones: SPRITES.sandStones.map(doubleSprite),
+  birch: [birchSprite(2)],
+  log: [logSprite(2)],
+  mushrooms: [mushroomSprite(2)],
 };
 
 /** Half-resolution copy (2×2 box filter with alpha weighting) for 4-px-per-tile chunks. */

@@ -390,3 +390,16 @@ What is **implemented** (and tested), and what is only a **foundation**:
 - **Saves: format 14** — optional settlement `wear` (trails) and the shipyard type; heights and water depth were already saved. Saves 1–13 load unchanged (no trails).
 
 Not done in this milestone (honest list): swaying trees, wet ground after rain, day/night lighting, separate damage sprites, built roads, bridges, ships and sailing, new art for every non-house building per people, terrain texture redraws beyond the details above. Physical-phone performance was not measured.
+
+## Visual evolution: close-up terrain, water, mountains and vegetation (v0.21.0)
+
+Drawing only; the simulation, tools and save format (14) are unchanged.
+
+- **Close-up level.** At close zoom (18 or more device pixels per tile, not in low-resolution mode) the ground is painted at 16 px per tile from native art (`render/groundart.ts`) with four variants per terrain: grass blades and clover, leaf litter, twigs and moss on forest floor, ferns in jungle, dry blades and bare patches on savanna, sand ripples, dunes and pebbles, soil clods and cracks, swamp puddles, lichen on tundra, snow drifts with blue shadows, rock outcrops on hills, rock strata on mountains, wave crests and river streaks. Each variant keeps its terrain's average colour, so zooming between levels does not jump. Normal and far zoom keep the 8 px, 4 px and 1 px levels.
+- **Water and coasts:** a darker wet band on land beside open water, on top of the existing depth colouring and foam.
+- **Mountains and snow:** strata contour lines on high hills and mountains, a ragged snow line on mountains above height 214, snow fields toned down so lit slopes no longer clip to a flat white slab; raised terrain shades as tapered slopes.
+- **Lighting and depth:** ridges cast a soft shadow towards the south-east on lower ground.
+- **Vegetation:** birches among forest edges and interiors, fallen logs and mushrooms in forest gaps; trees and pines have their own 16-px sprites up close.
+- **Performance:** a 16-px chunk is painted in four bands of eight rows, one band per turn within the existing 6 ms paint budget, while the 8-px chunk (if cached) stands in; at most four chunks are in progress at once and an edit restarts an unfinished one. Only chunks a change touches are repainted. See `docs/PERFORMANCE.md`.
+
+Not done: animated water or swaying trees, day/night light, roads, bridges, ships and sailing. Not measured on a physical phone.

@@ -258,3 +258,17 @@ It's possible, but a large rewrite that would collide with the planned UI milest
 - **Giant maps** take about 3.5 s to generate here (in a worker, so the page stays responsive) and keep about 80 MB in the simulation plus 20 MB for the map image. Older iPhones may run out of memory; this is untested.
 - The creature tick itself (about 0.5 µs per animal per tick in Node) still runs on the main thread. At 10× with about 5,500 animals that's an *estimated* 25–30% of a 60 fps frame, derived from the Node per-tick cost rather than measured in the browser. Phones will be slower.
 - Navigation rebuilds still cost main-thread time when workers are unavailable (Node, or older browsers without module workers).
+
+## Visual Evolution 0.21
+
+Method: chunk paint cost measured in Node (Vitest, `TerrainPainter.paintChunk`, 256×160 world seed 77, 40 chunks after 5 warm-up paints); browser numbers from headless Chromium with iPhone 13 emulation (software rendering, `renderer.paintStats` and `requestAnimationFrame` intervals over 90–120 frames on the production build). Not measured on a physical phone.
+
+| Level | Node ms per chunk |
+| --- | --- |
+| 4 px | 2.15 |
+| 8 px | 5.74 |
+| 16 px (new) | 21.22 (painted as 4 bands of ~5 ms) |
+
+- Browser, close zoom (12×, 16-px level), fresh view: 8 band paints at 2.94 ms each; frame interval median 16.7 ms, p90 16.7 ms, max 16.8 ms. Steady close zoom with the simulation running: median 16.7 ms, p90 16.7 ms.
+- A jump straight to close zoom fills the view within about 0.8 s (bands are spread over frames); before the per-chunk band state was added, chunks in the same frame restarted each other and never finished.
+- Memory: up to 24 cached 16-px chunks (1 MB each) plus at most 4 band buffers (1 MB each). Low-resolution mode never uses the 16-px level.

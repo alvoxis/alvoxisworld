@@ -4,7 +4,7 @@ import type { WeatherSystem } from '../sim/weather';
 import { SEA_LEVEL, T, TERRAIN, isWater } from '../world/terrain';
 import { CHUNK, World } from '../world/world';
 import { Camera } from './camera';
-import { TerrainPainter, type PaintOptions } from './painter';
+import { TerrainPainter, type ChunkPx, type PaintOptions } from './painter';
 import { SkyRenderer, type Bolt, type Dust, type VisualEffect } from './skyfx';
 import type { MeteorInFlight } from '../sim/sky';
 import { COLORS, type Settlement } from '../sim/settlements';
@@ -13,10 +13,20 @@ import type { Building, BuildingType, JobKind } from '../sim/civ';
 import { OUTLINE_PAD, Tileset, TILE_PX, creatureSprite } from './tileset';
 import { architectureOf, buildingDot, drawBuildingArt } from './architecture';
 
+/** Device pixels per tile at which 16-px-per-tile fine chunks (native close-up art) are used. */
+export const FINE_SCALE = 18;
 /** Device pixels per tile at which 8-px-per-tile detail chunks are used. */
 export const DETAIL_SCALE = 9;
 /** Device pixels per tile at which 4-px-per-tile chunks replace the 1-px map. */
 export const MID_SCALE = 3;
+/** Which cached terrain level a zoom draws over the 1-px base map (0 = the base map only). */
+export function terrainLevel(s: number, q: { lowRes: boolean }): ChunkPx | 0 {
+  if (s >= FINE_SCALE && !q.lowRes) return 16;
+  if (s >= DETAIL_SCALE) return 8;
+  return s >= MID_SCALE ? 4 : 0;
+}
+const MAX_PARTS = 4; // fine chunks painted band by band at once (1 MB buffer each)
+const MAX_FINE_CHUNKS = 24; // 1 MB each (512×512): a close view needs about 6–12
 const MAX_DETAIL_CHUNKS = 80;
 const MAX_MID_CHUNKS = 160;
 /** Chunk painting budget per frame (ms); at least one visible chunk is painted per frame. */
@@ -105,18 +115,22 @@ class ChunkLevel {
   private image: ImageData | null = null;
 
   constructor(
-    readonly P: 8 | 4,
+    readonly P: ChunkPx,
     private readonly max: number,
   ) {}
 
   markStale(c: number): void {
     const e = this.chunks.get(c);
     if (e) e.stale = true;
+    const p = this.parts.get(c);
+    if (p) p.row = 0; // edited mid-paint: start over so old and new rows never mix
   }
 
   clear(): void {
     for (const e of this.chunks.values()) this.pool.push(e.canvas);
     this.chunks.clear();
+    for (const p of this.parts.values()) this.spare.push(p.image);
+    this.parts.clear();
   }
 
   paint(painter: TerrainPainter, world: World, c: number, opts: PaintOptions, into?: HTMLCanvasElement): HTMLCanvasElement {
@@ -131,6 +145,46 @@ class ChunkLevel {
     painter.paintChunk(world, c % world.chunksX, Math.floor(c / world.chunksX), this.P, this.image.data, opts);
     ctx.putImageData(this.image, 0, 0);
     return canvas;
+  }
+
+  /** Chunks being painted band by band (fine level): each has its own buffer and the next row to paint. */
+  private readonly parts = new Map<number, { row: number; image: ImageData }>();
+  private readonly spare: ImageData[] = [];
+
+  /**
+   * Paints the next band of rows of chunk c (the fine level spreads one chunk over several frames). Returns the
+   * finished canvas, or null while the chunk is not complete yet (or MAX_PARTS other chunks are still in progress).
+   */
+  paintPart(painter: TerrainPainter, world: World, c: number, opts: PaintOptions, rows: number, into?: HTMLCanvasElement): HTMLCanvasElement | null {
+    const size = CHUNK * this.P;
+    let p = this.parts.get(c);
+    if (!p) {
+      if (this.parts.size >= MAX_PARTS) return null;
+      p = { row: 0, image: this.spare.pop() ?? new ImageData(size, size) };
+      this.parts.set(c, p);
+    }
+    const end = Math.min(CHUNK, p.row + rows);
+    painter.paintChunk(world, c % world.chunksX, Math.floor(c / world.chunksX), this.P, p.image.data, opts, p.row, end);
+    p.row = end;
+    if (end < CHUNK) return null;
+    const canvas = into ?? this.pool.pop() ?? document.createElement('canvas');
+    if (canvas.width !== size) {
+      canvas.width = size;
+      canvas.height = size;
+    }
+    canvas.getContext('2d')!.putImageData(p.image, 0, 0);
+    this.parts.delete(c);
+    this.spare.push(p.image);
+    return canvas;
+  }
+
+  /** Drops band paints of chunks no longer in view (their buffers are reused). */
+  dropParts(keep: ReadonlySet<number>): void {
+    for (const [c, p] of this.parts) {
+      if (keep.has(c)) continue;
+      this.parts.delete(c);
+      this.spare.push(p.image);
+    }
   }
 
   trim(): void {
@@ -170,6 +224,7 @@ export class Renderer {
   private baseImage!: ImageData;
   private readonly tileset = new Tileset();
   private readonly painter = new TerrainPainter(this.tileset);
+  private readonly fine = new ChunkLevel(16, MAX_FINE_CHUNKS);
   private readonly detail = new ChunkLevel(8, MAX_DETAIL_CHUNKS);
   private readonly mid = new ChunkLevel(4, MAX_MID_CHUNKS);
   /** Per species, two walking frames, each facing right and left. */
@@ -217,6 +272,7 @@ export class Renderer {
     this.base.height = world.height;
     this.baseCtx = this.base.getContext('2d')!;
     this.baseImage = this.baseCtx.createImageData(world.width, world.height);
+    this.fine.clear();
     this.detail.clear();
     this.mid.clear();
     world.markAllDirty();
@@ -327,6 +383,7 @@ export class Renderer {
         }
       }
       this.baseCtx.putImageData(this.baseImage, 0, 0, x0, y0, x1 - x0, y1 - y0);
+      this.fine.markStale(c);
       this.detail.markStale(c);
       this.mid.markStale(c);
     }
@@ -334,7 +391,7 @@ export class Renderer {
   }
 
   /** Draws the visible chunks of one level, painting missing or stale ones within the frame budget. */
-  private drawLevel(level: ChunkLevel, camera: Camera, s: number, ox: number, oy: number, budgetEnd: number): void {
+  private drawLevel(level: ChunkLevel, camera: Camera, s: number, ox: number, oy: number, budgetEnd: number, fallback?: ChunkLevel): void {
     const w = this.world;
     const ctx = this.ctx;
     const cw = this.canvas.width;
@@ -356,19 +413,50 @@ export class Renderer {
       const by = Math.floor(b / w.chunksX) - my;
       return ax * ax + ay * ay - (bx * bx + by * by);
     });
+    if (level.P === 16) level.dropParts(new Set(list));
     for (const c of list) {
       let e = level.chunks.get(c);
       const canPaint = this.paintStats.lastFrame === 0 || performance.now() < budgetEnd;
+      const banded = level.P === 16; // the fine level paints a quarter of a chunk per turn (about 6 ms)
       if (e) {
         level.chunks.delete(c); // refresh LRU position
         if (e.stale && canPaint) {
           const t0 = performance.now();
-          level.paint(this.painter, w, c, opts, e.canvas);
+          if (!banded) {
+            level.paint(this.painter, w, c, opts, e.canvas);
+            e.stale = false;
+          } else if (level.paintPart(this.painter, w, c, opts, CHUNK / 4, e.canvas)) e.stale = false; // the old picture stays until done
           this.countPaint(performance.now() - t0);
-          e.stale = false;
+        }
+      } else if (banded && canPaint) {
+        const t0 = performance.now();
+        const done = level.paintPart(this.painter, w, c, opts, CHUNK / 4);
+        this.countPaint(performance.now() - t0);
+        if (done) e = { canvas: done, stale: false };
+        else {
+          const f = fallback?.chunks.get(c);
+          if (f) {
+            const cx = c % w.chunksX;
+            const cy = Math.floor(c / w.chunksX);
+            const sx = Math.round(ox + cx * CHUNK * s);
+            const sy = Math.round(oy + cy * CHUNK * s);
+            ctx.drawImage(f.canvas, sx, sy, Math.round(ox + (cx + 1) * CHUNK * s) - sx, Math.round(oy + (cy + 1) * CHUNK * s) - sy);
+          }
+          continue;
         }
       } else {
-        if (!canPaint) continue; // the coarser map underneath stays visible
+        if (!canPaint) {
+          // Not painted yet: show the coarser level's chunk meanwhile (if it has one), else the 1-px map stays.
+          const f = fallback?.chunks.get(c);
+          if (f) {
+            const cx = c % w.chunksX;
+            const cy = Math.floor(c / w.chunksX);
+            const sx = Math.round(ox + cx * CHUNK * s);
+            const sy = Math.round(oy + cy * CHUNK * s);
+            ctx.drawImage(f.canvas, sx, sy, Math.round(ox + (cx + 1) * CHUNK * s) - sx, Math.round(oy + (cy + 1) * CHUNK * s) - sy);
+          }
+          continue;
+        }
         const t0 = performance.now();
         e = { canvas: level.paint(this.painter, w, c, opts), stale: false };
         this.countPaint(performance.now() - t0);
@@ -418,8 +506,11 @@ export class Renderer {
 
     this.paintStats.lastFrame = 0;
     const budgetEnd = performance.now() + PAINT_BUDGET_MS;
-    if (s >= DETAIL_SCALE) this.drawLevel(this.detail, camera, s, ox, oy, budgetEnd);
-    else if (s >= MID_SCALE) this.drawLevel(this.mid, camera, s, ox, oy, budgetEnd);
+    // Close zoom uses the native 16-px art (not in low-resolution mode, which keeps memory and painting cheaper).
+    const lvl = terrainLevel(s, this.quality);
+    if (lvl === 16) this.drawLevel(this.fine, camera, s, ox, oy, budgetEnd, this.detail);
+    else if (lvl === 8) this.drawLevel(this.detail, camera, s, ox, oy, budgetEnd);
+    else if (lvl === 4) this.drawLevel(this.mid, camera, s, ox, oy, budgetEnd);
     if (s >= MID_SCALE && overlay && !this.quality.reduced) this.drawGlints(camera, s, ox, oy, overlay.now);
 
     if (overlay) this.drawFire(overlay, s, ox, oy);
