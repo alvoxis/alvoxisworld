@@ -280,7 +280,7 @@ export function silhouette(species: number, frame = 0): string[] {
  * (device pixels; people a little larger) so creatures stay visible far away. Juveniles are drawn at 3/4 size.
  * Drawing only: selection uses its own, larger radius (Creatures.candidatesAt), not the sprite.
  */
-export const CREATURE_SCALE = 0.5;
+export const CREATURE_SCALE = 0.25;
 export const MIN_SPRITE_PX = 5;
 export const MIN_PERSON_PX = 6;
 

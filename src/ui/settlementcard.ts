@@ -16,7 +16,7 @@ import { COLORS, EMIGRATE_STRESS } from '../sim/settlements';
 
 const YEAR_STEPS = 24; // steps per game year (480 ticks / 20)
 const ICON = { food: '🌾', wood: '🪵', stone: '🪨', knowledge: '📖' } as const;
-const BUILD_ICON: Readonly<Record<BuildingType, string>> = { house: '🏠', farm: '🌾', lumber: '🪓', quarry: '⛏', storehouse: '📦', shipyard: '⚓', bridge: '🌉' };
+const BUILD_ICON: Readonly<Record<BuildingType, string>> = { house: '🏠', farm: '🌾', lumber: '🪓', quarry: '⛏', storehouse: '📦', shipyard: '⚓', bridge: '🌉', market: '🏪', temple: '⛪', workshop: '🔨', tower: '🗼', mill: '⚙️' };
 const fmt = (n: number) => String(Math.round(n * 10) / 10).replace(/\.0$/, '');
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', parent?: HTMLElement): HTMLElementTagNameMap[K] {

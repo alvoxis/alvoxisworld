@@ -265,13 +265,12 @@ export const HOUSE_STYLES: Readonly<Record<Architecture, HouseStyle>> = {
   orc: { dots: ['', '#5a6a3a', '#7a8a4a', '#4a5a2a', '#a0b070'], draw: drawOrcHouse },
   merfolk: { dots: ['', '#5a9ab0', '#7ab0c0', '#4a7a90', '#c0e0f0'], draw: drawMerfolkHouse },
 };
-
-export type Workplace = Exclude<BuildingType, 'house' | 'shipyard' | 'bridge'>;
-
 /**
  * Workplaces read by their use: a fenced field with rows of crops and a scarecrow, a lumber camp with a log pile
  * under a lean-to and an axe in a stump, a quarry pit with cut blocks and a pick, a wide plank barn with a big door.
  */
+export type Workplace = Exclude<BuildingType, 'house' | 'shipyard' | 'bridge' | 'tower' | 'temple'>;
+
 export const WORKPLACES: Readonly<Record<Workplace, { dot: string; draw(r: Rect, roof: string): void }>> = {
   farm: {
     dot: '#7fb046',
@@ -339,6 +338,27 @@ export const WORKPLACES: Readonly<Record<Workplace, { dot: string; draw(r: Rect,
       gable(r, roof, -0.6, 2.8, -0.3, 8.3);
     },
   },
+  market: {
+    dot: '#c9a06a',
+    draw(r, roof) {
+      r(0.5, 3, 7, 4, '#c9a06a');
+      r(1, 1.5, 6, 1.5, roof);
+    },
+  },
+  workshop: {
+    dot: '#8a6a4a',
+    draw(r, _roof) {
+      r(0.5, 3, 7, 4, '#8a6a4a');
+      r(3, 1, 2, 2, '#5a3a2a');
+    },
+  },
+  mill: {
+    dot: '#a08060',
+    draw(r, _roof) {
+      r(2, 3, 4, 4, '#a08060');
+      r(3.5, 1, 1, 2, '#6a5030');
+    },
+  },
 };
 
 /** Building style of a settlement's species (human style for any species without one). */
@@ -370,11 +390,30 @@ export function drawBuildingArt(r: Rect, arch: Architecture, type: BuildingType,
   if (type === 'house') HOUSE_STYLES[arch].draw(r, level, roof);
   else if (type === 'shipyard') drawShipyard(r, roof);
   else if (type === 'bridge') {
-    // Simple wooden bridge planks
     r(0, 2, 8, 4, '#6a5a4a');
     for (let i = 0; i < 3; i++) r(0.4, 2.4 + i * 1.2, 7.2, 0.6, '#8a6a4a');
     r(0, 1.6, 0.6, 4.8, '#5a3a2a');
     r(7.4, 1.6, 0.6, 4.8, '#5a3a2a');
+  }
+  else if (type === 'market') {
+    r(0.5, 3, 7, 4, '#c9a06a');
+    r(1, 1.5, 6, 1.5, '#e8d4a0'); // canopy
+  }
+  else if (type === 'temple') {
+    r(1.5, 2, 5, 5, '#d4c4a0');
+    r(3, 0.5, 2, 1.5, '#f0e6c0'); // roof peak
+  }
+  else if (type === 'workshop') {
+    r(0.5, 3, 7, 4, '#8a6a4a');
+    r(3, 1, 2, 2, '#5a3a2a'); // chimney
+  }
+  else if (type === 'tower') {
+    r(2.5, 1, 3, 6, '#7a6a5a');
+    r(2, 0.2, 4, 1, '#5a4a3a');
+  }
+  else if (type === 'mill') {
+    r(2, 3, 4, 4, '#a08060');
+    r(3.5, 1, 1, 2, '#6a5030'); // post
   }
   else if (type in WORKPLACES) WORKPLACES[type as Workplace].draw(r, roof);
 }
@@ -383,6 +422,9 @@ export function drawBuildingArt(r: Rect, arch: Architecture, type: BuildingType,
 export function buildingDot(arch: Architecture, type: BuildingType, level: number): string {
   if (type === 'shipyard') return '#6b8fb3';
   if (type === 'bridge') return '#8a6a4a';
+  if (type === 'market') return '#c9a06a';
+  if (type === 'temple') return '#d4c4a0';
+  if (type === 'tower') return '#7a6a5a';
   return type === 'house' ? HOUSE_STYLES[arch].dots[Math.max(1, Math.min(4, level))] : WORKPLACES[type].dot;
 }
 
