@@ -1,3 +1,4 @@
+import { updateDiplomacy } from './diplomacy';
 /**
  * Kingdoms: a light political layer above settlements. Nothing here is decided by the player and no random numbers
  * are used: kingdoms emerge from settlements of one people that live near each other long enough, and a kingdom's
@@ -147,6 +148,7 @@ export class Kingdoms {
   // ---- periodic update -------------------------------------------------------
 
   step(world: World, creatures: Creatures, settlements: Settlements, tick: number): void {
+    updateDiplomacy(this.list, settlements, tick);
     if (tick % KINGDOM_STEP !== 0) return;
     if (this.list.length) this.maintain(creatures, settlements, tick);
     if (tick % FORM_TICKS === 0 && settlements.list.length > 1) this.form(world, creatures, settlements, tick);
