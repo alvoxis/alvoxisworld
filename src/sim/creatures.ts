@@ -85,7 +85,7 @@ export interface CivProfile {
   architecture: Architecture;
 }
 
-export type Architecture = 'human' | 'elven';
+export type Architecture = 'human' | 'elven' | 'dwarf' | 'gnome' | 'demigod' | 'orc' | 'merfolk';
 
 export const GRAZER = 0;
 export const RAPTOR = 1;
@@ -102,6 +102,12 @@ export const BEAR = 10;
 export const SHARK = 11;
 export const WHALE = 12;
 export const ORCA = 13;
+// New races (appended so saved ids stay stable)
+export const DWARF = 14;
+export const GNOME = 15;
+export const DEMIGOD = 16;
+export const ORC = 17;
+export const MERFOLK = 18;
 
 export const SPECIES: readonly SpeciesDef[] = [
   {
@@ -144,7 +150,7 @@ export const SPECIES: readonly SpeciesDef[] = [
     // buildings or economy yet), walk where lowland animals can, flee predators and can be hunted by them.
     id: HUMAN, key: 'human', name: 'Human', plural: 'Humans', diet: 'herbivore', habitat: 'land',
     speed: 0.12, size: 1, adultAge: 600, maxAge: 3000, maxHealth: 50, hungerRate: 0.17, thirstRate: 0.14,
-    food: [T.GRASS, T.FOREST, T.JUNGLE, T.SAVANNA, T.HILLS], biteGain: 3, prey: [], attack: 0, meat: 0,
+    food: [T.GRASS, T.FOREST, T.JUNGLE, T.SAVANNA, T.HILLS], biteGain: 3, prey: [], attack: 4, meat: 0,
     move: MOVE.SWIM, sight: 12, breedCooldown: 1500, breedChance: 0.02, litter: 1, crowdLimit: 3, maxShare: 0.2,
     color: '#e0a878', sentient: true, marker: '#6fa8ff',
     civ: {
@@ -165,7 +171,7 @@ export const SPECIES: readonly SpeciesDef[] = [
     // with water and trees around it (rock matters little to them) and keep more distance from other settlements.
     id: ELF, key: 'elf', name: 'Elf', plural: 'Elves', diet: 'herbivore', habitat: 'land',
     speed: 0.13, size: 1, adultAge: 700, maxAge: 3800, maxHealth: 45, hungerRate: 0.16, thirstRate: 0.14,
-    food: [T.FOREST, T.JUNGLE, T.GRASS, T.SAVANNA], biteGain: 3, prey: [], attack: 0, meat: 0,
+    food: [T.FOREST, T.JUNGLE, T.GRASS, T.SAVANNA], biteGain: 3, prey: [], attack: 3, meat: 0,
     move: MOVE.SWIM, sight: 13, breedCooldown: 1950, breedChance: 0.015, litter: 1, crowdLimit: 3, maxShare: 0.15,
     color: '#8fd08a', sentient: true, marker: '#7fe08a',
     civ: {
@@ -237,6 +243,102 @@ export const SPECIES: readonly SpeciesDef[] = [
     move: MOVE.WATER, sight: 14, breedCooldown: 1000, breedChance: 0.012, litter: 1, crowdLimit: 2, maxShare: 0.03,
     color: '#1d2330',
   },
+  {
+    // Dwarves: hardy mountain folk who love stone and metal. Shorter, tougher, prefer hills and mountains.
+    id: DWARF, key: 'dwarf', name: 'Dwarf', plural: 'Dwarves', diet: 'herbivore', habitat: 'land',
+    speed: 0.10, size: 0.9, adultAge: 650, maxAge: 3600, maxHealth: 70, hungerRate: 0.18, thirstRate: 0.15,
+    food: [T.HILLS, T.GRASS, T.FOREST, T.TUNDRA], biteGain: 3, prey: [], attack: 6, meat: 0,
+    move: MOVE.LAND, sight: 11, breedCooldown: 1600, breedChance: 0.018, litter: 1, crowdLimit: 3, maxShare: 0.12,
+    color: '#c4a574', sentient: true, marker: '#d4a84b',
+    civ: {
+      affinity: { [T.HILLS]: 1, [T.MOUNTAIN]: 0.7, [T.TUNDRA]: 0.4, [T.GRASS]: 0.3, [T.FOREST]: 0.3 },
+      avoid: [T.DESERT, T.SWAMP, T.JUNGLE],
+      needsWater: true,
+      minFounders: 5,
+      groupMax: 20,
+      compatible: [],
+      weights: { food: 0.25, like: 0.25, trees: 0.05, rock: 0.35, space: 0.1, coast: 0 },
+      gap: 18,
+      architecture: 'dwarf',
+    },
+  },
+  {
+    // Gnomes: clever inventors of the hills and forests. Smaller, longer-lived researchers.
+    id: GNOME, key: 'gnome', name: 'Gnome', plural: 'Gnomes', diet: 'herbivore', habitat: 'land',
+    speed: 0.11, size: 0.75, adultAge: 500, maxAge: 4200, maxHealth: 40, hungerRate: 0.15, thirstRate: 0.13,
+    food: [T.FOREST, T.HILLS, T.GRASS, T.SAVANNA], biteGain: 3, prey: [], attack: 3, meat: 0,
+    move: MOVE.LAND, sight: 14, breedCooldown: 1800, breedChance: 0.016, litter: 1, crowdLimit: 4, maxShare: 0.10,
+    color: '#a8d08a', sentient: true, marker: '#88c070',
+    civ: {
+      affinity: { [T.FOREST]: 0.8, [T.HILLS]: 0.9, [T.GRASS]: 0.5, [T.SAVANNA]: 0.3 },
+      avoid: [T.DESERT, T.MOUNTAIN, T.SWAMP],
+      needsWater: true,
+      minFounders: 4,
+      groupMax: 14,
+      compatible: [],
+      weights: { food: 0.3, like: 0.25, trees: 0.2, rock: 0.15, space: 0.1, coast: 0 },
+      gap: 16,
+      architecture: 'gnome',
+    },
+  },
+  {
+    // Demigods: rare, long-lived beings of great power. Prefer open beautiful lands.
+    id: DEMIGOD, key: 'demigod', name: 'Demigod', plural: 'Demigods', diet: 'herbivore', habitat: 'land',
+    speed: 0.14, size: 1.2, adultAge: 800, maxAge: 6000, maxHealth: 120, hungerRate: 0.12, thirstRate: 0.10,
+    food: [T.GRASS, T.FOREST, T.HILLS, T.SAVANNA], biteGain: 4, prey: [], attack: 12, meat: 0,
+    move: MOVE.LAND, sight: 16, breedCooldown: 3000, breedChance: 0.008, litter: 1, crowdLimit: 2, maxShare: 0.04,
+    color: '#ffe8a0', sentient: true, marker: '#ffd700',
+    civ: {
+      affinity: { [T.GRASS]: 0.9, [T.HILLS]: 0.7, [T.FOREST]: 0.6, [T.SAVANNA]: 0.5 },
+      avoid: [T.DESERT, T.SWAMP, T.TUNDRA],
+      needsWater: true,
+      minFounders: 3,
+      groupMax: 10,
+      compatible: [],
+      weights: { food: 0.2, like: 0.4, trees: 0.15, rock: 0.1, space: 0.15, coast: 0.05 },
+      gap: 28,
+      architecture: 'demigod',
+    },
+  },
+  {
+    // Orcs: warlike raiders of the open lands. Aggressive, strong, prefer savanna and hills.
+    id: ORC, key: 'orc', name: 'Orc', plural: 'Orcs', diet: 'herbivore', habitat: 'land',
+    speed: 0.13, size: 1.05, adultAge: 550, maxAge: 2800, maxHealth: 65, hungerRate: 0.19, thirstRate: 0.16,
+    food: [T.SAVANNA, T.GRASS, T.HILLS, T.FOREST], biteGain: 3, prey: [], attack: 9, meat: 0,
+    move: MOVE.LAND, sight: 12, breedCooldown: 1400, breedChance: 0.022, litter: 1, crowdLimit: 3, maxShare: 0.12,
+    color: '#6b8e4e', sentient: true, marker: '#5a7a3a',
+    civ: {
+      affinity: { [T.SAVANNA]: 1, [T.HILLS]: 0.7, [T.GRASS]: 0.6, [T.FOREST]: 0.3 },
+      avoid: [T.DESERT, T.MOUNTAIN, T.SWAMP, T.TUNDRA],
+      needsWater: true,
+      minFounders: 5,
+      groupMax: 28,
+      compatible: [],
+      weights: { food: 0.35, like: 0.3, trees: 0.05, rock: 0.1, space: 0.2, coast: 0 },
+      gap: 14,
+      architecture: 'orc',
+    },
+  },
+  {
+    // Merfolk: coastal people who fish and swim. Prefer shores and shallow water access.
+    id: MERFOLK, key: 'merfolk', name: 'Merfolk', plural: 'Merfolk', diet: 'herbivore', habitat: 'land',
+    speed: 0.12, size: 1, adultAge: 620, maxAge: 3400, maxHealth: 48, hungerRate: 0.16, thirstRate: 0.08,
+    food: [T.GRASS, T.FOREST, T.SAVANNA, T.SAND], biteGain: 3, prey: [], attack: 4, meat: 0,
+    move: MOVE.SWIM, sight: 13, breedCooldown: 1700, breedChance: 0.017, litter: 1, crowdLimit: 3, maxShare: 0.10,
+    color: '#7ec8e3', sentient: true, marker: '#5ab0d0',
+    civ: {
+      affinity: { [T.SAND]: 0.9, [T.GRASS]: 0.6, [T.FOREST]: 0.4, [T.SAVANNA]: 0.3 },
+      avoid: [T.DESERT, T.MOUNTAIN, T.TUNDRA, T.SWAMP],
+      needsWater: true,
+      minFounders: 4,
+      groupMax: 18,
+      compatible: [],
+      weights: { food: 0.25, like: 0.25, trees: 0.1, rock: 0.05, space: 0.1, coast: 0.3 },
+      gap: 18,
+      architecture: 'merfolk',
+    },
+  },
+
 ];
 
 /** For each species, the species that hunt it. */

@@ -141,6 +141,54 @@ const WHALE: string[] = [
 ];
 const ORCA: string[] = ['......f.......', '.....ff.......', 't.kkkkkkkkkkk.', 'ttkkkkkkkkWkek', 't.kWWWWWWkkkk.', '....p.........'];
 
+
+// New races (simple distinct sprites)
+const DWARF: string[] = [
+  '....ddd....',
+  '...ddddd...',
+  '..ddedddd..',
+  '..ddddddd..',
+  '...ddddd...',
+  '..l..l..l..',
+  '..l..l..l..',
+];
+const GNOME: string[] = [
+  '....ggg....',
+  '...ggggg...',
+  '..ggegggg..',
+  '..ggggggg..',
+  '...ggggg...',
+  '..l...l....',
+  '..l...l....',
+];
+const DEMIGOD: string[] = [
+  '....yyy....',
+  '...yyyyy...',
+  '..yyeyyyy..',
+  '..yyyyyyy..',
+  '...yyyyy...',
+  '..l....l...',
+  '..l....l...',
+];
+const ORC: string[] = [
+  '....ooo....',
+  '...ooooo...',
+  '..ooeoooo..',
+  '..ooooooo..',
+  '...ooooo...',
+  '..l..l..l..',
+  '..l..l..l..',
+];
+const MERFOLK: string[] = [
+  '....mmm....',
+  '...mmmmm...',
+  '..mmemmmm..',
+  '..mmmmmmm..',
+  '...mmmmm...',
+  '..l....l...',
+  '..f....f...',
+];
+
 export const CREATURE_ART: Readonly<Record<number, CreatureArt>> = {
   0: {
     frames: [GRAZER, swap(GRAZER, { 6: '...l.l...', 7: '..l...l..' })],
@@ -197,6 +245,26 @@ export const CREATURE_ART: Readonly<Record<number, CreatureArt>> = {
   13: {
     frames: [ORCA, swap(ORCA, { 2: '..kkkkkkkkkkk.', 3: 'tkkkkkkkkkWkek', 4: '..kWWWWWWkkkk.' })],
     palette: { k: '#1d2330', W: '#f2f2f2', f: '#1d2330', t: '#1d2330', e: '#8a8f99', p: '#1d2330' },
+  },
+  14: {
+    frames: [DWARF, swap(DWARF, { 5: '..l....l..' })],
+    palette: { d: '#c4a574', e: '#fff', l: '#5a4030' },
+  },
+  15: {
+    frames: [GNOME, swap(GNOME, { 5: '..l....l....' })],
+    palette: { g: '#a8d08a', e: '#fff', l: '#4a6a3a' },
+  },
+  16: {
+    frames: [DEMIGOD, swap(DEMIGOD, { 5: '..l....l...' })],
+    palette: { y: '#ffe8a0', e: '#fff', l: '#c0a060' },
+  },
+  17: {
+    frames: [ORC, swap(ORC, { 5: '..l....l..' })],
+    palette: { o: '#6b8e4e', e: '#fff', l: '#3a4a2a' },
+  },
+  18: {
+    frames: [MERFOLK, swap(MERFOLK, { 6: '..f....f...' })],
+    palette: { m: '#7ec8e3', e: '#fff', f: '#5ab0d0', l: '#4a7a90' },
   },
 };
 

@@ -196,9 +196,74 @@ function drawElvenHouse(r: Rect, level: number, roof: string): void {
   }
 }
 
+
+/** Dwarf houses: low, sturdy stone and timber, heavy roofs. */
+function drawDwarfHouse(r: Rect, _level: number, roof: string): void {
+  const stone = '#7a6050';
+  const dark = '#5a4030';
+  r(1, 5.5, 6, 2.5, stone);
+  r(1, 7.5, 6, 0.5, dark);
+  r(0.5, 3.5, 7, 2.2, roof);
+  r(0.5, 5.2, 7, 0.4, shade(roof, -0.2));
+  r(3.2, 5.8, 1.6, 1.8, DOOR);
+  r(2, 4.5, 1, 0.8, LIT);
+  r(5, 4.5, 1, 0.8, LIT);
+  if (_level >= 2) r(6.5, 2.5, 0.5, 2, dark); // chimney
+}
+
+/** Gnome houses: small, rounded, with chimneys and gardens. */
+function drawGnomeHouse(r: Rect, _level: number, roof: string): void {
+  r(1.5, 5, 5, 2.5, '#8a6a4a');
+  r(1, 3.8, 6, 1.8, roof);
+  r(1, 5.2, 6, 0.4, shade(roof, -0.15));
+  r(3.3, 5.5, 1.4, 1.8, DOOR);
+  r(2.2, 4.3, 0.9, 0.7, LIT);
+  r(4.8, 4.3, 0.9, 0.7, LIT);
+  r(6.8, 3.2, 0.4, 1.5, '#5a4030'); // chimney
+  if (_level >= 2) r(0.5, 6.8, 1.2, 0.6, '#6a9a4a'); // garden
+}
+
+/** Demigod halls: tall, pale stone with golden accents and light. */
+function drawDemigodHouse(r: Rect, _level: number, roof: string): void {
+  r(1, 4, 6, 3.5, '#e8d8b0');
+  r(1, 7, 6, 0.5, '#c0b090');
+  gable(r, roof, 0.5, 4.2);
+  r(3.2, 5.2, 1.6, 2, DOOR);
+  r(2, 4.5, 1, 1.2, '#fff8c0'); // glowing window
+  r(5, 4.5, 1, 1.2, '#fff8c0');
+  r(3.5, 1.2, 1, 1.5, '#ffd060'); // spire light
+}
+
+/** Orc huts: rough timber and hide, aggressive look. */
+function drawOrcHouse(r: Rect, _level: number, roof: string): void {
+  r(1, 5.2, 6, 2.3, '#6a5a3a');
+  r(0.8, 3.5, 6.4, 2, roof);
+  r(0.8, 5, 6.4, 0.5, shade(roof, -0.25));
+  r(3, 5.5, 2, 1.8, '#3a2a1a');
+  r(2.5, 4.2, 1, 0.9, '#ff6a3a'); // fire light
+  r(4.5, 4.2, 1, 0.9, '#ff6a3a');
+  r(6.5, 4, 0.6, 2, '#5a3a2a'); // pole
+}
+
+/** Merfolk dwellings: shell and coral style near water. */
+function drawMerfolkHouse(r: Rect, _level: number, roof: string): void {
+  r(1.5, 5.2, 5, 2.3, '#6a9ab0');
+  r(1, 3.8, 6, 1.8, roof);
+  r(1, 5.2, 6, 0.4, shade(roof, -0.1));
+  r(3.3, 5.6, 1.4, 1.6, DOOR);
+  r(2.2, 4.4, 0.9, 0.8, '#a0e0ff');
+  r(4.8, 4.4, 0.9, 0.8, '#a0e0ff');
+  r(6.6, 4.5, 0.5, 1.2, '#e0c080'); // shell accent
+}
+
 export const HOUSE_STYLES: Readonly<Record<Architecture, HouseStyle>> = {
   human: { dots: ['', '#b8964f', '#c9a36b', '#a7a39b', '#e4ded2'], draw: drawHumanHouse },
   elven: { dots: ['', '#4f8f3c', '#6f8a4a', '#7fae5a', '#d9e8c0'], draw: drawElvenHouse },
+  dwarf: { dots: ['', '#8a6a4a', '#a08060', '#6a5040', '#c0a080'], draw: drawDwarfHouse },
+  gnome: { dots: ['', '#6a9a5a', '#8aba70', '#5a7a4a', '#d0e8b0'], draw: drawGnomeHouse },
+  demigod: { dots: ['', '#e0c060', '#f0d080', '#c0a040', '#fff0c0'], draw: drawDemigodHouse },
+  orc: { dots: ['', '#5a6a3a', '#7a8a4a', '#4a5a2a', '#a0b070'], draw: drawOrcHouse },
+  merfolk: { dots: ['', '#5a9ab0', '#7ab0c0', '#4a7a90', '#c0e0f0'], draw: drawMerfolkHouse },
 };
 
 export type Workplace = Exclude<BuildingType, 'house' | 'shipyard'>;

@@ -282,6 +282,11 @@ function elvenTown(r: Rect, roof: string): void {
 const ART: Readonly<Record<Architecture, Readonly<Record<Stage, (r: Rect, roof: string) => void>>>> = {
   human: { camp: humanCamp, village: humanVillage, town: humanTown },
   elven: { camp: elvenCamp, village: elvenVillage, town: elvenTown },
+  dwarf: { camp: humanCamp, village: humanVillage, town: humanTown },
+  gnome: { camp: elvenCamp, village: elvenVillage, town: elvenTown },
+  demigod: { camp: humanCamp, village: humanVillage, town: humanTown },
+  orc: { camp: humanCamp, village: humanVillage, town: humanTown },
+  merfolk: { camp: elvenCamp, village: elvenVillage, town: elvenTown },
 };
 
 /** Draws the landmark of a people at a stage; `roof` is the settlement colour. */
