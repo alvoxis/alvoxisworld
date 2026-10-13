@@ -1,6 +1,6 @@
 {
   "name": "alvoxis-world-evolution",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "private": true,
   "description": "ALVOXIS: World Evolution \u2014 a browser-based pixel-art sandbox god game.",
   "type": "module",
