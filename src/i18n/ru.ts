@@ -426,6 +426,8 @@ export const ru: Dict = {
   'build.quarry': 'Каменоломня',
   'build.house.desc': '+5 жилья',
   'build.storehouse.desc': '+120 к хранилищу каждого ресурса',
+  'build.bridge': 'Мост',
+  'build.bridge.desc': 'Деревянный мост через небольшой водоём.',
   'build.shipyard': 'Верфь',
   'build.shipyard.desc': 'Причал и стапель на морском берегу (нужно открытое море рядом). Корабли пока не строятся: основа на будущее.',
   'bstate.shipyard': 'причал готов (кораблей пока нет)',

@@ -25,8 +25,8 @@ import { landClass, passable } from './pathfinding';
 import type { Settlement } from './settlements';
 import { chooseNextTech, RACE_BIAS, TECH_BY_ID } from './progress';
 
-export type BuildingType = 'house' | 'storehouse' | 'farm' | 'lumber' | 'quarry' | 'shipyard';
-export const BUILDING_TYPES: readonly BuildingType[] = ['house', 'farm', 'lumber', 'quarry', 'storehouse', 'shipyard'];
+export type BuildingType = 'house' | 'storehouse' | 'farm' | 'lumber' | 'quarry' | 'shipyard' | 'bridge';
+export const BUILDING_TYPES: readonly BuildingType[] = ['house', 'farm', 'lumber', 'quarry', 'storehouse', 'shipyard', 'bridge'];
 export type TechId = 'farming' | 'construction' | 'harvesting';
 export const TECH_IDS: readonly TechId[] = ['farming', 'construction', 'harvesting'];
 export type Stage = 'camp' | 'village' | 'town';
@@ -46,6 +46,7 @@ export const BUILDINGS: Readonly<Record<BuildingType, BuildingDef>> = {
   quarry: { wood: 12, stone: 0, steps: 7 },
   /** A dock and slipway on the sea shore. A foundation: ships and sailing are not simulated yet. */
   shipyard: { wood: 24, stone: 6, steps: 9 },
+  bridge: { wood: 16, stone: 8, steps: 7 },
 };
 
 export interface TechDef {
@@ -94,7 +95,7 @@ export const STONE_TERRAIN: readonly number[] = [T.HILLS, T.MOUNTAIN];
 export const OPEN_SEA: readonly number[] = [T.SHALLOW_WATER, T.DEEP_WATER];
 
 /** Workers a finished building can use; the full yield needs all of them. */
-export const WORK_SLOTS: Readonly<Record<BuildingType, number>> = { house: 0, storehouse: 0, farm: 2, lumber: 2, quarry: 2, shipyard: 0 };
+export const WORK_SLOTS: Readonly<Record<BuildingType, number>> = { house: 0, storehouse: 0, farm: 2, lumber: 2, quarry: 2, shipyard: 0, bridge: 0 };
 /** A shipyard stands on a shore tile next to open sea with at least this many sea tiles within SHIPYARD_REACH. */
 export const SHIPYARD_SEA = 10;
 export const SHIPYARD_REACH = 3;
@@ -419,7 +420,8 @@ function searchSite(world: World, s: Settlement, owner: Uint16Array, type: Build
     const x = i % W;
     const y = (i - x) / W;
     const t = world.terrain[i];
-    if (isWater(t) || world.slopeClass[i] !== 0 || world.fire[i] > 0 || !passable(world, cls, x, y)) continue;
+    if (type !== 'bridge' && (isWater(t) || world.slopeClass[i] !== 0 || world.fire[i] > 0 || !passable(world, cls, x, y))) continue;
+    if (type === 'bridge' && !isWater(t)) continue;
     const d = Math.hypot(x - s.x, y - s.y);
     if (Math.max(Math.abs(x - s.x), Math.abs(y - s.y)) <= CENTRE_FREE) continue; // the centre stays open (landmark)
     if (!siteClear(world, at, x, y, type, allowTrees)) continue;
@@ -453,6 +455,18 @@ function searchSite(world: World, s: Settlement, owner: Uint16Array, type: Build
       const rock = rockNear!(x, y);
       if (rock < 3) continue;
       score = rock * 10 - d - 2 * crowd + vary;
+    } else if (type === 'bridge') {
+      // Small water body: few water tiles around, not open sea
+      let waterCount = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= world.height) continue;
+          if (isWater(world.terrain[ny * W + nx])) waterCount++;
+        }
+      }
+      if (waterCount < 3 || waterCount > 12) continue; // too small or too large
+      score = 20 - Math.abs(waterCount - 6) - d + vary;
     } else if (type === 'shipyard') {
       // On the shore of open, navigable sea (not a lake or river): a sea tile on a side, enough sea around.
       let side = false;
@@ -1094,6 +1108,8 @@ function autoManage(host: CivHost, s: Settlement): void {
   if (count('storehouse') === 0 && pop >= 14) wants.push('storehouse');
   if (count('quarry') === 0 && c.stage !== 'camp') wants.push('quarry');
   if (count('shipyard') === 0 && c.stage === 'town' && count('storehouse') > 0) wants.push('shipyard'); // only where findSite finds a shore
+  // Bridges over small water once masonry or wheel is known
+  if (count('bridge') < 2 && (c.advanced.includes('masonry') || c.advanced.includes('wheel')) && c.stage !== 'camp') wants.push('bridge');
   for (const t of wants) {
     if (buildBlock(world, s, owner, t) === null) {
       const b = startBuilding(world, s, owner, t, tick);

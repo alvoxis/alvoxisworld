@@ -427,6 +427,8 @@ export const en = {
   'build.quarry': 'Quarry',
   'build.house.desc': '+5 housing',
   'build.storehouse.desc': '+120 storage for each resource',
+  'build.bridge': 'Bridge',
+  'build.bridge.desc': 'A wooden bridge over a small body of water.',
   'build.shipyard': 'Shipyard',
   'build.shipyard.desc': 'A dock and slipway on the sea shore (needs open sea beside it). Ships are not built yet: a foundation for later.',
   'bstate.shipyard': 'dock ready (no ships yet)',

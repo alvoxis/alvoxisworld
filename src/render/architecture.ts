@@ -266,7 +266,7 @@ export const HOUSE_STYLES: Readonly<Record<Architecture, HouseStyle>> = {
   merfolk: { dots: ['', '#5a9ab0', '#7ab0c0', '#4a7a90', '#c0e0f0'], draw: drawMerfolkHouse },
 };
 
-export type Workplace = Exclude<BuildingType, 'house' | 'shipyard'>;
+export type Workplace = Exclude<BuildingType, 'house' | 'shipyard' | 'bridge'>;
 
 /**
  * Workplaces read by their use: a fenced field with rows of crops and a scarecrow, a lumber camp with a log pile
@@ -369,12 +369,20 @@ function drawShipyard(r: Rect, roof: string): void {
 export function drawBuildingArt(r: Rect, arch: Architecture, type: BuildingType, level: number, roof: string): void {
   if (type === 'house') HOUSE_STYLES[arch].draw(r, level, roof);
   else if (type === 'shipyard') drawShipyard(r, roof);
-  else WORKPLACES[type].draw(r, roof);
+  else if (type === 'bridge') {
+    // Simple wooden bridge planks
+    r(0, 2, 8, 4, '#6a5a4a');
+    for (let i = 0; i < 3; i++) r(0.4, 2.4 + i * 1.2, 7.2, 0.6, '#8a6a4a');
+    r(0, 1.6, 0.6, 4.8, '#5a3a2a');
+    r(7.4, 1.6, 0.6, 4.8, '#5a3a2a');
+  }
+  else if (type in WORKPLACES) WORKPLACES[type as Workplace].draw(r, roof);
 }
 
 /** Far-away colour of a building. */
 export function buildingDot(arch: Architecture, type: BuildingType, level: number): string {
   if (type === 'shipyard') return '#6b8fb3';
+  if (type === 'bridge') return '#8a6a4a';
   return type === 'house' ? HOUSE_STYLES[arch].dots[Math.max(1, Math.min(4, level))] : WORKPLACES[type].dot;
 }
 

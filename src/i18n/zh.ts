@@ -412,6 +412,8 @@ export const zh: Dict = {
   'build.quarry': '采石场',
   'build.house.desc': '住房 +5',
   'build.storehouse.desc': '每种资源储量 +120',
+  'build.bridge': '桥',
+  'build.bridge.desc': '跨过小水体的木桥。',
   'build.shipyard': '造船厂',
   'build.shipyard.desc': '海岸上的码头和船台（旁边需有开阔海域）。暂不建造船只：为以后打基础。',
   'bstate.shipyard': '码头已就绪（暂无船只）',
