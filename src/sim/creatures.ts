@@ -1123,7 +1123,7 @@ export class Creatures {
       return;
     }
     if (hungry) {
-      if (sp.diet === 'carnivore') this.seekPrey(world, i);
+      if (sp.diet === 'carnivore' || (sp.prey.length > 0 && this.hunger[i] > 50)) this.seekPrey(world, i);
       else if (s !== STATE.SEEK_FOOD && canSearch) this.seekFood(world, i);
       return;
     }
