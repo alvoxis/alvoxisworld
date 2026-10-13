@@ -269,7 +269,7 @@ export const HOUSE_STYLES: Readonly<Record<Architecture, HouseStyle>> = {
  * Workplaces read by their use: a fenced field with rows of crops and a scarecrow, a lumber camp with a log pile
  * under a lean-to and an axe in a stump, a quarry pit with cut blocks and a pick, a wide plank barn with a big door.
  */
-export type Workplace = Exclude<BuildingType, 'house' | 'shipyard' | 'bridge' | 'tower' | 'temple'>;
+export type Workplace = Exclude<BuildingType, 'house' | 'shipyard' | 'bridge' | 'tower' | 'temple' | 'townhall'>;
 
 export const WORKPLACES: Readonly<Record<Workplace, { dot: string; draw(r: Rect, roof: string): void }>> = {
   farm: {
@@ -359,6 +359,20 @@ export const WORKPLACES: Readonly<Record<Workplace, { dot: string; draw(r: Rect,
       r(3.5, 1, 1, 2, '#6a5030');
     },
   },
+  library: {
+    dot: '#8a7a6a',
+    draw(r, roof) {
+      r(1, 2.5, 6, 4.5, '#c0b090');
+      r(1.5, 1, 5, 1.5, roof);
+    },
+  },
+  barracks: {
+    dot: '#6a5a4a',
+    draw(r, roof) {
+      r(0.5, 2, 7, 5, '#7a6a5a');
+      r(2, 0.5, 4, 1.5, roof);
+    },
+  },
 };
 
 /** Building style of a settlement's species (human style for any species without one). */
@@ -389,6 +403,10 @@ function drawShipyard(r: Rect, roof: string): void {
 export function drawBuildingArt(r: Rect, arch: Architecture, type: BuildingType, level: number, roof: string): void {
   if (type === 'house') HOUSE_STYLES[arch].draw(r, level, roof);
   else if (type === 'shipyard') drawShipyard(r, roof);
+  else if (type === 'townhall') {
+    r(0.5, 1.5, 7, 5.5, '#b0a080');
+    r(2, 0, 4, 1.5, '#d0c0a0');
+  }
   else if (type === 'bridge') {
     r(0, 2, 8, 4, '#6a5a4a');
     for (let i = 0; i < 3; i++) r(0.4, 2.4 + i * 1.2, 7.2, 0.6, '#8a6a4a');
@@ -425,6 +443,9 @@ export function buildingDot(arch: Architecture, type: BuildingType, level: numbe
   if (type === 'market') return '#c9a06a';
   if (type === 'temple') return '#d4c4a0';
   if (type === 'tower') return '#7a6a5a';
+  if (type === 'townhall') return '#b0a080';
+  if (type === 'library') return '#8a7a6a';
+  if (type === 'barracks') return '#6a5a4a';
   return type === 'house' ? HOUSE_STYLES[arch].dots[Math.max(1, Math.min(4, level))] : WORKPLACES[type].dot;
 }
 

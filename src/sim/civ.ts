@@ -25,8 +25,8 @@ import { landClass, passable } from './pathfinding';
 import type { Settlement } from './settlements';
 import { chooseNextTech, RACE_BIAS, TECH_BY_ID } from './progress';
 
-export type BuildingType = 'house' | 'storehouse' | 'farm' | 'lumber' | 'quarry' | 'shipyard' | 'bridge' | 'market' | 'temple' | 'workshop' | 'tower' | 'mill';
-export const BUILDING_TYPES: readonly BuildingType[] = ['house', 'farm', 'lumber', 'quarry', 'storehouse', 'shipyard', 'bridge', 'market', 'temple', 'workshop', 'tower', 'mill'];
+export type BuildingType = 'house' | 'storehouse' | 'farm' | 'lumber' | 'quarry' | 'shipyard' | 'bridge' | 'market' | 'temple' | 'workshop' | 'tower' | 'mill' | 'library' | 'barracks' | 'townhall';
+export const BUILDING_TYPES: readonly BuildingType[] = ['house', 'farm', 'lumber', 'quarry', 'storehouse', 'shipyard', 'bridge', 'market', 'temple', 'workshop', 'tower', 'mill', 'library', 'barracks', 'townhall'];
 export type TechId = 'farming' | 'construction' | 'harvesting';
 export const TECH_IDS: readonly TechId[] = ['farming', 'construction', 'harvesting'];
 export type Stage = 'camp' | 'village' | 'town';
@@ -52,6 +52,9 @@ export const BUILDINGS: Readonly<Record<BuildingType, BuildingDef>> = {
   workshop: { wood: 14, stone: 6, steps: 7 },
   tower: { wood: 8, stone: 18, steps: 9 },
   mill: { wood: 10, stone: 4, steps: 5 },
+  library: { wood: 12, stone: 8, steps: 8 },
+  barracks: { wood: 16, stone: 10, steps: 9 },
+  townhall: { wood: 20, stone: 14, steps: 12 },
 };
 
 export interface TechDef {
@@ -100,7 +103,7 @@ export const STONE_TERRAIN: readonly number[] = [T.HILLS, T.MOUNTAIN];
 export const OPEN_SEA: readonly number[] = [T.SHALLOW_WATER, T.DEEP_WATER];
 
 /** Workers a finished building can use; the full yield needs all of them. */
-export const WORK_SLOTS: Readonly<Record<BuildingType, number>> = { house: 0, storehouse: 0, farm: 2, lumber: 2, quarry: 2, shipyard: 0, bridge: 0, market: 1, temple: 1, workshop: 2, tower: 1, mill: 1 };
+export const WORK_SLOTS: Readonly<Record<BuildingType, number>> = { house: 0, storehouse: 0, farm: 2, lumber: 2, quarry: 2, shipyard: 0, bridge: 0, market: 1, temple: 1, workshop: 2, tower: 1, mill: 1, library: 1, barracks: 2, townhall: 0 };
 /** A shipyard stands on a shore tile next to open sea with at least this many sea tiles within SHIPYARD_REACH. */
 export const SHIPYARD_SEA = 10;
 export const SHIPYARD_REACH = 3;
@@ -1120,6 +1123,9 @@ function autoManage(host: CivHost, s: Settlement): void {
   if (count('market') === 0 && pop >= 18) wants.push('market');
   if (count('temple') === 0 && c.advanced.includes('religion') && c.stage !== 'camp') wants.push('temple');
   if (count('tower') === 0 && c.stage === 'town') wants.push('tower');
+  if (count('library') === 0 && c.advanced.includes('writing') && pop >= 16) wants.push('library');
+  if (count('barracks') === 0 && c.stage === 'town' && pop >= 20) wants.push('barracks');
+  if (count('townhall') === 0 && c.stage === 'town' && pop >= 24) wants.push('townhall');
   for (const t of wants) {
     if (buildBlock(world, s, owner, t) === null) {
       const b = startBuilding(world, s, owner, t, tick);

@@ -1,3 +1,4 @@
+import { updateCulture } from './culture';
 import { updateUnrest } from './unrest';
 import { updateThoughts } from './thoughts';
 /**
@@ -379,6 +380,7 @@ export class Settlements {
   step(world: World, creatures: Creatures, tick: number): void {
     updateThoughts(creatures, tick, new Rng(tick));
     for (const s of this.list) if (s.civ) updateUnrest(s, s.civ, tick);
+    for (const s of this.list) if (s.civ) updateCulture(s, s.civ, tick);
     if (!this.list.length || tick % STEP_TICKS !== 0) return;
     this.creaturesRef = creatures;
     for (const [id, b] of this.bans) if (b.until <= tick) this.bans.delete(id);
