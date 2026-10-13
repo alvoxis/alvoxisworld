@@ -23,6 +23,7 @@ import type { Creatures } from './creatures';
 import { SPECIES, STATE } from './creatures';
 import { landClass, passable } from './pathfinding';
 import type { Settlement } from './settlements';
+import { chooseNextTech, RACE_BIAS, TECH_BY_ID } from './progress';
 
 export type BuildingType = 'house' | 'storehouse' | 'farm' | 'lumber' | 'quarry' | 'shipyard';
 export const BUILDING_TYPES: readonly BuildingType[] = ['house', 'farm', 'lumber', 'quarry', 'storehouse', 'shipyard'];
@@ -189,7 +190,11 @@ export interface Civ {
   stage: Stage;
   buildings: Building[];
   techs: TechId[];
+  /** Advanced technologies from the AI progress tree (optional, for saves). */
+  advanced: string[];
   research: { id: TechId; steps: number } | null;
+  /** Current advanced research. */
+  advancedResearch: { id: string; steps: number } | null;
   nextBuildingId: number;
   /** Food ran out and nobody has been told yet (reset when food is back). */
   famine: boolean;
@@ -212,8 +217,8 @@ export interface Civ {
 
 export function newCiv(): Civ {
   return {
-    food: START_KIT.food, wood: START_KIT.wood, stone: START_KIT.stone, knowledge: 0, stage: 'camp', buildings: [], techs: [],
-    research: null, nextBuildingId: 1, famine: false, rate: { food: 0, foodUse: 0, wood: 0, stone: 0, knowledge: 0 },
+    food: START_KIT.food, wood: START_KIT.wood, stone: START_KIT.stone, knowledge: 0, stage: 'camp', buildings: [], techs: [], advanced: [],
+    research: null, advancedResearch: null, nextBuildingId: 1, famine: false, rate: { food: 0, foodUse: 0, wood: 0, stone: 0, knowledge: 0 },
     jobs: [], skip: [], clear: [], roads: [], woodFlow: 0,
   };
 }
@@ -716,6 +721,14 @@ export function civStep(host: CivHost, s: Settlement): number {
     c.research = null;
     host.event(s, `${s.name} learned ${id}.`, 'settlement_tech', { name: s.name, tech: id });
   }
+  if (c.advancedResearch) {
+    const def = TECH_BY_ID[c.advancedResearch.id];
+    if (def && ++c.advancedResearch.steps >= def.steps) {
+      if (!c.advanced.includes(c.advancedResearch.id)) c.advanced.push(c.advancedResearch.id);
+      c.advancedResearch = null;
+      host.event(s, `${s.name} invented ${def.id}.`, 'settlement_tech', { name: s.name, tech: def.id });
+    }
+  }
 
   // 7. Stage.
   const stage = stageFor(s, c);
@@ -1094,6 +1107,23 @@ function autoManage(host: CivHost, s: Settlement): void {
         c.knowledge -= TECHS[id].knowledge;
         c.research = { id, steps: 0 };
         break;
+      }
+    }
+  }
+  // AI advanced research
+  if (!c.advancedResearch && c.knowledge > 40) {
+    const race = SPECIES[s.species]?.key ?? 'human';
+    const bias = RACE_BIAS[race] ?? {};
+    const next = chooseNextTech(c.advanced, c.knowledge, {
+      defense: c.food < 20 || s.stress > 8,
+      housing: s.members.length >= housing(c) - 2,
+      transport: c.stage === 'town',
+    }, bias);
+    if (next) {
+      const def = TECH_BY_ID[next];
+      if (def && c.knowledge >= def.knowledge) {
+        c.knowledge -= def.knowledge;
+        c.advancedResearch = { id: next, steps: 0 };
       }
     }
   }
