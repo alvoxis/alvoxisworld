@@ -1,3 +1,5 @@
+import { updateUnrest } from './unrest';
+import { updateThoughts } from './thoughts';
 /**
  * Settlements: the foundation for later states, research and diplomacy.
  *
@@ -13,7 +15,7 @@
  *    territory radius follows the population, and a settlement with no animals is abandoned.
  *  - Newborns of a member join at once (`onBirth`), so births are counted exactly.
  */
-import { hash2 } from '../core/rng';
+import { hash2, Rng } from '../core/rng';
 import { T, isWater } from '../world/terrain';
 import type { World } from '../world/world';
 import { SPECIES, STATE, type Creatures } from './creatures';
@@ -375,6 +377,8 @@ export class Settlements {
   // ---- periodic update --------------------------------------------------------
 
   step(world: World, creatures: Creatures, tick: number): void {
+    updateThoughts(creatures, tick, new Rng(tick));
+    for (const s of this.list) if (s.civ) updateUnrest(s, s.civ, tick);
     if (!this.list.length || tick % STEP_TICKS !== 0) return;
     this.creaturesRef = creatures;
     for (const [id, b] of this.bans) if (b.until <= tick) this.bans.delete(id);

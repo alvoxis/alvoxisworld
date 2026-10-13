@@ -13,6 +13,7 @@ import { KINGDOM_COLORS, type Kingdom } from '../sim/kingdoms';
 import { CENTRE_FREE, preparing, type Building, type BuildingType, type JobKind, type Stage } from '../sim/civ';
 import { OUTLINE_PAD, Tileset, creatureSprite, type Sprite } from './tileset';
 import { CREATURE_SCALE, creatureScale } from './creatureart';
+import { getThoughts } from '../sim/thoughts';
 import { BUILDING_SCALE, architectureOf, buildingDot, drawBuildingArt } from './architecture';
 import { LANDMARK_BOUNDS, LANDMARK_OVER_DOTS_BELOW, drawLandmark, landmarkBox, landmarkFireSide, landmarkGround, landmarkScaleFor, landmarkTop, shownResidents } from './landmarks';
 
@@ -532,6 +533,7 @@ export class Renderer {
       this.drawSettlements(overlay.settlements, camera, s, ox, oy, kc);
     }
     this.drawCreatures(camera, creatures, s, ox, oy, alpha, overlay);
+    this.drawThoughts(camera, creatures, s, ox, oy, alpha);
     // Far away creatures are dots and landmarks icons over them, so each settlement's main building stays
     // recognisable; the settlement's buildings under the icon and a few of its residents are drawn again on top.
     if (overlay?.settlementBorders && camera.zoom < LANDMARK_OVER_DOTS_BELOW) {
@@ -1497,6 +1499,35 @@ export class Renderer {
     ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
     ctx.fillStyle = frac > 0.5 ? '#5fd35f' : frac > 0.25 ? '#f2c14e' : '#e0533a';
     ctx.fillRect(bx, by, bw * frac, bh);
+  }
+
+  private drawThoughts(camera: Camera, cr: Creatures, s: number, ox: number, oy: number, alpha: number): void {
+    const thoughts = getThoughts();
+    if (!thoughts.length || camera.zoom < 2.5) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.font = Math.max(9, Math.round(s * 0.35)) + 'px sans-serif';
+    ctx.textAlign = 'center';
+    for (const t of thoughts) {
+      const idx = cr.indexOf(t.creatureId);
+      if (idx < 0) continue;
+      const x = cr.px[idx] + (cr.x[idx] - cr.px[idx]) * alpha;
+      const y = cr.py[idx] + (cr.y[idx] - cr.py[idx]) * alpha;
+      const px = Math.round(ox + x * s);
+      const py = Math.round(oy + y * s - s * 1.8);
+      const text = t.text.length > 28 ? t.text.slice(0, 26) + '…' : t.text;
+      const w = ctx.measureText(text).width + 12;
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(px - w / 2, py - 14, w, 18, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#222';
+      ctx.fillText(text, px, py);
+    }
+    ctx.restore();
   }
 }
 
