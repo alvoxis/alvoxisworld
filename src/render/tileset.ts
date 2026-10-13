@@ -1,4 +1,4 @@
-import { CREATURE_ART } from './creatureart';
+import { smoothCreature } from './smoothart';
 import { Rng } from '../core/rng';
 import { T, TERRAIN, TERRAIN_COUNT } from '../world/terrain';
 
@@ -252,31 +252,8 @@ export class Tileset {
  */
 export const OUTLINE_PAD = 1;
 export function creatureSprite(species: number, frame = 0): HTMLCanvasElement {
-  const art = CREATURE_ART[species] ?? CREATURE_ART[0];
-  const rows = art.frames[Math.min(frame, art.frames.length - 1)];
-  const w = rows[0].length;
-  const h = rows.length;
-  const c = document.createElement('canvas');
-  c.width = w + 2 * OUTLINE_PAD;
-  c.height = h + 2 * OUTLINE_PAD;
-  const ctx = c.getContext('2d')!;
-  const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && !!art.palette[rows[y][x]];
-  ctx.fillStyle = 'rgba(16,12,10,0.8)';
-  for (let y = -1; y <= h; y++) {
-    for (let x = -1; x <= w; x++) {
-      if (solid(x, y)) continue;
-      if (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1)) ctx.fillRect(x + OUTLINE_PAD, y + OUTLINE_PAD, 1, 1);
-    }
-  }
-  rows.forEach((row, y) => {
-    for (let x = 0; x < row.length; x++) {
-      const color = art.palette[row[x]];
-      if (!color) continue;
-      ctx.fillStyle = color;
-      ctx.fillRect(x + OUTLINE_PAD, y + OUTLINE_PAD, 1, 1);
-    }
-  });
-  return c;
+  // Smooth 2D version
+  return smoothCreature(species, frame);
 }
 
 /** A sprite in RGBA (premultiplied-free; alpha 0..255), drawn at 8 px per tile. */

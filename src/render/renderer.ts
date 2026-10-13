@@ -505,9 +505,9 @@ export class Renderer {
     ctx.fillStyle = '#10264a';
     ctx.fillRect(0, 0, cw, ch);
     // Zoomed far out the 1px map is shrunk: smoothing avoids shimmering speckle.
-    ctx.imageSmoothingEnabled = s < 1;
+    ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.base, Math.round(ox), Math.round(oy), Math.round(w.width * s), Math.round(w.height * s));
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;
 
     this.paintStats.lastFrame = 0;
     const budgetEnd = performance.now() + PAINT_BUDGET_MS;
@@ -692,7 +692,7 @@ export class Renderer {
     if (!this.trailCache.blocks.size) return;
     const ctx = this.ctx;
     const smooth = ctx.imageSmoothingEnabled;
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;
     const bw = Math.ceil(W / B);
     const vx0 = camera.x - B;
     const vy0 = camera.y - B;
@@ -887,7 +887,7 @@ export class Renderer {
   private drawKingdomTints(kc: KingdomCache, s: number, ox: number, oy: number): void {
     const ctx = this.ctx;
     const smooth = ctx.imageSmoothingEnabled;
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;
     for (const t of kc.tints.values()) ctx.drawImage(t.canvas, ox + t.x * s, oy + t.y * s, t.canvas.width * s, t.canvas.height * s);
     ctx.imageSmoothingEnabled = smooth;
   }
@@ -1387,7 +1387,7 @@ export class Renderer {
     order.sort((a, b) => ys[a] - ys[b] || a - b);
     const ctx = this.ctx;
     const smooth = ctx.imageSmoothingEnabled;
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;
     let t = 0;
     for (const i of order) {
       while (t < trees.length && trees[t].y <= ys[i]) this.drawTreeSprite(trees[t++], P, s, ox, oy);
