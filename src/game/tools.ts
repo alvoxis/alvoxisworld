@@ -1,5 +1,5 @@
 import { t, td, tn } from '../i18n';
-import { BEAR, DEER, ELF, FISH, GRAZER, HADROSAUR, HUMAN, ORCA, RABBIT, RAPTOR, SHARK, SPECIES, TYRANT, WHALE, WOLF } from '../sim/creatures';
+import { BEAR, DEER, DEMIGOD, DWARF, ELF, FISH, GNOME, GRAZER, HADROSAUR, HUMAN, MERFOLK, ORC, ORCA, RABBIT, RAPTOR, SHARK, SPECIES, TYRANT, WHALE, WOLF } from '../sim/creatures';
 import { EFFECTS } from '../sim/effects';
 import { Simulation } from '../sim/simulation';
 import { WEATHER_KIND } from '../sim/weather';
@@ -56,7 +56,7 @@ export interface LifeGroup {
   species: readonly number[];
 }
 export const LIFE_GROUPS: readonly LifeGroup[] = [
-  { id: 'peoples', section: 'land', icon: '👥', species: [HUMAN, ELF] },
+  { id: 'peoples', section: 'land', icon: '👥', species: [HUMAN, ELF, DWARF, GNOME, DEMIGOD, ORC, MERFOLK] },
   { id: 'herbivores', section: 'land', icon: '🦌', species: [GRAZER, DEER] },
   { id: 'small', section: 'land', icon: '🐇', species: [RABBIT] },
   { id: 'predators', section: 'land', icon: '🐺', species: [WOLF, BEAR] },
