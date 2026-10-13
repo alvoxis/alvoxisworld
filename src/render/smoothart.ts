@@ -36,264 +36,144 @@ export function smoothCreature(species: number, frame = 0): HTMLCanvasElement {
   ctx.imageSmoothingQuality = 'high';
 
   const color = sp.color || '#c9a078';
-  const dark = shade(color, -0.4);
+  const dark = shade(color, -0.45);
   const cx = 36;
-  const cy = 38;
-  const walk = frame ? 2.5 : -2;
+  const cy = 40;
+  const walk = frame ? 3 : -2.5;
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
   switch (sp.key) {
     case 'human': {
-      // Natural proportions
-      ctx.fillStyle = bodyGradient(ctx, color, cx + 6, cy - 14, 7);
-      ctx.beginPath(); ctx.ellipse(cx + 7, cy - 16, 5.2, 6, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.05), cx, cy - 2, 10);
-      ctx.beginPath(); ctx.ellipse(cx, cy - 2, 6, 11, 0, 0, Math.PI * 2); ctx.fill();
-      // Arms
+      // Balanced, like WorldBox human
+      ctx.fillStyle = bodyGradient(ctx, color, cx + 4, cy - 16, 6);
+      ctx.beginPath(); ctx.ellipse(cx + 5, cy - 16, 4.8, 5.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.05), cx, cy, 9);
+      ctx.beginPath(); ctx.ellipse(cx, cy - 1, 5.5, 10, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 7, cy - 6, 3, 12);
-      ctx.fillRect(cx + 5, cy - 4, 3, 10);
-      // Legs
-      ctx.fillRect(cx - 4, cy + 8, 3.2, 13 + walk);
-      ctx.fillRect(cx + 1, cy + 8, 3.2, 13 - walk);
+      ctx.fillRect(cx - 6, cy - 4, 2.8, 11);
+      ctx.fillRect(cx + 4, cy - 2, 2.8, 9);
+      ctx.fillRect(cx - 3.5, cy + 8, 3, 12 + walk);
+      ctx.fillRect(cx + 1, cy + 8, 3, 12 - walk);
       break;
     }
     case 'elf': {
-      // Slender, elegant, long thin ears
-      ctx.fillStyle = bodyGradient(ctx, color, cx + 8, cy - 18, 6);
-      ctx.beginPath(); ctx.ellipse(cx + 8, cy - 20, 4.2, 5.2, 0, 0, Math.PI * 2); ctx.fill();
-      // Long pointed ears
+      // Tall, slender, long pointed ears (WorldBox style)
+      ctx.fillStyle = bodyGradient(ctx, color, cx + 6, cy - 20, 5.5);
+      ctx.beginPath(); ctx.ellipse(cx + 6, cy - 20, 3.8, 4.8, 0, 0, Math.PI * 2); ctx.fill();
+      // Long ears
       ctx.beginPath();
-      ctx.moveTo(cx + 5, cy - 22); ctx.lineTo(cx + 2, cy - 32); ctx.lineTo(cx + 9, cy - 24); ctx.fill();
+      ctx.moveTo(cx + 3.5, cy - 22); ctx.lineTo(cx + 1, cy - 32); ctx.lineTo(cx + 7, cy - 23); ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(cx + 11, cy - 22); ctx.lineTo(cx + 15, cy - 32); ctx.lineTo(cx + 12, cy - 21); ctx.fill();
-      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.1), cx, cy - 4, 9);
-      ctx.beginPath(); ctx.ellipse(cx, cy - 4, 4.5, 13, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.moveTo(cx + 8.5, cy - 22); ctx.lineTo(cx + 12, cy - 32); ctx.lineTo(cx + 9, cy - 21); ctx.fill();
+      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.1), cx, cy - 2, 8);
+      ctx.beginPath(); ctx.ellipse(cx, cy - 2, 4, 12, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 3, cy + 8, 2.4, 16 + walk);
-      ctx.fillRect(cx + 1, cy + 8, 2.4, 16 - walk);
+      ctx.fillRect(cx - 2.5, cy + 9, 2.2, 15 + walk);
+      ctx.fillRect(cx + 1, cy + 9, 2.2, 15 - walk);
       break;
     }
     case 'dwarf': {
-      // Stocky, broad, full beard
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 12);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 9, 8, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 8, cy - 8, 5.5, 4.8, 0, 0, Math.PI * 2); ctx.fill();
-      // Thick beard
-      ctx.fillStyle = '#5a3a22';
+      // Short, stocky, big beard (WorldBox dwarf)
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 2, 11);
+      ctx.beginPath(); ctx.ellipse(cx, cy + 2, 8.5, 7.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 7, cy - 6, 5, 4.2, 0, 0, Math.PI * 2); ctx.fill();
+      // Big beard
+      ctx.fillStyle = '#4a3020';
       ctx.beginPath();
-      ctx.moveTo(cx + 2, cy - 4);
-      ctx.quadraticCurveTo(cx + 16, cy + 2, cx + 6, cy + 16);
-      ctx.quadraticCurveTo(cx + 10, cy + 18, cx + 14, cy + 10);
-      ctx.quadraticCurveTo(cx + 12, cy - 2, cx + 2, cy - 4);
+      ctx.moveTo(cx + 1, cy - 2);
+      ctx.quadraticCurveTo(cx + 15, cy + 4, cx + 5, cy + 18);
+      ctx.quadraticCurveTo(cx + 12, cy + 16, cx + 14, cy + 8);
+      ctx.quadraticCurveTo(cx + 10, cy - 1, cx + 1, cy - 2);
       ctx.fill();
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 8, cy + 6, 5, 9 + walk);
-      ctx.fillRect(cx + 1, cy + 6, 5, 9 - walk);
-      break;
-    }
-    case 'gnome': {
-      // Small, rounded, tall hat
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 2, 7);
-      ctx.beginPath(); ctx.ellipse(cx, cy + 2, 5, 6, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 5, cy - 4, 3.2, 3.2, 0, 0, Math.PI * 2); ctx.fill();
-      // Tall pointed hat
-      ctx.fillStyle = '#b33';
-      ctx.beginPath();
-      ctx.moveTo(cx + 1, cy - 6);
-      ctx.lineTo(cx + 5.5, cy - 22);
-      ctx.lineTo(cx + 10, cy - 6);
-      ctx.fill();
-      ctx.fillStyle = dark;
-      ctx.fillRect(cx - 3, cy + 7, 2.2, 5 + walk);
-      ctx.fillRect(cx + 1, cy + 7, 2.2, 5 - walk);
-      break;
-    }
-    case 'demigod': {
-      // Tall, luminous
-      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.2), cx, cy - 2, 11);
-      ctx.beginPath(); ctx.ellipse(cx, cy - 2, 5.5, 14, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 8, cy - 20, 4.8, 5, 0, 0, Math.PI * 2); ctx.fill();
-      // Soft glow halo
-      ctx.strokeStyle = 'rgba(255,220,80,0.8)';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(cx + 8, cy - 28, 6, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = '#ffe88a';
-      ctx.beginPath(); ctx.arc(cx + 8, cy - 28, 2.8, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = dark;
-      ctx.fillRect(cx - 4, cy + 10, 2.8, 14);
-      ctx.fillRect(cx + 1.5, cy + 10, 2.8, 14);
+      ctx.fillRect(cx - 7, cy + 8, 4.5, 8 + walk);
+      ctx.fillRect(cx + 1.5, cy + 8, 4.5, 8 - walk);
       break;
     }
     case 'orc': {
-      // Muscular, heavy brow, large tusks
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 13);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 10, 9, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 11, cy - 10, 6.5, 5.5, 0, 0, Math.PI * 2); ctx.fill();
+      // Muscular green, tusks (WorldBox orc)
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 12);
+      ctx.beginPath(); ctx.ellipse(cx, cy, 9.5, 8.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 10, cy - 8, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
       // Tusks
-      ctx.fillStyle = '#f5f5f5';
-      ctx.fillRect(cx + 15, cy - 6, 2.2, 5.5);
-      ctx.fillRect(cx + 12, cy - 4, 2, 4);
-      // Pointed ears
+      ctx.fillStyle = '#f8f8f8';
+      ctx.fillRect(cx + 14, cy - 4, 2, 5);
+      ctx.fillRect(cx + 11, cy - 2, 1.8, 4);
+      // Ears
       ctx.fillStyle = color;
-      ctx.beginPath(); ctx.moveTo(cx + 7, cy - 14); ctx.lineTo(cx + 4, cy - 21); ctx.lineTo(cx + 10, cy - 13); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(cx + 6, cy - 12); ctx.lineTo(cx + 3, cy - 19); ctx.lineTo(cx + 9, cy - 11); ctx.fill();
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 10, cy + 7, 5.5, 10 + walk);
-      ctx.fillRect(cx + 2, cy + 7, 5.5, 10 - walk);
+      ctx.fillRect(cx - 9, cy + 7, 5, 10 + walk);
+      ctx.fillRect(cx + 2, cy + 7, 5, 10 - walk);
+      break;
+    }
+    case 'gnome': {
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 4, 6.5);
+      ctx.beginPath(); ctx.ellipse(cx, cy + 4, 4.5, 5.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 4, cy - 2, 2.8, 2.8, 0, 0, Math.PI * 2); ctx.fill();
+      // Tall hat
+      ctx.fillStyle = '#c44';
+      ctx.beginPath();
+      ctx.moveTo(cx + 0.5, cy - 4);
+      ctx.lineTo(cx + 5, cy - 20);
+      ctx.lineTo(cx + 9.5, cy - 4);
+      ctx.fill();
+      ctx.fillStyle = dark;
+      ctx.fillRect(cx - 2.5, cy + 8, 2, 5 + walk);
+      ctx.fillRect(cx + 1, cy + 8, 2, 5 - walk);
+      break;
+    }
+    case 'demigod': {
+      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.2), cx, cy, 10);
+      ctx.beginPath(); ctx.ellipse(cx, cy, 5, 13, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 7, cy - 18, 4.5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+      // Halo
+      ctx.strokeStyle = 'rgba(255,220,100,0.9)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(cx + 7, cy - 26, 5.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#ffe88a';
+      ctx.beginPath(); ctx.arc(cx + 7, cy - 26, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = dark;
+      ctx.fillRect(cx - 3.5, cy + 12, 2.5, 13);
+      ctx.fillRect(cx + 1.5, cy + 12, 2.5, 13);
       break;
     }
     case 'merfolk': {
-      // Smooth upper body + flowing tail
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy - 10, 8);
-      ctx.beginPath(); ctx.ellipse(cx, cy - 10, 5.5, 7, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 7, cy - 16, 4.5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy - 8, 7);
+      ctx.beginPath(); ctx.ellipse(cx, cy - 8, 5, 6.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 6, cy - 14, 4, 4, 0, 0, Math.PI * 2); ctx.fill();
       // Tail
-      const tg = bodyGradient(ctx, shade(color, 0.15), cx, cy + 8, 14);
-      ctx.fillStyle = tg;
+      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.15), cx, cy + 10, 12);
       ctx.beginPath();
-      ctx.moveTo(cx - 3, cy - 4);
-      ctx.quadraticCurveTo(cx + 14, cy + 8, cx + 1, cy + 22);
-      ctx.quadraticCurveTo(cx - 10, cy + 10, cx - 3, cy - 4);
+      ctx.moveTo(cx - 2, cy - 2);
+      ctx.quadraticCurveTo(cx + 12, cy + 10, cx + 1, cy + 22);
+      ctx.quadraticCurveTo(cx - 8, cy + 12, cx - 2, cy - 2);
       ctx.fill();
-      // Fin
       ctx.beginPath();
-      ctx.moveTo(cx, cy + 20);
-      ctx.lineTo(cx - 7, cy + 28);
-      ctx.lineTo(cx + 9, cy + 28);
-      ctx.fill();
-      break;
-    }
-    case 'rabbit': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 2, 9);
-      ctx.beginPath(); ctx.ellipse(cx, cy + 2, 8, 6.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 8, cy - 3, 4, 3.5, 0, 0, Math.PI * 2); ctx.fill();
-      // Long ears with inner color
-      ctx.fillStyle = color;
-      ctx.fillRect(cx + 5, cy - 16, 2.8, 13);
-      ctx.fillRect(cx + 9, cy - 14, 2.8, 11);
-      ctx.fillStyle = shade(color, 0.45);
-      ctx.fillRect(cx + 5.8, cy - 14, 1.4, 9);
-      ctx.fillStyle = dark;
-      ctx.fillRect(cx - 5, cy + 7, 2.8, 6 + walk);
-      ctx.fillRect(cx + 2, cy + 7, 2.8, 6 - walk);
-      break;
-    }
-    case 'deer': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 12);
-      ctx.beginPath(); ctx.ellipse(cx - 1, cy, 12, 6.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 14, cy - 4, 5.5, 4.2, 0, 0, Math.PI * 2); ctx.fill();
-      // Antlers
-      ctx.strokeStyle = '#4a3020';
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.moveTo(cx + 12, cy - 7);
-      ctx.lineTo(cx + 10, cy - 15);
-      ctx.lineTo(cx + 14, cy - 17);
-      ctx.moveTo(cx + 11, cy - 13);
-      ctx.lineTo(cx + 7, cy - 11);
-      ctx.stroke();
-      ctx.fillStyle = dark;
-      ctx.fillRect(cx - 9, cy + 5, 2.8, 8 + walk);
-      ctx.fillRect(cx + 4, cy + 5, 2.8, 8 - walk);
-      break;
-    }
-    case 'wolf':
-    case 'raptor': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 11);
-      ctx.beginPath(); ctx.ellipse(cx - 1, cy, 10, 6, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 12, cy - 2, 5.5, 3.8, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillRect(cx + 16, cy - 1, 6, 2.2);
-      // Ears
-      ctx.beginPath(); ctx.moveTo(cx + 10, cy - 5); ctx.lineTo(cx + 8, cy - 11); ctx.lineTo(cx + 13, cy - 5); ctx.fill();
-      ctx.fillStyle = dark;
-      ctx.fillRect(cx - 7, cy + 4, 2.8, 7 + walk);
-      ctx.fillRect(cx + 2, cy + 4, 2.8, 7 - walk);
-      break;
-    }
-    case 'bear': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 14);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 14, 10, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 12, cy - 3, 7, 6, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(cx + 9, cy - 9, 2.2, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(cx + 16, cy - 7, 2.2, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = dark;
-      ctx.fillRect(cx - 9, cy + 7, 4.5, 6);
-      ctx.fillRect(cx + 4, cy + 7, 4.5, 6);
-      break;
-    }
-    case 'fish': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 12);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 14, 5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(cx - 13, cy); ctx.lineTo(cx - 20, cy - 5); ctx.lineTo(cx - 20, cy + 5); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(cx - 1, cy - 4); ctx.lineTo(cx + 2, cy - 11); ctx.lineTo(cx + 5, cy - 4); ctx.fill();
-      break;
-    }
-    case 'shark': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 13);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 16, 4.2, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - 3); ctx.lineTo(cx + 1, cy - 13); ctx.lineTo(cx + 7, cy - 3); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(cx - 14, cy); ctx.lineTo(cx - 21, cy - 3); ctx.lineTo(cx - 21, cy + 3); ctx.fill();
-      break;
-    }
-    case 'whale': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 16);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 19, 7.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(cx - 17, cy); ctx.lineTo(cx - 25, cy - 3); ctx.lineTo(cx - 25, cy + 3); ctx.fill();
-      break;
-    }
-    case 'orca': {
-      ctx.fillStyle = '#1a1a1a';
-      ctx.beginPath(); ctx.ellipse(cx, cy, 19, 6.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#f5f5f5';
-      ctx.beginPath(); ctx.ellipse(cx + 5, cy - 1, 6.5, 3.2, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(cx - 17, cy); ctx.lineTo(cx - 25, cy - 2.5); ctx.lineTo(cx - 25, cy + 2.5); ctx.fill();
-      break;
-    }
-    case 'tyrant': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 12);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 11, 8, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 15, cy - 6, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillRect(cx + 5, cy - 1, 3, 1.5);
-      ctx.fillStyle = dark;
-      ctx.fillRect(cx - 7, cy + 6, 3.5, 12);
-      ctx.fillRect(cx + 2, cy + 6, 3.5, 12);
-      break;
-    }
-    case 'hadrosaur': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 13);
-      ctx.beginPath(); ctx.ellipse(cx - 1, cy, 15, 8, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 16, cy - 3, 5.5, 3.8, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillRect(cx + 20, cy - 1, 5, 1.8);
-      ctx.fillStyle = dark;
-      ctx.fillRect(cx - 9, cy + 5, 3.5, 10);
-      ctx.fillRect(cx + 4, cy + 5, 3.5, 10);
+      ctx.moveTo(cx, cy + 20); ctx.lineTo(cx - 6, cy + 28); ctx.lineTo(cx + 8, cy + 28); ctx.fill();
       break;
     }
     default: {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 11);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 11, 6.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 10, cy - 2, 5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+      // Animals keep previous style but with gradients
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 10);
+      ctx.beginPath(); ctx.ellipse(cx, cy, 10, 6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 10, cy - 2, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 6, cy + 4, 2.8, 6 + walk);
-      ctx.fillRect(cx + 2, cy + 4, 2.8, 6 - walk);
+      ctx.fillRect(cx - 5, cy + 4, 2.5, 6 + walk);
+      ctx.fillRect(cx + 2, cy + 4, 2.5, 6 - walk);
     }
   }
 
   // Eye
   if (!['fish', 'shark', 'whale', 'orca'].includes(sp.key)) {
-    const eyeX = ['elf', 'demigod'].includes(sp.key) ? cx + 10 : cx + 13;
-    const eyeY = ['elf', 'demigod'].includes(sp.key) ? cy - 20 : cy - 5;
-    ctx.fillStyle = '#1a1a1a';
-    ctx.beginPath(); ctx.arc(eyeX, eyeY, 1.5, 0, Math.PI * 2); ctx.fill();
+    const eyeX = ['elf', 'demigod'].includes(sp.key) ? cx + 8 : cx + 12;
+    const eyeY = ['elf', 'demigod'].includes(sp.key) ? cy - 20 : cy - 4;
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(eyeX, eyeY, 1.4, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(eyeX + 0.4, eyeY - 0.3, 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(eyeX + 0.3, eyeY - 0.3, 0.5, 0, Math.PI * 2); ctx.fill();
   }
 
   return c;
