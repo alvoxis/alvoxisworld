@@ -40,30 +40,43 @@ export function assembleCreature(
   const bs = genome.bodyScale;
   const hs = genome.headScale;
 
-  // Body
-  bodyPart(race.bodyWidth * bs, race.bodyHeight * bs, 4).draw(ctx, cx, cy, 1, color);
+  const bw = race.bodyWidth * bs;
+  const bh = race.bodyHeight * bs;
+  // Torso
+  bodyPart(bw, bh * 0.7, 3).draw(ctx, cx, cy - 2, 1, color);
   // Head
-  headPart(6 * hs, 5.5 * hs).draw(ctx, cx + 4, cy - race.bodyHeight * 0.4, 1, color);
-  // Ears
-  if (race.hasEars) {
-    earPart(race.earLength, true).draw(ctx, cx - 2, cy - race.bodyHeight * 0.5, 1, color);
-    earPart(race.earLength, true).draw(ctx, cx + 10, cy - race.bodyHeight * 0.5, 1, color);
-  }
-  // Beard
-  if (race.hasBeard) beardPart(10).draw(ctx, cx + 2, cy - 2, 1, color);
-  // Tusks
-  if (race.hasTusks) {
-    tuskPart().draw(ctx, cx + 10, cy - 4, 1, color);
-    tuskPart().draw(ctx, cx + 8, cy - 2, 1, color);
-  }
-  // Legs (simple)
+  headPart(7 * hs, 6 * hs).draw(ctx, cx + 2, cy - bh * 0.5, 1, color);
+  // Arms
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.roundRect(cx - 4, cy + race.bodyHeight * 0.3, 3, 8 + walk, 1);
+  ctx.roundRect(cx - bw * 0.4, cy - bh * 0.2, 3, 8, 1);
   ctx.fill();
   ctx.beginPath();
-  ctx.roundRect(cx + 1, cy + race.bodyHeight * 0.3, 3, 8 - walk, 1);
+  ctx.roundRect(cx + bw * 0.25, cy - bh * 0.2, 3, 8, 1);
   ctx.fill();
+  // Ears
+  if (race.hasEars) {
+    earPart(race.earLength, true).draw(ctx, cx - 1, cy - bh * 0.55, 1, color);
+    earPart(race.earLength, true).draw(ctx, cx + 12, cy - bh * 0.55, 1, color);
+  }
+  // Beard
+  if (race.hasBeard) beardPart(12).draw(ctx, cx + 1, cy - 4, 1, color);
+  // Tusks
+  if (race.hasTusks) {
+    tuskPart().draw(ctx, cx + 9, cy - 6, 1, color);
+    tuskPart().draw(ctx, cx + 7, cy - 4, 1, color);
+  }
+  // Legs
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(cx - 3, cy + bh * 0.2, 3.5, 10 + walk, 1);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.roundRect(cx + 1, cy + bh * 0.2, 3.5, 10 - walk, 1);
+  ctx.fill();
+  // Simple clothing accent
+  ctx.fillStyle = '#3a2818';
+  ctx.fillRect(cx - 2, cy + 2, 6, 2);
 
   return c;
 }
