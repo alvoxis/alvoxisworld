@@ -3,6 +3,7 @@
  * Composes parts from parts.ts using race configs and a deterministic genome.
  */
 import { getRaceVisual } from './races';
+import { drawAnimal } from './animals';
 
 export interface Genome {
   paletteIndex: number;
@@ -35,6 +36,13 @@ export function assembleCreature(
   const color = race.palette[genome.paletteIndex % race.palette.length] || '#c9a078';
   const cx = 36;
   const cy = 42;
+
+  // Animals use dedicated silhouettes
+  const ANIMAL_KEYS = ['bear', 'deer', 'rabbit', 'wolf', 'fish', 'shark', 'whale', 'orca', 'grazer', 'raptor', 'hadrosaur', 'tyrant'];
+  if (ANIMAL_KEYS.includes(raceKey)) {
+    drawAnimal(ctx, raceKey, cx, cy, color, frame);
+    return c;
+  }
   const walk = frame === 1 ? 2 : 0;
   const isFar = frame === -1;
   const bs = genome.bodyScale;
