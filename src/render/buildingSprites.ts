@@ -4,8 +4,13 @@
 import { renderModelToSprite } from './modelSprites';
 
 const BUILDING_URLS: Record<string, string> = {
-  house: 'assets/buildings/house3.glb',
+  house: 'assets/buildings/house.glb',
+  house2: 'assets/buildings/house2.glb',
+  house3: 'assets/buildings/house3.glb',
   house4: 'assets/buildings/house4.glb',
+  house5: 'assets/buildings/house5.glb',
+  bank: 'assets/buildings/bank.glb',
+  shop: 'assets/buildings/shop.glb',
 };
 
 const cache = new Map<string, HTMLCanvasElement>();
