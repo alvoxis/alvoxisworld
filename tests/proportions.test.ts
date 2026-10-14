@@ -66,7 +66,9 @@ describe('creature size (drawing)', () => {
       for (const s of [48, 64, 96]) {
         const now = creatureScale(s, artW, !!sp.sentient, false, 2) * artW;
         const before = (s / 8) * artW; // one sprite pixel per terrain pixel
-        expect(now).toBeCloseTo(before * CREATURE_SCALE, 5);
+        const minPx = (sp.sentient ? 6 : 5) * 2;
+        const expected = Math.max(before * CREATURE_SCALE, minPx);
+        expect(now).toBeCloseTo(expected, 5);
         expect(creatureScale(s, artW, !!sp.sentient, true, 2)).toBeCloseTo(creatureScale(s, artW, !!sp.sentient, false, 2) * 0.75, 6);
       }
       // Far away the minimum size holds (people a little larger than animals).
