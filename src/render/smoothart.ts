@@ -46,67 +46,77 @@ export function smoothCreature(species: number, frame = 0): HTMLCanvasElement {
 
   switch (sp.key) {
     case 'human': {
-      // Balanced, like WorldBox human
-      ctx.fillStyle = bodyGradient(ctx, color, cx + 4, cy - 16, 6);
-      ctx.beginPath(); ctx.ellipse(cx + 5, cy - 16, 4.8, 5.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.05), cx, cy, 9);
-      ctx.beginPath(); ctx.ellipse(cx, cy - 1, 5.5, 10, 0, 0, Math.PI * 2); ctx.fill();
+      // Improved proportions and clothing
+      ctx.fillStyle = bodyGradient(ctx, color, cx + 5, cy - 17, 6);
+      ctx.beginPath(); ctx.ellipse(cx + 5, cy - 17, 4.5, 5.2, 0, 0, Math.PI * 2); ctx.fill();
+      // Torso with clothing
+      ctx.fillStyle = bodyGradient(ctx, shade(color, -0.1), cx, cy - 1, 9);
+      ctx.beginPath(); ctx.roundRect(cx - 5, cy - 10, 10, 16, 3); ctx.fill();
+      // Arms
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 6, cy - 4, 2.8, 11);
-      ctx.fillRect(cx + 4, cy - 2, 2.8, 9);
-      ctx.fillRect(cx - 3.5, cy + 8, 3, 12 + walk);
-      ctx.fillRect(cx + 1, cy + 8, 3, 12 - walk);
+      ctx.beginPath(); ctx.roundRect(cx - 8, cy - 6, 3, 10, 1.5); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 5, cy - 4, 3, 9, 1.5); ctx.fill();
+      // Legs with walk
+      ctx.beginPath(); ctx.roundRect(cx - 3.5, cy + 6, 3, 11 + walk, 1.5); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 0.5, cy + 6, 3, 11 - walk, 1.5); ctx.fill();
       break;
     }
     case 'elf': {
-      // Tall, slender, long pointed ears (WorldBox style)
-      ctx.fillStyle = bodyGradient(ctx, color, cx + 6, cy - 20, 5.5);
-      ctx.beginPath(); ctx.ellipse(cx + 6, cy - 20, 3.8, 4.8, 0, 0, Math.PI * 2); ctx.fill();
-      // Long ears
+      // Tall, elegant, long pointed ears
+      ctx.fillStyle = bodyGradient(ctx, color, cx + 6, cy - 22, 5);
+      ctx.beginPath(); ctx.ellipse(cx + 6, cy - 22, 3.5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+      // Long elegant ears
+      ctx.fillStyle = shade(color, 0.1);
       ctx.beginPath();
-      ctx.moveTo(cx + 3.5, cy - 22); ctx.lineTo(cx + 1, cy - 32); ctx.lineTo(cx + 7, cy - 23); ctx.fill();
+      ctx.moveTo(cx + 3, cy - 24); ctx.lineTo(cx + 0, cy - 36); ctx.lineTo(cx + 7, cy - 25); ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(cx + 8.5, cy - 22); ctx.lineTo(cx + 12, cy - 32); ctx.lineTo(cx + 9, cy - 21); ctx.fill();
-      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.1), cx, cy - 2, 8);
-      ctx.beginPath(); ctx.ellipse(cx, cy - 2, 4, 12, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.moveTo(cx + 9, cy - 24); ctx.lineTo(cx + 13, cy - 36); ctx.lineTo(cx + 10, cy - 23); ctx.fill();
+      // Slender body
+      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.05), cx, cy - 2, 7);
+      ctx.beginPath(); ctx.ellipse(cx, cy - 2, 3.5, 13, 0, 0, Math.PI * 2); ctx.fill();
+      // Thin arms and long legs
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 2.5, cy + 9, 2.2, 15 + walk);
-      ctx.fillRect(cx + 1, cy + 9, 2.2, 15 - walk);
+      ctx.beginPath(); ctx.roundRect(cx - 5, cy - 4, 2, 10, 1); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 3, cy - 2, 2, 9, 1); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx - 2, cy + 10, 1.8, 16 + walk, 1); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 0.5, cy + 10, 1.8, 16 - walk, 1); ctx.fill();
       break;
     }
     case 'dwarf': {
-      // Short, stocky, big beard (WorldBox dwarf)
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 2, 11);
-      ctx.beginPath(); ctx.ellipse(cx, cy + 2, 8.5, 7.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 7, cy - 6, 5, 4.2, 0, 0, Math.PI * 2); ctx.fill();
-      // Big beard
-      ctx.fillStyle = '#4a3020';
+      // Short, stocky, large beard
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 3, 12);
+      ctx.beginPath(); ctx.roundRect(cx - 8, cy - 4, 16, 14, 4); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 7, cy - 7, 4.5, 3.8, 0, 0, Math.PI * 2); ctx.fill();
+      // Thick beard
+      ctx.fillStyle = '#3a2010';
       ctx.beginPath();
-      ctx.moveTo(cx + 1, cy - 2);
-      ctx.quadraticCurveTo(cx + 15, cy + 4, cx + 5, cy + 18);
-      ctx.quadraticCurveTo(cx + 12, cy + 16, cx + 14, cy + 8);
-      ctx.quadraticCurveTo(cx + 10, cy - 1, cx + 1, cy - 2);
+      ctx.moveTo(cx + 2, cy - 1);
+      ctx.quadraticCurveTo(cx + 16, cy + 6, cx + 6, cy + 20);
+      ctx.quadraticCurveTo(cx + 14, cy + 18, cx + 15, cy + 6);
+      ctx.quadraticCurveTo(cx + 10, cy, cx + 2, cy - 1);
       ctx.fill();
+      // Short legs
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 7, cy + 8, 4.5, 8 + walk);
-      ctx.fillRect(cx + 1.5, cy + 8, 4.5, 8 - walk);
+      ctx.beginPath(); ctx.roundRect(cx - 6, cy + 9, 4, 7 + walk, 2); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 1, cy + 9, 4, 7 - walk, 2); ctx.fill();
       break;
     }
     case 'orc': {
-      // Muscular green, tusks (WorldBox orc)
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 12);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 9.5, 8.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 10, cy - 8, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
-      // Tusks
-      ctx.fillStyle = '#f8f8f8';
-      ctx.fillRect(cx + 14, cy - 4, 2, 5);
-      ctx.fillRect(cx + 11, cy - 2, 1.8, 4);
+      // Muscular, tusks, pointed ears
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 1, 13);
+      ctx.beginPath(); ctx.ellipse(cx, cy + 1, 10, 9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 11, cy - 9, 5.5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+      // Prominent tusks
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.roundRect(cx + 14, cy - 3, 2.2, 6, 1); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 11, cy - 1, 1.8, 5, 1); ctx.fill();
       // Ears
-      ctx.fillStyle = color;
-      ctx.beginPath(); ctx.moveTo(cx + 6, cy - 12); ctx.lineTo(cx + 3, cy - 19); ctx.lineTo(cx + 9, cy - 11); ctx.fill();
+      ctx.fillStyle = shade(color, -0.1);
+      ctx.beginPath(); ctx.moveTo(cx + 6, cy - 13); ctx.lineTo(cx + 2, cy - 21); ctx.lineTo(cx + 9, cy - 12); ctx.fill();
+      // Strong legs
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 9, cy + 7, 5, 10 + walk);
-      ctx.fillRect(cx + 2, cy + 7, 5, 10 - walk);
+      ctx.beginPath(); ctx.roundRect(cx - 8, cy + 8, 5, 10 + walk, 2); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 2, cy + 8, 5, 10 - walk, 2); ctx.fill();
       break;
     }
     case 'gnome': {
