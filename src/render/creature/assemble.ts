@@ -3,7 +3,6 @@
  * Composes parts from parts.ts using race configs and a deterministic genome.
  */
 import { getRaceVisual } from './races';
-import { bodyPart, headPart, earPart, beardPart, tuskPart } from './parts';
 
 export interface Genome {
   paletteIndex: number;
@@ -42,55 +41,89 @@ export function assembleCreature(
 
   const bw = race.bodyWidth * bs;
   const bh = race.bodyHeight * bs;
-  const headY = cy - bh * 0.55;
-  const torsoY = cy - bh * 0.15;
+  const headY = cy - bh * 0.6;
+  const torsoY = cy - bh * 0.1;
+  const skin = color;
+  const cloth = genome.paletteIndex === 1 ? '#5a4a3a' : genome.paletteIndex === 2 ? '#4a5a4a' : '#6a5a4a';
+  const boot = '#2a1a10';
+
+  // Legs (behind)
+  ctx.fillStyle = boot;
+  ctx.fillRect(cx - 3, torsoY + bh * 0.35, 4, 10 + walk);
+  ctx.fillRect(cx + 1, torsoY + bh * 0.35, 4, 10 - walk);
+  // Feet
+  ctx.fillRect(cx - 4, torsoY + bh * 0.35 + 9 + walk, 6, 2);
+  ctx.fillRect(cx, torsoY + bh * 0.35 + 9 - walk, 6, 2);
+
+  // Torso
+  ctx.fillStyle = cloth;
+  ctx.fillRect(cx - bw * 0.35, torsoY, bw * 0.7, bh * 0.45);
+  // Belt
+  ctx.fillStyle = '#3a2818';
+  ctx.fillRect(cx - bw * 0.3, torsoY + bh * 0.35, bw * 0.6, 2);
+
   // Neck
-  ctx.fillStyle = color;
-  ctx.fillRect(cx + 1, headY + 5, 4, 3);
-  // Torso (clothing color)
-  const cloth = genome.paletteIndex === 1 ? '#4a3a2a' : genome.paletteIndex === 2 ? '#3a4a3a' : '#5a4a3a';
-  bodyPart(bw * 0.8, bh * 0.55, 2).draw(ctx, cx, torsoY, 1, cloth);
+  ctx.fillStyle = skin;
+  ctx.fillRect(cx - 2, headY + 6, 6, 4);
+
   // Head
-  headPart(8 * hs, 7 * hs).draw(ctx, cx, headY, 1, color);
-  // Face details
-  ctx.fillStyle = '#2a1a10';
-  ctx.fillRect(cx + 2, headY + 2, 1, 1); // eye
-  ctx.fillRect(cx + 5, headY + 2, 1, 1); // eye
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.ellipse(cx + 1, headY + 2, 6 * hs, 5.5 * hs, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = '#1a1008';
+  ctx.fillRect(cx - 1, headY, 2, 2);
+  ctx.fillRect(cx + 3, headY, 2, 2);
+
   // Arms
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.roundRect(cx - bw * 0.45, torsoY, 3, 7, 1);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.roundRect(cx + bw * 0.3, torsoY, 3, 7, 1);
-  ctx.fill();
+  ctx.fillStyle = skin;
+  ctx.fillRect(cx - bw * 0.5, torsoY + 2, 4, 8);
+  ctx.fillRect(cx + bw * 0.35, torsoY + 2, 4, 8);
   // Hands
-  ctx.fillRect(cx - bw * 0.45, torsoY + 6, 3, 2);
-  ctx.fillRect(cx + bw * 0.3, torsoY + 6, 3, 2);
-  // Ears
+  ctx.fillRect(cx - bw * 0.5, torsoY + 9, 4, 2);
+  ctx.fillRect(cx + bw * 0.35, torsoY + 9, 4, 2);
+
+  // Ears (pointed for elves/orcs)
   if (race.hasEars) {
-    earPart(race.earLength, true).draw(ctx, cx - 3, headY, 1, color);
-    earPart(race.earLength, true).draw(ctx, cx + 10, headY, 1, color);
+    ctx.fillStyle = skin;
+    ctx.beginPath();
+    ctx.moveTo(cx - 5, headY);
+    ctx.lineTo(cx - 5 - race.earLength * 0.3, headY - race.earLength * 0.6);
+    ctx.lineTo(cx - 3, headY + 1);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx + 7, headY);
+    ctx.lineTo(cx + 7 + race.earLength * 0.3, headY - race.earLength * 0.6);
+    ctx.lineTo(cx + 5, headY + 1);
+    ctx.fill();
   }
-  // Beard
-  if (race.hasBeard) beardPart(10).draw(ctx, cx, headY + 4, 1, color);
-  // Tusks
+
+  // Beard (dwarves)
+  if (race.hasBeard) {
+    ctx.fillStyle = '#4a3020';
+    ctx.beginPath();
+    ctx.moveTo(cx - 4, headY + 4);
+    ctx.lineTo(cx + 6, headY + 4);
+    ctx.lineTo(cx + 2, headY + 14);
+    ctx.fill();
+  }
+
+  // Tusks (orcs)
   if (race.hasTusks) {
-    tuskPart().draw(ctx, cx + 8, headY + 3, 1, color);
-    tuskPart().draw(ctx, cx + 6, headY + 4, 1, color);
+    ctx.fillStyle = '#f0f0e0';
+    ctx.fillRect(cx + 4, headY + 3, 2, 5);
+    ctx.fillRect(cx + 1, headY + 4, 2, 4);
   }
-  // Legs
-  ctx.fillStyle = '#3a2818'; // boots
-  ctx.beginPath();
-  ctx.roundRect(cx - 2, torsoY + bh * 0.4, 4, 9 + walk, 1);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.roundRect(cx + 2, torsoY + bh * 0.4, 4, 9 - walk, 1);
-  ctx.fill();
-  // Shoes
-  ctx.fillStyle = '#2a1a10';
-  ctx.fillRect(cx - 3, torsoY + bh * 0.4 + 8 + walk, 5, 2);
-  ctx.fillRect(cx + 1, torsoY + bh * 0.4 + 8 - walk, 5, 2);
+
+  // Merfolk tail accent
+  if (raceKey === 'merfolk') {
+    ctx.fillStyle = '#4a8aaa';
+    ctx.beginPath();
+    ctx.ellipse(cx + 1, torsoY + bh * 0.5, 5, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   return c;
 }
