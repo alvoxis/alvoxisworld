@@ -72,10 +72,15 @@ export function assembleCreature(
   ctx.ellipse(cx + 1, headY + 2, 6 * hs, 5.5 * hs, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  // Hair
+  ctx.fillStyle = genome.paletteIndex === 0 ? '#3a2010' : genome.paletteIndex === 1 ? '#1a1008' : '#5a4030';
+  ctx.fillRect(cx - 4, headY - 4, 10, 4);
   // Eyes
   ctx.fillStyle = '#1a1008';
-  ctx.fillRect(cx - 1, headY, 2, 2);
-  ctx.fillRect(cx + 3, headY, 2, 2);
+  ctx.fillRect(cx - 1, headY + 1, 2, 2);
+  ctx.fillRect(cx + 3, headY + 1, 2, 2);
+  // Mouth
+  ctx.fillRect(cx + 1, headY + 4, 2, 1);
 
   // Arms
   ctx.fillStyle = skin;
