@@ -42,41 +42,55 @@ export function assembleCreature(
 
   const bw = race.bodyWidth * bs;
   const bh = race.bodyHeight * bs;
-  // Torso
-  bodyPart(bw, bh * 0.7, 3).draw(ctx, cx, cy - 2, 1, color);
+  const headY = cy - bh * 0.55;
+  const torsoY = cy - bh * 0.15;
+  // Neck
+  ctx.fillStyle = color;
+  ctx.fillRect(cx + 1, headY + 5, 4, 3);
+  // Torso (clothing color)
+  const cloth = genome.paletteIndex === 1 ? '#4a3a2a' : genome.paletteIndex === 2 ? '#3a4a3a' : '#5a4a3a';
+  bodyPart(bw * 0.8, bh * 0.55, 2).draw(ctx, cx, torsoY, 1, cloth);
   // Head
-  headPart(7 * hs, 6 * hs).draw(ctx, cx + 2, cy - bh * 0.5, 1, color);
+  headPart(8 * hs, 7 * hs).draw(ctx, cx, headY, 1, color);
+  // Face details
+  ctx.fillStyle = '#2a1a10';
+  ctx.fillRect(cx + 2, headY + 2, 1, 1); // eye
+  ctx.fillRect(cx + 5, headY + 2, 1, 1); // eye
   // Arms
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.roundRect(cx - bw * 0.4, cy - bh * 0.2, 3, 8, 1);
+  ctx.roundRect(cx - bw * 0.45, torsoY, 3, 7, 1);
   ctx.fill();
   ctx.beginPath();
-  ctx.roundRect(cx + bw * 0.25, cy - bh * 0.2, 3, 8, 1);
+  ctx.roundRect(cx + bw * 0.3, torsoY, 3, 7, 1);
   ctx.fill();
+  // Hands
+  ctx.fillRect(cx - bw * 0.45, torsoY + 6, 3, 2);
+  ctx.fillRect(cx + bw * 0.3, torsoY + 6, 3, 2);
   // Ears
   if (race.hasEars) {
-    earPart(race.earLength, true).draw(ctx, cx - 1, cy - bh * 0.55, 1, color);
-    earPart(race.earLength, true).draw(ctx, cx + 12, cy - bh * 0.55, 1, color);
+    earPart(race.earLength, true).draw(ctx, cx - 3, headY, 1, color);
+    earPart(race.earLength, true).draw(ctx, cx + 10, headY, 1, color);
   }
   // Beard
-  if (race.hasBeard) beardPart(12).draw(ctx, cx + 1, cy - 4, 1, color);
+  if (race.hasBeard) beardPart(10).draw(ctx, cx, headY + 4, 1, color);
   // Tusks
   if (race.hasTusks) {
-    tuskPart().draw(ctx, cx + 9, cy - 6, 1, color);
-    tuskPart().draw(ctx, cx + 7, cy - 4, 1, color);
+    tuskPart().draw(ctx, cx + 8, headY + 3, 1, color);
+    tuskPart().draw(ctx, cx + 6, headY + 4, 1, color);
   }
   // Legs
-  ctx.fillStyle = color;
+  ctx.fillStyle = '#3a2818'; // boots
   ctx.beginPath();
-  ctx.roundRect(cx - 3, cy + bh * 0.2, 3.5, 10 + walk, 1);
+  ctx.roundRect(cx - 2, torsoY + bh * 0.4, 4, 9 + walk, 1);
   ctx.fill();
   ctx.beginPath();
-  ctx.roundRect(cx + 1, cy + bh * 0.2, 3.5, 10 - walk, 1);
+  ctx.roundRect(cx + 2, torsoY + bh * 0.4, 4, 9 - walk, 1);
   ctx.fill();
-  // Simple clothing accent
-  ctx.fillStyle = '#3a2818';
-  ctx.fillRect(cx - 2, cy + 2, 6, 2);
+  // Shoes
+  ctx.fillStyle = '#2a1a10';
+  ctx.fillRect(cx - 3, torsoY + bh * 0.4 + 8 + walk, 5, 2);
+  ctx.fillRect(cx + 1, torsoY + bh * 0.4 + 8 - walk, 5, 2);
 
   return c;
 }
