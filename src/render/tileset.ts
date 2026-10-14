@@ -251,9 +251,9 @@ export class Tileset {
  * ground. The canvas is the art plus a 1-pixel margin on every side (OUTLINE_PAD).
  */
 export const OUTLINE_PAD = 1;
-export function creatureSprite(species: number, frame = 0): HTMLCanvasElement {
-  // Smooth 2D version
-  return smoothCreatureModular(species, frame, species);
+export function creatureSprite(species: number, frame = 0, seed?: number): HTMLCanvasElement {
+  // Use creature ID for individual appearance when provided
+  return smoothCreatureModular(species, frame, seed ?? species);
 }
 
 /** A sprite in RGBA (premultiplied-free; alpha 0..255), drawn at 8 px per tile. */
