@@ -3,6 +3,7 @@
  * Uses gradients, organic proportions and clearer anatomical features.
  */
 import { SPECIES } from '../sim/creatures';
+import { getRaceVisual } from './creature/races';
 
 export const SMOOTH_SIZE = 72;
 
@@ -28,14 +29,15 @@ function bodyGradient(ctx: CanvasRenderingContext2D, color: string, x: number, y
 }
 
 /** Draw a realistic-looking creature sprite facing right. */
-export function smoothCreature(species: number, frame = 0): HTMLCanvasElement {
+export function smoothCreature(species: number, frame = 0, variant = 0): HTMLCanvasElement {
   const sp = SPECIES[species] ?? SPECIES[0];
   const c = makeCanvas(SMOOTH_SIZE, SMOOTH_SIZE);
   const ctx = c.getContext('2d')!;
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  const color = sp.color || '#c9a078';
+  const race = getRaceVisual(sp.key);
+  const color = race.palette[variant % race.palette.length] || sp.color || '#c9a078';
   const dark = shade(color, -0.5);
   const cx = 36;
   const cy = 42;
