@@ -1,43 +1,65 @@
 {
   "team": "ALVOXIS Development Team",
-  "version": "1.0",
+  "version": "1.1",
+  "updated": "2026-10-14",
   "agents": [
     {
       "id": "3c8db537-ea5c-4cee-96b8-03d7714ed1ca",
       "name": "project-auditor",
       "role": "Code analysis and bug finding",
       "access": "read-only",
-      "output": "problem, evidence, file, severity, recommended fix"
+      "output": "problem, evidence, file, severity, recommended fix",
+      "repoAccess": true
     },
     {
       "id": "2da03fc3-b10a-4cc7-950f-59c829baf64a",
       "name": "game-architect",
       "role": "System design for creatures, races, buildings",
       "access": "research only",
-      "output": "architectural proposals with module boundaries"
+      "output": "architectural proposals with module boundaries",
+      "repoAccess": true
     },
     {
       "id": "d33f3ea1-76a9-4098-95cd-9cc4be497515",
       "name": "game-designer",
       "role": "Visual requirements for 2D creatures and buildings",
       "access": "research only",
-      "output": "concrete technical specs"
+      "output": "concrete technical specs",
+      "repoAccess": true
     },
     {
       "id": "42e59bb2-eb7b-4b32-929c-41096ba2ccbb",
       "name": "implementation-engineer",
       "role": "Code implementation and integration",
       "access": "write",
-      "output": "code diffs and integration notes"
+      "output": "code diffs and integration notes",
+      "repoAccess": true
     },
     {
       "id": "7de9517a-8a16-4a01-b244-09400a348eb5",
       "name": "qa-reviewer",
       "role": "Independent testing and regression checks",
       "access": "read + test execution",
-      "output": "test results and evidence of issues"
+      "output": "test results and evidence of issues",
+      "repoAccess": true
+    },
+    {
+      "id": "d13cb312-82ec-49a8-94dd-87a466eef2a1",
+      "name": "performance-engineer",
+      "role": "Rendering performance and mobile optimization",
+      "access": "read + profiling",
+      "output": "findings with evidence",
+      "repoAccess": true
+    },
+    {
+      "id": "cd5246fc-4a37-4b6a-8d3e-bf63c7361463",
+      "name": "grok-lead",
+      "role": "Coordination, integration, quality control and Git",
+      "access": "full",
+      "output": "verified final results",
+      "repoAccess": true
     }
   ],
   "workflow": "Audit -> Plan -> Implement -> Review -> Test -> Integrate",
-  "notes": "Agents are Grok Bots. They have their own computers and need the repo cloned or files provided. Performance-engineer and grok-lead were rate-limited during creation."
+  "notes": "All agents are Grok Bots with their own computers. Each has cloned https://github.com/alvoxis/alvoxisworld and confirmed access during testing."
 }
