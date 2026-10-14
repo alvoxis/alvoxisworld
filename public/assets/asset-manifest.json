@@ -1,0 +1,12 @@
+{
+  "version": "0.48.0",
+  "assets": [
+    {"id": "wolf", "category": "creature", "species": "wolf", "file": "creatures/wolf.glb", "license": "CC0", "source": "Quaternius", "size": "1.9MB", "animated": true},
+    {"id": "deer", "category": "creature", "species": "deer", "file": "creatures/deer.glb", "license": "CC0", "source": "Quaternius", "size": "2.0MB", "animated": true},
+    {"id": "fox", "category": "creature", "species": "fox", "file": "creatures/fox.glb", "license": "CC0", "source": "Quaternius", "size": "1.9MB", "animated": true},
+    {"id": "bear", "category": "creature", "species": "bear", "file": "creatures/bear.glb", "license": "CC0", "source": "Kenney", "size": "12KB", "animated": false},
+    {"id": "shark", "category": "creature", "species": "shark", "file": "creatures/shark.glb", "license": "CC0", "source": "Gobkit", "size": "62KB", "animated": false},
+    {"id": "trex", "category": "creature", "species": "tyrant", "file": "creatures/trex.glb", "license": "CC0", "source": "Quaternius", "size": "93KB", "animated": true},
+    {"id": "house", "category": "building", "species": "house", "file": "buildings/house.gltf", "license": "CC0", "source": "Tiny Treats", "size": "191KB", "animated": false}
+  ]
+}
