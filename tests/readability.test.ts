@@ -7,9 +7,9 @@ describe('creature readability', () => {
   });
 
   it('at default zoom creatures are at least 8 CSS px', () => {
-    const zoom = 16;
+    const zoom = 24;
     const tiles = 0.49;
     const cssPx = tiles * zoom;
-    expect(cssPx).toBeGreaterThanOrEqual(7);
+    expect(cssPx).toBeGreaterThanOrEqual(10);
   });
 });
