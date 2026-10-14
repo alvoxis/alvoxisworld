@@ -253,7 +253,7 @@ export class Tileset {
 export const OUTLINE_PAD = 1;
 export function creatureSprite(species: number, frame = 0): HTMLCanvasElement {
   // Smooth 2D version
-  return smoothCreature(species, frame, species % 3);
+  return smoothCreature(species, frame, (species * 7 + frame) % 3);
 }
 
 /** A sprite in RGBA (premultiplied-free; alpha 0..255), drawn at 8 px per tile. */

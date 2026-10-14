@@ -283,9 +283,13 @@ export function silhouette(species: number, frame = 0): string[] {
 export const CREATURE_SCALE = 0.25;
 export const MIN_SPRITE_PX = 5;
 export const MIN_PERSON_PX = 6;
+/** Smooth sprites are 72px; formula was written for ~8px pixel art. */
+export const SPRITE_ART_SIZE = 72;
 
 /** Device pixels per sprite pixel for a creature at s device pixels per tile. */
 export function creatureScale(s: number, artW: number, sentient: boolean, juvenile: boolean, dpr: number): number {
   const minW = (sentient ? MIN_PERSON_PX : MIN_SPRITE_PX) * dpr;
-  return Math.max((s / 8) * CREATURE_SCALE, minW / artW) * (juvenile ? 0.75 : 1);
+  // Use SPRITE_ART_SIZE so 72px canvas maps to ~0.25 tile at close zoom
+  const base = (s / SPRITE_ART_SIZE) * CREATURE_SCALE;
+  return Math.max(base, minW / artW) * (juvenile ? 0.75 : 1);
 }
