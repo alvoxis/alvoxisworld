@@ -4,6 +4,7 @@
  */
 import { SPECIES } from '../sim/creatures';
 import { getRaceVisual } from './creature/races';
+import { assembleCreature, genomeFromSeed } from './creature/assemble';
 
 export const SMOOTH_SIZE = 72;
 
@@ -26,6 +27,13 @@ function bodyGradient(ctx: CanvasRenderingContext2D, color: string, x: number, y
   g.addColorStop(0.6, color);
   g.addColorStop(1, shade(color, -0.4));
   return g;
+}
+
+/** Draw a creature sprite. Uses modular assembly when available. */
+export function smoothCreatureModular(species: number, frame = 0, seed = 0): HTMLCanvasElement {
+  const sp = SPECIES[species] ?? SPECIES[0];
+  const genome = genomeFromSeed(seed);
+  return assembleCreature(sp.key, genome, frame);
 }
 
 /** Draw a realistic-looking creature sprite facing right. */

@@ -1,4 +1,4 @@
-import { smoothCreature } from './smoothart';
+import { smoothCreatureModular } from './smoothart';
 import { Rng } from '../core/rng';
 import { T, TERRAIN, TERRAIN_COUNT } from '../world/terrain';
 
@@ -253,7 +253,7 @@ export class Tileset {
 export const OUTLINE_PAD = 1;
 export function creatureSprite(species: number, frame = 0): HTMLCanvasElement {
   // Smooth 2D version
-  return smoothCreature(species, frame, (species * 7 + frame) % 3);
+  return smoothCreatureModular(species, frame, species);
 }
 
 /** A sprite in RGBA (premultiplied-free; alpha 0..255), drawn at 8 px per tile. */
