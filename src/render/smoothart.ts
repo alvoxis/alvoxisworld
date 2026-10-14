@@ -36,154 +36,147 @@ export function smoothCreature(species: number, frame = 0): HTMLCanvasElement {
   ctx.imageSmoothingQuality = 'high';
 
   const color = sp.color || '#c9a078';
-  const dark = shade(color, -0.45);
+  const dark = shade(color, -0.5);
   const cx = 36;
-  const cy = 40;
-  const walk = frame ? 3 : -2.5;
+  const cy = 42;
+  const walk = frame ? 4 : -3;
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  ctx.lineWidth = 2.5;
 
+  // Chunky cartoon style like Butcher Hero: big heads, simple shapes, bold outlines
   switch (sp.key) {
     case 'human': {
-      // Improved proportions and clothing
-      ctx.fillStyle = bodyGradient(ctx, color, cx + 5, cy - 17, 6);
-      ctx.beginPath(); ctx.ellipse(cx + 5, cy - 17, 4.5, 5.2, 0, 0, Math.PI * 2); ctx.fill();
-      // Torso with clothing
-      ctx.fillStyle = bodyGradient(ctx, shade(color, -0.1), cx, cy - 1, 9);
-      ctx.beginPath(); ctx.roundRect(cx - 5, cy - 10, 10, 16, 3); ctx.fill();
+      // Big head, chubby body
+      ctx.fillStyle = bodyGradient(ctx, color, cx + 4, cy - 14, 8);
+      ctx.beginPath(); ctx.ellipse(cx + 4, cy - 14, 7, 6.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = dark; ctx.stroke();
+      ctx.fillStyle = bodyGradient(ctx, shade(color, -0.05), cx, cy + 2, 10);
+      ctx.beginPath(); ctx.roundRect(cx - 7, cy - 6, 14, 16, 5); ctx.fill();
+      ctx.stroke();
       // Arms
       ctx.fillStyle = dark;
-      ctx.beginPath(); ctx.roundRect(cx - 8, cy - 6, 3, 10, 1.5); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(cx + 5, cy - 4, 3, 9, 1.5); ctx.fill();
-      // Legs with walk
-      ctx.beginPath(); ctx.roundRect(cx - 3.5, cy + 6, 3, 11 + walk, 1.5); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(cx + 0.5, cy + 6, 3, 11 - walk, 1.5); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx - 11, cy - 2, 5, 9, 2.5); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 6, cy, 5, 8, 2.5); ctx.fill();
+      // Legs
+      ctx.beginPath(); ctx.roundRect(cx - 5, cy + 10, 4.5, 10 + walk, 2); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 0.5, cy + 10, 4.5, 10 - walk, 2); ctx.fill();
       break;
     }
     case 'elf': {
-      // Tall, elegant, long pointed ears
-      ctx.fillStyle = bodyGradient(ctx, color, cx + 6, cy - 22, 5);
-      ctx.beginPath(); ctx.ellipse(cx + 6, cy - 22, 3.5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
-      // Long elegant ears
+      // Big head, tall ears, slender body
+      ctx.fillStyle = bodyGradient(ctx, color, cx + 5, cy - 16, 6);
+      ctx.beginPath(); ctx.ellipse(cx + 5, cy - 16, 5.5, 5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = dark; ctx.stroke();
+      // Long ears
       ctx.fillStyle = shade(color, 0.1);
       ctx.beginPath();
-      ctx.moveTo(cx + 3, cy - 24); ctx.lineTo(cx + 0, cy - 36); ctx.lineTo(cx + 7, cy - 25); ctx.fill();
+      ctx.moveTo(cx + 1, cy - 18); ctx.lineTo(cx - 2, cy - 32); ctx.lineTo(cx + 6, cy - 17); ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(cx + 9, cy - 24); ctx.lineTo(cx + 13, cy - 36); ctx.lineTo(cx + 10, cy - 23); ctx.fill();
-      // Slender body
-      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.05), cx, cy - 2, 7);
-      ctx.beginPath(); ctx.ellipse(cx, cy - 2, 3.5, 13, 0, 0, Math.PI * 2); ctx.fill();
-      // Thin arms and long legs
+      ctx.moveTo(cx + 9, cy - 18); ctx.lineTo(cx + 13, cy - 32); ctx.lineTo(cx + 10, cy - 16); ctx.fill();
+      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.05), cx, cy, 7);
+      ctx.beginPath(); ctx.ellipse(cx, cy, 4.5, 12, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.stroke();
       ctx.fillStyle = dark;
-      ctx.beginPath(); ctx.roundRect(cx - 5, cy - 4, 2, 10, 1); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(cx + 3, cy - 2, 2, 9, 1); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(cx - 2, cy + 10, 1.8, 16 + walk, 1); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(cx + 0.5, cy + 10, 1.8, 16 - walk, 1); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx - 2.5, cy + 11, 2.2, 14 + walk, 1); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 0.5, cy + 11, 2.2, 14 - walk, 1); ctx.fill();
       break;
     }
     case 'dwarf': {
-      // Short, stocky, large beard
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 3, 12);
-      ctx.beginPath(); ctx.roundRect(cx - 8, cy - 4, 16, 14, 4); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 7, cy - 7, 4.5, 3.8, 0, 0, Math.PI * 2); ctx.fill();
-      // Thick beard
+      // Very chubby, huge beard
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 2, 12);
+      ctx.beginPath(); ctx.roundRect(cx - 10, cy - 6, 20, 16, 6); ctx.fill();
+      ctx.strokeStyle = dark; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx + 6, cy - 8, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.stroke();
+      // Massive beard
       ctx.fillStyle = '#3a2010';
       ctx.beginPath();
-      ctx.moveTo(cx + 2, cy - 1);
-      ctx.quadraticCurveTo(cx + 16, cy + 6, cx + 6, cy + 20);
-      ctx.quadraticCurveTo(cx + 14, cy + 18, cx + 15, cy + 6);
-      ctx.quadraticCurveTo(cx + 10, cy, cx + 2, cy - 1);
+      ctx.moveTo(cx + 1, cy - 2);
+      ctx.quadraticCurveTo(cx + 18, cy + 8, cx + 5, cy + 22);
+      ctx.quadraticCurveTo(cx + 16, cy + 20, cx + 16, cy + 6);
+      ctx.quadraticCurveTo(cx + 10, cy, cx + 1, cy - 2);
       ctx.fill();
-      // Short legs
+      ctx.strokeStyle = '#2a1508'; ctx.stroke();
       ctx.fillStyle = dark;
-      ctx.beginPath(); ctx.roundRect(cx - 6, cy + 9, 4, 7 + walk, 2); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(cx + 1, cy + 9, 4, 7 - walk, 2); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx - 7, cy + 9, 5, 7 + walk, 2); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 1, cy + 9, 5, 7 - walk, 2); ctx.fill();
       break;
     }
     case 'orc': {
-      // Muscular, tusks, pointed ears
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 1, 13);
-      ctx.beginPath(); ctx.ellipse(cx, cy + 1, 10, 9, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 11, cy - 9, 5.5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
-      // Prominent tusks
+      // Big, muscular, tusks
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 1, 14);
+      ctx.beginPath(); ctx.ellipse(cx, cy + 1, 11, 10, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = dark; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx + 10, cy - 10, 6.5, 5.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.stroke();
+      // Big tusks
       ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.roundRect(cx + 14, cy - 3, 2.2, 6, 1); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(cx + 11, cy - 1, 1.8, 5, 1); ctx.fill();
-      // Ears
-      ctx.fillStyle = shade(color, -0.1);
-      ctx.beginPath(); ctx.moveTo(cx + 6, cy - 13); ctx.lineTo(cx + 2, cy - 21); ctx.lineTo(cx + 9, cy - 12); ctx.fill();
-      // Strong legs
+      ctx.beginPath(); ctx.roundRect(cx + 14, cy - 4, 2.8, 7, 1.2); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 11, cy - 1, 2.2, 6, 1); ctx.fill();
       ctx.fillStyle = dark;
-      ctx.beginPath(); ctx.roundRect(cx - 8, cy + 8, 5, 10 + walk, 2); ctx.fill();
-      ctx.beginPath(); ctx.roundRect(cx + 2, cy + 8, 5, 10 - walk, 2); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx - 9, cy + 9, 6, 10 + walk, 2); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 2, cy + 9, 6, 10 - walk, 2); ctx.fill();
       break;
     }
     case 'gnome': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 4, 6.5);
-      ctx.beginPath(); ctx.ellipse(cx, cy + 4, 4.5, 5.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 4, cy - 2, 2.8, 2.8, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy + 4, 7);
+      ctx.beginPath(); ctx.ellipse(cx, cy + 4, 5.5, 6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = dark; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx + 3, cy - 2, 3.5, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.stroke();
       // Tall hat
       ctx.fillStyle = '#c44';
       ctx.beginPath();
-      ctx.moveTo(cx + 0.5, cy - 4);
-      ctx.lineTo(cx + 5, cy - 20);
-      ctx.lineTo(cx + 9.5, cy - 4);
+      ctx.moveTo(cx - 1, cy - 4);
+      ctx.lineTo(cx + 4, cy - 22);
+      ctx.lineTo(cx + 9, cy - 4);
       ctx.fill();
+      ctx.stroke();
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 2.5, cy + 8, 2, 5 + walk);
-      ctx.fillRect(cx + 1, cy + 8, 2, 5 - walk);
+      ctx.beginPath(); ctx.roundRect(cx - 2, cy + 9, 2.2, 5 + walk, 1); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 0.5, cy + 9, 2.2, 5 - walk, 1); ctx.fill();
       break;
     }
     case 'demigod': {
-      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.2), cx, cy, 10);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 5, 13, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 7, cy - 18, 4.5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.2), cx, cy, 9);
+      ctx.beginPath(); ctx.ellipse(cx, cy, 5.5, 13, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = dark; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx + 6, cy - 18, 5, 5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.stroke();
       // Halo
-      ctx.strokeStyle = 'rgba(255,220,100,0.9)';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(cx + 7, cy - 26, 5.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,220,100,0.95)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(cx + 6, cy - 28, 6, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = '#ffe88a';
-      ctx.beginPath(); ctx.arc(cx + 7, cy - 26, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + 6, cy - 28, 2.8, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 3.5, cy + 12, 2.5, 13);
-      ctx.fillRect(cx + 1.5, cy + 12, 2.5, 13);
-      break;
-    }
-    case 'merfolk': {
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy - 8, 7);
-      ctx.beginPath(); ctx.ellipse(cx, cy - 8, 5, 6.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 6, cy - 14, 4, 4, 0, 0, Math.PI * 2); ctx.fill();
-      // Tail
-      ctx.fillStyle = bodyGradient(ctx, shade(color, 0.15), cx, cy + 10, 12);
-      ctx.beginPath();
-      ctx.moveTo(cx - 2, cy - 2);
-      ctx.quadraticCurveTo(cx + 12, cy + 10, cx + 1, cy + 22);
-      ctx.quadraticCurveTo(cx - 8, cy + 12, cx - 2, cy - 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(cx, cy + 20); ctx.lineTo(cx - 6, cy + 28); ctx.lineTo(cx + 8, cy + 28); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx - 3, cy + 12, 2.8, 12, 1); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 1, cy + 12, 2.8, 12, 1); ctx.fill();
       break;
     }
     default: {
-      // Animals keep previous style but with gradients
-      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 10);
-      ctx.beginPath(); ctx.ellipse(cx, cy, 10, 6, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + 10, cy - 2, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
+      // Animals: chunky cartoon
+      ctx.fillStyle = bodyGradient(ctx, color, cx, cy, 11);
+      ctx.beginPath(); ctx.ellipse(cx, cy, 11, 7, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = dark; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx + 10, cy - 2, 5.5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.stroke();
       ctx.fillStyle = dark;
-      ctx.fillRect(cx - 5, cy + 4, 2.5, 6 + walk);
-      ctx.fillRect(cx + 2, cy + 4, 2.5, 6 - walk);
+      ctx.beginPath(); ctx.roundRect(cx - 6, cy + 5, 3, 6 + walk, 1.5); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx + 2, cy + 5, 3, 6 - walk, 1.5); ctx.fill();
     }
   }
 
-  // Eye
+  // Simple eye
   if (!['fish', 'shark', 'whale', 'orca'].includes(sp.key)) {
-    const eyeX = ['elf', 'demigod'].includes(sp.key) ? cx + 8 : cx + 12;
-    const eyeY = ['elf', 'demigod'].includes(sp.key) ? cy - 20 : cy - 4;
+    const eyeX = ['elf', 'demigod'].includes(sp.key) ? cx + 7 : cx + 10;
+    const eyeY = ['elf', 'demigod'].includes(sp.key) ? cy - 16 : cy - 4;
     ctx.fillStyle = '#111';
-    ctx.beginPath(); ctx.arc(eyeX, eyeY, 1.4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(eyeX, eyeY, 1.8, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(eyeX + 0.3, eyeY - 0.3, 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(eyeX + 0.4, eyeY - 0.4, 0.6, 0, Math.PI * 2); ctx.fill();
   }
 
   return c;
