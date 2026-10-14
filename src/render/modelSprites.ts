@@ -51,6 +51,16 @@ export const MODEL_URLS: Record<string, string> = {
   wolf: 'assets/creatures/wolf.glb',
   shark: 'assets/creatures/shark.glb',
   tyrant: 'assets/creatures/trex.glb',
+  deer: 'assets/creatures/deer.glb',
+  fox: 'assets/creatures/fox.glb',
+  bear: 'assets/creatures/bear.glb',
+  cow: 'assets/creatures/cow.glb',
+  horse: 'assets/creatures/horse.glb',
+  husky: 'assets/creatures/husky.glb',
+  duck: 'assets/creatures/duck.glb',
+  hippo: 'assets/creatures/hippo.glb',
+  triceratops: 'assets/creatures/triceratops.glb',
+  raptor: 'assets/creatures/velociraptor.glb',
 };
 
 export const MODEL_KEYS = Object.keys(MODEL_URLS);

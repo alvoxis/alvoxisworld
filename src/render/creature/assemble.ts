@@ -6,6 +6,7 @@ import { getRaceVisual } from './races';
 import { drawAnimal } from './animals';
 import { loadAnimalSprite, PIXEL_ART_ANIMALS } from './spriteLoader';
 import { MODEL_URLS, MODEL_KEYS } from '../modelSprites';
+import { getAnimatedFrame } from '../animatedModels';
 
 export interface Genome {
   paletteIndex: number;
@@ -39,13 +40,13 @@ export function assembleCreature(
   const cx = 36;
   const cy = 42;
 
-  // 3D model sprites (pre-rendered)
+  // 3D animated sprites
   if (MODEL_KEYS.includes(raceKey)) {
     const url = MODEL_URLS[raceKey];
-    // Use cached sprite if available, otherwise fallback
-    const cached = (window as any).__modelSprites?.[url];
-    if (cached) {
-      ctx.drawImage(cached, cx - 32, cy - 32, 64, 64);
+    const state = frame > 0 ? 'walk' : 'idle';
+    const sprite = getAnimatedFrame(url, state, frame);
+    if (sprite) {
+      ctx.drawImage(sprite, cx - 32, cy - 32, 64, 64);
       return c;
     }
   }

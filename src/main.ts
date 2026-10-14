@@ -5,13 +5,14 @@ import { SettingsStore } from './game/settings';
 import { initLang } from './i18n';
 import { installErrorLog } from './app/diagnostics';
 import { preloadModels } from './render/preloadModels';
+import { preloadBuildings } from './render/buildingSprites';
 
 installErrorLog();
 initLang(); // before anything is drawn: the saved language, else the browser's, else English
 const canvas = document.getElementById('map') as HTMLCanvasElement;
 const game = new Game(canvas);
 new Hud(game, new SettingsStore());
-preloadModels().then(() => game.start());
+Promise.all([preloadModels(), preloadBuildings()]).then(() => game.start());
 
 // Exposed for debugging from the browser console.
 (window as unknown as { alvoxis: Game }).alvoxis = game;
