@@ -1,0 +1,43 @@
+{
+  "team": "ALVOXIS Development Team",
+  "version": "1.0",
+  "agents": [
+    {
+      "id": "3c8db537-ea5c-4cee-96b8-03d7714ed1ca",
+      "name": "project-auditor",
+      "role": "Code analysis and bug finding",
+      "access": "read-only",
+      "output": "problem, evidence, file, severity, recommended fix"
+    },
+    {
+      "id": "2da03fc3-b10a-4cc7-950f-59c829baf64a",
+      "name": "game-architect",
+      "role": "System design for creatures, races, buildings",
+      "access": "research only",
+      "output": "architectural proposals with module boundaries"
+    },
+    {
+      "id": "d33f3ea1-76a9-4098-95cd-9cc4be497515",
+      "name": "game-designer",
+      "role": "Visual requirements for 2D creatures and buildings",
+      "access": "research only",
+      "output": "concrete technical specs"
+    },
+    {
+      "id": "42e59bb2-eb7b-4b32-929c-41096ba2ccbb",
+      "name": "implementation-engineer",
+      "role": "Code implementation and integration",
+      "access": "write",
+      "output": "code diffs and integration notes"
+    },
+    {
+      "id": "7de9517a-8a16-4a01-b244-09400a348eb5",
+      "name": "qa-reviewer",
+      "role": "Independent testing and regression checks",
+      "access": "read + test execution",
+      "output": "test results and evidence of issues"
+    }
+  ],
+  "workflow": "Audit -> Plan -> Implement -> Review -> Test -> Integrate",
+  "notes": "Agents are Grok Bots. They have their own computers and need the repo cloned or files provided. Performance-engineer and grok-lead were rate-limited during creation."
+}
