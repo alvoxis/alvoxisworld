@@ -282,7 +282,7 @@ export function silhouette(species: number, frame = 0): string[] {
  */
 export const CREATURE_SCALE = 0.5;
 export const MIN_SPRITE_PX = 5;
-export const MIN_PERSON_PX = 6;
+export const MIN_PERSON_PX = 14;
 /** Smooth sprites are 72px; formula was written for ~8px pixel art. */
 export const SPRITE_ART_SIZE = 72;
 
