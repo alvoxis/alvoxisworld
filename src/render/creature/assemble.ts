@@ -5,6 +5,7 @@
 import { getRaceVisual } from './races';
 import { drawAnimal } from './animals';
 import { loadAnimalSprite, PIXEL_ART_ANIMALS } from './spriteLoader';
+import { MODEL_URLS, MODEL_KEYS } from '../modelSprites';
 
 export interface Genome {
   paletteIndex: number;
@@ -37,6 +38,17 @@ export function assembleCreature(
   const color = race.palette[genome.paletteIndex % race.palette.length] || '#c9a078';
   const cx = 36;
   const cy = 42;
+
+  // 3D model sprites (pre-rendered)
+  if (MODEL_KEYS.includes(raceKey)) {
+    const url = MODEL_URLS[raceKey];
+    // Use cached sprite if available, otherwise fallback
+    const cached = (window as any).__modelSprites?.[url];
+    if (cached) {
+      ctx.drawImage(cached, cx - 32, cy - 32, 64, 64);
+      return c;
+    }
+  }
 
   // Pixel-art sprites for demo animals
   if (PIXEL_ART_ANIMALS.includes(raceKey)) {
