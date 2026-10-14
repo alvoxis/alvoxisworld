@@ -39,10 +39,10 @@ export function assembleCreature(
   const bs = genome.bodyScale;
   const hs = genome.headScale;
 
-  const bw = race.bodyWidth * bs;
-  const bh = race.bodyHeight * bs;
-  const headY = cy - bh * 0.6;
-  const torsoY = cy - bh * 0.1;
+  const bw = race.bodyWidth * bs * 1.2;
+  const bh = race.bodyHeight * bs * 1.2;
+  const headY = cy - bh * 0.55;
+  const torsoY = cy - bh * 0.05;
   const skin = color;
   const cloth = genome.paletteIndex === 1 ? '#5a4a3a' : genome.paletteIndex === 2 ? '#4a5a4a' : '#6a5a4a';
   const boot = '#2a1a10';
@@ -129,6 +129,11 @@ export function assembleCreature(
     ctx.ellipse(cx + 1, torsoY + bh * 0.5, 5, 8, 0, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // Subtle outline for contrast on terrain
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cx - bw * 0.4, headY - 2, bw * 0.8, bh * 0.9);
 
   return c;
 }
