@@ -135,8 +135,8 @@ export class Hud {
     else if ('terrain' in tool.icon) wrap.appendChild(this.game.renderer.tiles.toCanvas(tool.icon.terrain, 1, 3));
     else {
       const c = creatureSprite(tool.icon.species);
-      c.style.width = '28px';
-      c.style.height = '28px';
+      c.style.width = '40px';
+      c.style.height = '40px';
       c.style.imageRendering = 'pixelated';
       wrap.appendChild(c);
     }

@@ -35,14 +35,15 @@ export function assembleCreature(
   const color = race.palette[genome.paletteIndex % race.palette.length] || '#c9a078';
   const cx = 36;
   const cy = 42;
-  const walk = frame ? 3 : -2;
+  const walk = frame === 1 ? 2 : 0;
+  const isFar = frame === -1;
   const bs = genome.bodyScale;
   const hs = genome.headScale;
 
-  const bw = race.bodyWidth * bs;
-  const bh = race.bodyHeight * bs;
-  const headY = cy - bh * 0.6;
-  const torsoY = cy - bh * 0.1;
+  const bw = race.bodyWidth * bs * 1.2;
+  const bh = race.bodyHeight * bs * 1.2;
+  const headY = cy - bh * 0.55;
+  const torsoY = cy - bh * 0.05;
   const skin = color;
   const cloth = genome.paletteIndex === 1 ? '#5a4a3a' : genome.paletteIndex === 2 ? '#4a5a4a' : '#6a5a4a';
   const boot = '#2a1a10';
@@ -72,15 +73,17 @@ export function assembleCreature(
   ctx.ellipse(cx + 1, headY + 2, 6 * hs, 5.5 * hs, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Hair
-  ctx.fillStyle = genome.paletteIndex === 0 ? '#3a2010' : genome.paletteIndex === 1 ? '#1a1008' : '#5a4030';
-  ctx.fillRect(cx - 4, headY - 4, 10, 4);
-  // Eyes
-  ctx.fillStyle = '#1a1008';
-  ctx.fillRect(cx - 1, headY + 1, 2, 2);
-  ctx.fillRect(cx + 3, headY + 1, 2, 2);
-  // Mouth
-  ctx.fillRect(cx + 1, headY + 4, 2, 1);
+  if (!isFar) {
+    // Hair
+    ctx.fillStyle = genome.paletteIndex === 0 ? '#3a2010' : genome.paletteIndex === 1 ? '#1a1008' : '#5a4030';
+    ctx.fillRect(cx - 4, headY - 4, 10, 4);
+    // Eyes
+    ctx.fillStyle = '#1a1008';
+    ctx.fillRect(cx - 1, headY + 1, 2, 2);
+    ctx.fillRect(cx + 3, headY + 1, 2, 2);
+    // Mouth
+    ctx.fillRect(cx + 1, headY + 4, 2, 1);
+  }
 
   // Arms
   ctx.fillStyle = skin;
@@ -129,6 +132,11 @@ export function assembleCreature(
     ctx.ellipse(cx + 1, torsoY + bh * 0.5, 5, 8, 0, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // Subtle outline for contrast on terrain
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cx - bw * 0.4, headY - 2, bw * 0.8, bh * 0.9);
 
   return c;
 }
