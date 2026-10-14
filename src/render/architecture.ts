@@ -355,8 +355,8 @@ export const WORKPLACES: Readonly<Record<Workplace, { dot: string; draw(r: Rect,
   mill: {
     dot: '#a08060',
     draw(r, _roof) {
-      r(2, 3, 4, 4, '#a08060');
-      r(3.5, 1, 1, 2, '#6a5030');
+      r(1, 2.5, 6, 4.5, '#a08060');
+      r(3, 0.5, 2, 2, '#6a5030');
     },
   },
   library: {
@@ -430,8 +430,8 @@ export function drawBuildingArt(r: Rect, arch: Architecture, type: BuildingType,
     r(2, 0.2, 4, 1, '#5a4a3a');
   }
   else if (type === 'mill') {
-    r(2, 3, 4, 4, '#a08060');
-    r(3.5, 1, 1, 2, '#6a5030'); // post
+    r(1, 2.5, 6, 4.5, '#a08060');
+    r(3, 0.5, 2, 2, '#6a5030'); // post
   }
   else if (type in WORKPLACES) WORKPLACES[type as Workplace].draw(r, roof);
 }
