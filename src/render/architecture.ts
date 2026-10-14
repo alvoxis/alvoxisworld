@@ -212,15 +212,15 @@ function drawDwarfHouse(r: Rect, _level: number, roof: string): void {
 }
 
 /** Gnome houses: small, rounded, with chimneys and gardens. */
-function drawGnomeHouse(r: Rect, _level: number, roof: string): void {
-  r(1.5, 5, 5, 2.5, '#8a6a4a');
-  r(1, 3.8, 6, 1.8, roof);
-  r(1, 5.2, 6, 0.4, shade(roof, -0.15));
-  r(3.3, 5.5, 1.4, 1.8, DOOR);
-  r(2.2, 4.3, 0.9, 0.7, LIT);
-  r(4.8, 4.3, 0.9, 0.7, LIT);
-  r(6.8, 3.2, 0.4, 1.5, '#5a4030'); // chimney
-  if (_level >= 2) r(0.5, 6.8, 1.2, 0.6, '#6a9a4a'); // garden
+function drawGnomeHouse(r: Rect, level: number, roof: string): void {
+  const wall = level >= 3 ? '#e0b0a0' : '#d4a574';
+  r(0.5, 6.6, 7, 0.4, '#8a7060'); // foundation
+  r(1.2, 4.2, 5.6, 2.4, wall); // walls
+  gable(r, roof, 2, 4.2); // roof
+  r(3.4, 5.2, 1.2, 1.4, DOOR);
+  if (level >= 2) r(1.6, 4.6, 0.8, 0.7, LIT);
+  if (level >= 3) r(5.4, 4.6, 0.8, 0.7, GLASS);
+  if (level >= 4) r(3.2, 1.2, 1.6, 0.8, '#ffcc44'); // hat chimney
 }
 
 /** Demigod halls: tall, pale stone with golden accents and light. */
@@ -480,3 +480,4 @@ export function buildingRect(bx: number, by: number, arch: Architecture, type: B
   const top = by + 1 - BUILDING_SCALE; // the scaled tile's top; art y 0..8 maps onto it, negative y rises above
   return { x0: left + Math.max(0, a.x0) * k, y0: top + a.y0 * k, x1: left + Math.min(8, a.x1) * k, y1: top + Math.min(8, a.y1) * k };
 }
+
