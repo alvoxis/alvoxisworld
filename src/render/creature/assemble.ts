@@ -4,6 +4,7 @@
  */
 import { getRaceVisual } from './races';
 import { drawAnimal } from './animals';
+import { loadAnimalSprite, PIXEL_ART_ANIMALS } from './spriteLoader';
 
 export interface Genome {
   paletteIndex: number;
@@ -36,6 +37,15 @@ export function assembleCreature(
   const color = race.palette[genome.paletteIndex % race.palette.length] || '#c9a078';
   const cx = 36;
   const cy = 42;
+
+  // Pixel-art sprites for demo animals
+  if (PIXEL_ART_ANIMALS.includes(raceKey)) {
+    const sprite = loadAnimalSprite(raceKey);
+    if (sprite) {
+      ctx.drawImage(sprite, cx - 48, cy - 32);
+      return c;
+    }
+  }
 
   // Animals use dedicated silhouettes
   const ANIMAL_KEYS = ['bear', 'deer', 'rabbit', 'wolf', 'fish', 'shark', 'whale', 'orca', 'grazer', 'raptor', 'hadrosaur', 'tyrant'];
