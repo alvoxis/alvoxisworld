@@ -234,7 +234,7 @@ export class Renderer {
   private readonly detail = new ChunkLevel(8, MAX_DETAIL_CHUNKS);
   private readonly mid = new ChunkLevel(4, MAX_MID_CHUNKS);
   /** Per species, two walking frames, each facing right and left. */
-  private readonly sprites: Array<Array<{ right: HTMLCanvasElement; left: HTMLCanvasElement }>>;
+  private individualSprites = new Map<string, { right: HTMLCanvasElement; left: HTMLCanvasElement }>();
   private readonly flames: HTMLCanvasElement[];
   private readonly skyfx = new SkyRenderer();
   winter = false;
@@ -246,19 +246,6 @@ export class Renderer {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false })!;
-    this.sprites = SPECIES.map((s) =>
-      [0, 1].map((frame) => {
-        const right = creatureSprite(s.id, frame);
-        const left = document.createElement('canvas');
-        left.width = right.width;
-        left.height = right.height;
-        const lctx = left.getContext('2d')!;
-        lctx.translate(right.width, 0);
-        lctx.scale(-1, 1);
-        lctx.drawImage(right, 0, 0);
-        return { right, left };
-      }),
-    );
     this.flames = flameFrames();
   }
 
@@ -1417,6 +1404,26 @@ export class Renderer {
     this.ctx.drawImage(c, Math.round(ox + tr.x * s), Math.round(oy + tr.yy * s), Math.round(tr.sp.w * k), Math.round(tr.sp.h * k));
   }
 
+
+  private getIndividualSprite(species: number, id: number, frame: number, dir: number): HTMLCanvasElement {
+    const bucket = id % 8; // 8 variants per species
+    const key = `${species}:${bucket}:${frame}:${dir}`;
+    let entry = this.individualSprites.get(key);
+    if (!entry) {
+      const right = creatureSprite(species, frame, id);
+      const left = document.createElement('canvas');
+      left.width = right.width;
+      left.height = right.height;
+      const lctx = left.getContext('2d')!;
+      lctx.translate(right.width, 0);
+      lctx.scale(-1, 1);
+      lctx.drawImage(right, 0, 0);
+      entry = { right, left };
+      this.individualSprites.set(key, entry);
+    }
+    return dir >= 0 ? entry.right : entry.left;
+  }
+
   private drawCreatureSprite(cr: Creatures, i: number, s: number, ox: number, oy: number, alpha: number, overlay?: Overlay): void {
     const ctx = this.ctx;
     const now = overlay?.now ?? 0;
@@ -1430,8 +1437,7 @@ export class Renderer {
     // Walking creatures alternate two frames (fleeing ones faster); standing, eating or working ones hold still.
     const moving = cr.x[i] !== cr.px[i] || cr.y[i] !== cr.py[i];
     const frame = moving ? (Math.floor(now / (cr.state[i] === STATE.FLEE ? 110 : 190)) + cr.id[i]) & 1 : 0;
-    const set = this.sprites[sp][frame];
-    const sprite = cr.dx[i] >= 0 ? set.right : set.left;
+    const sprite = this.getIndividualSprite(sp, cr.id[i], frame, cr.dx[i]);
     // Half a terrain pixel per sprite pixel (creatureScale), with a minimum size far away; juveniles smaller.
     // The sprite canvas carries a 1-pixel outline margin, so the scale is taken from the art inside it.
     const artW = sprite.width - 2 * OUTLINE_PAD;
